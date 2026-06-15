@@ -11,7 +11,7 @@
   <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css" rel="stylesheet">
   <link rel="stylesheet" href="assets/styles.css">
   <link rel="stylesheet" href="assets/styles2.css">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='24' fill='%234f46e5'/%3E%3Ctext x='50' y='70' font-size='54' text-anchor='middle'%3E%F0%9F%9B%92%3C/text%3E%3C/svg%3E">
+  <link rel="icon" type="image/png" href="assets/mcq-logo-exact.png">
 </head>
 <body class="role-ho">
   <!-- LOGIN (shown when signed out) -->
@@ -21,14 +21,14 @@
   <div class="app" id="app" style="display:none">
     <aside class="sidebar" id="sidebar">
       <div class="brand">
-        <span class="mcq-logo dark"><span class="mcq-tiles"><b class="mt m">M</b><b class="mt c">C</b><b class="mt q">Q</b><i class="leaf"></i></span><span class="mcq-bar">SUPERMARKET</span></span>
+        <span class="mcq-logo dark"><img src="assets/mcq-logo-exact.png" alt="MCQ Supermarket logo"></span>
       </div>
       <nav class="nav" id="nav"></nav>
       <div class="side-foot"><div class="scope-pill"><span class="dot"></span> Live · synced now</div></div>
     </aside>
     <div class="main">
       <header class="topbar">
-        <button class="sidebar-toggle" onclick="document.getElementById('sidebar').classList.toggle('show')"><i class="fas fa-bars"></i></button>
+        <button class="sidebar-toggle" onclick="toggleSidebar()"><i class="fas fa-bars"></i></button>
         <div class="crumbs" id="crumbs"></div>
         <div class="top-spacer"></div>
         <div class="topbar-right" id="topbar-right"></div>
@@ -37,10 +37,12 @@
     </div>
   </div>
 
+  <div id="sb-backdrop" onclick="closeSidebarM()"></div>
   <div class="drawer-mask" id="drawer-mask" onclick="closeDrawer()"></div>
   <aside class="drawer" id="drawer"></aside>
 
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <script src="assets/data.js"></script>
   <script src="assets/hr-data.js"></script>
   <script src="assets/pages.js"></script>
