@@ -34,6 +34,7 @@ function scopedRecords(mod){
 
 /* ============================================================ LOGIN */
 function showLogin(notice){
+  document.getElementById('boot-splash')?.remove();
   document.body.classList.add('on-login');
   $('#app').style.display='none';
   const branches = DB.branches.map(b=>`<option value="${esc(b)}">MCQ ${esc(b)}</option>`).join('');
@@ -117,6 +118,7 @@ function loginAs(role, branch){
   enterApp();
 }
 function enterApp(){
+  document.getElementById('boot-splash')?.remove();
   document.body.classList.remove('on-login');
   document.body.className = 'role-'+State.role;
   $('#login-root').style.display='none';
@@ -525,8 +527,9 @@ document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDrawer(); });
 function toggleSidebar(){ const s=$('#sidebar'); if(!s) return; const open=s.classList.toggle('show'); const bd=$('#sb-backdrop'); if(bd) bd.classList.toggle('show',open); }
 function closeSidebarM(){ $('#sidebar')?.classList.remove('show'); $('#sb-backdrop')?.classList.remove('show'); }
 Object.assign(window,{go,openDetail,closeDrawer,submitForm,reviewSave,recSaveAll,recDelete,logout,doLogin,togglePw,updateLoginHint,faceIdLogin,closeFid,toggleGroup,toggleSidebar,closeSidebarM});
-function boot(){
-  try{ const saved=sessionStorage.getItem('mcq_acct'); if(saved){ State.account=JSON.parse(saved); State.branch=State.account.branch; State.role=State.account.role==='admin'?'ho':'store'; } }catch(e){}
+async function boot(){
+  try{ if(window.MCQDB && MCQDB.ready){ const ok=await MCQDB.ready; if(ok && MCQDB.loadAll) await MCQDB.loadAll(); } }catch(e){}
+  try{ const saved=sessionStorage.getItem('mcq_acct'); if(saved){ State.account=JSON.parse(saved); State.branch=State.account.branch; State.role=State.account.role==='staff'?'store':'ho'; } }catch(e){}
   if(State.account) enterApp(); else showLogin();
 }
 document.addEventListener('DOMContentLoaded',boot);

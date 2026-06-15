@@ -14,6 +14,13 @@
   <link rel="icon" type="image/png" href="assets/mcq-logo-exact.png">
 </head>
 <body class="role-ho">
+  <!-- Boot splash (removed once login/app renders) -->
+  <div id="boot-splash" style="position:fixed;inset:0;z-index:200;display:grid;place-items:center;background:linear-gradient(150deg,#06402e 0%,#0a6b54 40%,#0b7d8f 75%,#163e83 100%)">
+    <div style="text-align:center">
+      <img src="assets/mcq-logo-exact.png" alt="MCQ Supermarket" style="height:96px;filter:drop-shadow(0 12px 26px rgba(0,0,0,.3))">
+      <div style="margin-top:16px;color:#fff;font-family:Inter,sans-serif;font-weight:700;opacity:.92;letter-spacing:.02em">Loading…</div>
+    </div>
+  </div>
   <!-- LOGIN (shown when signed out) -->
   <div id="login-root" class="login-root"></div>
 
@@ -47,6 +54,7 @@
   <script src="assets/hr-data.js"></script>
   <script src="assets/pages.js"></script>
   <script src="assets/pages2.js"></script>
+  <script src="assets/firebase.js"></script>
   <script src="assets/app.js"></script>
 </body>
 </html>
