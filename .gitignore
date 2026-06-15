@@ -1,0 +1,11 @@
+# OS
+.DS_Store
+
+# Bundled reference app (do not publish the restaurant Flask app)
+MCQ MIRRABOOKA RESTUARANT/
+*.zip
+
+# Python / misc
+__pycache__/
+*.pyc
+node_modules/
