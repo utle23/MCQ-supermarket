@@ -10,7 +10,7 @@ const $  = (s,r=document)=>r.querySelector(s);
 const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const isAdmin = ()=> State.account && State.account.role==='admin';
-function logoHTML(cls){ return `<span class="mcq-logo ${cls||''}"><span class="mcq-tiles"><b class="mt m">M</b><b class="mt c">C</b><b class="mt q">Q</b><i class="leaf"></i></span><span class="mcq-bar">SUPERMARKET</span></span>`; }
+function logoHTML(cls){ return `<span class="mcq-logo ${cls||''}"><img src="assets/mcq-logo-exact.png" alt="MCQ Supermarket logo"></span>`; }
 
 /* ---------- tones / colours ---------- */
 const TONE_HEX={ok:'#10b981',warn:'#f59e0b',bad:'#ef4444',info:'#3b82f6',mute:'#94a3b8'};
@@ -176,7 +176,7 @@ function buildSidebar(){
       <div class="nav-body">${items.map(id=>navItemFor(id)).join('')}</div></div>`;
   });
   $('#nav').innerHTML = html;
-  $$('#nav .nav-item').forEach(el=>el.onclick=()=>go(el.dataset.mod));
+  $$('#nav .nav-item').forEach(el=>el.onclick=()=>{ go(el.dataset.mod); if(window.innerWidth<=860) closeSidebarM(); });
   // open group containing active, restore saved
   const active=State.route.mod;
   $$('#nav .nav-group').forEach(g=>{ if($(`.nav-item[data-mod]`,g) && [...g.querySelectorAll('.nav-item')].some(a=>a.dataset.mod===active)) g.classList.add('open','has-active'); });
@@ -226,7 +226,7 @@ function render(){
   destroyCharts(); closeDrawer();
   const mod=State.route.mod;
   buildSidebar();
-  if(mod==='home') return renderHome();
+  if(mod==='home') return isAdmin()?renderHome():renderStaffHome();
   if(DB.customPages[mod]) return window[DB.customPages[mod].render](DB.customPages[mod]);
   if(mod==='checklist') return renderChecklist();
   if(!DB.modules[mod]){ location.hash='#/home'; return; }
@@ -514,7 +514,9 @@ function toast(msg){ let el=$('#toast'); if(!el){el=document.createElement('div'
 /* ============================================================ BOOT */
 window.addEventListener('hashchange',()=>{ if(State.account) render(); });
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDrawer(); });
-Object.assign(window,{go,openDetail,closeDrawer,submitForm,reviewSave,recSaveAll,recDelete,logout,doLogin,togglePw,faceIdLogin,closeFid,toggleGroup});
+function toggleSidebar(){ const s=$('#sidebar'); if(!s) return; const open=s.classList.toggle('show'); const bd=$('#sb-backdrop'); if(bd) bd.classList.toggle('show',open); }
+function closeSidebarM(){ $('#sidebar')?.classList.remove('show'); $('#sb-backdrop')?.classList.remove('show'); }
+Object.assign(window,{go,openDetail,closeDrawer,submitForm,reviewSave,recSaveAll,recDelete,logout,doLogin,togglePw,updateLoginHint,faceIdLogin,closeFid,toggleGroup,toggleSidebar,closeSidebarM});
 function boot(){
   try{ const saved=sessionStorage.getItem('mcq_acct'); if(saved){ State.account=JSON.parse(saved); State.branch=State.account.branch; State.role=State.account.role==='admin'?'ho':'store'; } }catch(e){}
   if(State.account) enterApp(); else showLogin();
