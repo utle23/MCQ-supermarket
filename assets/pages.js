@@ -652,33 +652,58 @@ function renderSchedule(){
 }
 
 /* ============================================================ MANAGER PANEL */
+function mgrSubs(){
+  if(State._subs) return State._subs;
+  const depts=(DB.checklist&&DB.checklist.depts)||['MANAGER','CASHIER','FV','GROCERY','FROZEN & DAIRY','BUTCHER'];
+  const stores=DB.stores, names=DB.staff.map(s=>s.name);
+  const today=new Date(), fmt=d=>d.toISOString().slice(0,10), dn=d=>d.toLocaleDateString(undefined,{weekday:'long'});
+  const out=[];
+  [0,1].forEach(off=>{ const d=new Date(today); d.setDate(d.getDate()-off); const ds=fmt(d), dname=dn(d);
+    stores.forEach((store,si)=>depts.forEach((dept,di)=>['Opening','Closing'].forEach((session,sei)=>{
+      const total=8+((di*3+sei*2)%14), done=Math.max(0,total-((si+di+off+sei)%3));
+      const status = off>0 ? 'Verified' : (session==='Closing'?(di%2===0?'Submitted':'Verified'):(di%3===0?'Submitted':'Verified'));
+      out.push({id:`CHK-${ds.replace(/-/g,'')}-${si}${di}${sei}`,date:ds,dayName:dname,store,department:dept,session,by:names[(si+di+sei)%names.length]||'Staff',total,done,progress:Math.round(done/total*100),status});
+    })));
+  });
+  State._subs=out; return out;
+}
+function mgrActivity(){
+  const mods=['issue','maintenance','incident','complaint','violation','reward']; let items=[];
+  mods.forEach(id=>{const m=DB.modules[id]; (m.records||[]).forEach(r=>{ if(isSuper()||r.store===State.branch) items.push({accent:m.accent,icon:m.icon,sortKey:r.created||r.date||'',title:`${m.short}: ${r.id}`,sub:`${r.store||''} · ${(r.title||r.summary||r.shortDescription||r.category||r.staffName||r.equipment||'').slice(0,60)}`,time:relTime(r.created||r.date)}); });});
+  return items.sort((a,b)=>String(b.sortKey).localeCompare(String(a.sortKey))).slice(0,12);
+}
+function mgrVerify(id){ const s=mgrSubs().find(x=>x.id===id); if(s) s.status='Verified'; toast('✓ Checklist verified'); renderManager(); }
 function renderManager(){
-  setAccent('#0f766e'); setCrumb('🛡️','Manager Panel','Verify, review & control — all registers');
+  setAccent('#0f766e'); setCrumb('🛡️','Manager Panel','Verify checklists & action today’s issues');
   if(!State.mgr) State.mgr={sort:'newest'};
-  const reviewMods=['issue','maintenance','incident','complaint','violation','reward','raise'];
-  const doneStat=['Closed','Cancelled','Resolved','Store Confirmed','Completed','Paid','Given','Approved','Declined'];
-  let queue=[],activity=[];
-  reviewMods.forEach(id=>{const m=DB.modules[id]; (m.records||[]).forEach(r=>{const row={mod:id,icon:m.icon,short:m.short,...r}; activity.push(row); if(!doneStat.includes(r.status)) queue.push(row);});});
-  const dt=r=>String(r.created||r.date||'');
-  const sortFn=(a,b)=>State.mgr.sort==='newest'?dt(b).localeCompare(dt(a)):dt(a).localeCompare(dt(b));
-  queue.sort(sortFn); activity.sort(sortFn); const recent=activity.slice(0,15);
-  const critical=queue.filter(r=>['Critical','Major'].includes(r.severity)||['Critical','Urgent'].includes(r.priority)||r.step==='Final Warning').length;
-  const closed=activity.filter(r=>['Closed','Resolved','Completed','Approved','Paid'].includes(r.status)).length;
-  const stats=[['🕒',queue.length,'Awaiting review','warn'],['🔴',critical,'Critical / urgent','bad'],['✅',closed,'Closed / done','ok'],['🏪',new Set(activity.map(r=>r.store).filter(Boolean)).size,'Stores active','info']];
-  const sumOf=r=>r.title||r.equipment||r.summary||r.shortDescription||r.staffName||(r.awardType?r.awardType+' — '+r.staffName:'')||r.category||'';
-  const prioOf=r=>r.priority||r.severity||r.step;
+  const todayStr=new Date().toISOString().slice(0,10);
+  const subs=mgrSubs().filter(s=>isSuper()||s.store===State.branch);
+  const pending=subs.filter(s=>s.status==='Submitted').sort((a,b)=>{const at=a.date===todayStr?0:1,bt=b.date===todayStr?0:1; if(at!==bt)return at-bt; return State.mgr.sort==='newest'?b.date.localeCompare(a.date):a.date.localeCompare(b.date);});
+  const doneStat=['Closed','Cancelled','Resolved','Store Confirmed','Completed'];
+  let issues=[]; ['maintenance','incident','complaint','violation','issue'].forEach(id=>{const m=DB.modules[id]; (m.records||[]).forEach(r=>{ if((isSuper()||r.store===State.branch)&&!doneStat.includes(r.status)) issues.push({mod:id,icon:m.icon,short:m.short,...r}); });});
+  issues.sort((a,b)=>String(b.created||b.date||'').localeCompare(String(a.created||a.date||'')));
+  const verifiedToday=subs.filter(s=>s.date===todayStr&&s.status==='Verified').length;
+  const critical=issues.filter(r=>['Critical','Major'].includes(r.severity)||['Critical','Urgent'].includes(r.priority)||r.step==='Final Warning').length;
+  const stats=[['🕒',pending.length,'Awaiting verification','warn'],['✅',verifiedToday,'Verified today','ok'],['🚩',issues.length,'Open issues','info'],['🔴',critical,'Critical / urgent','bad']];
+  const dm=(DB.checklist&&DB.checklist.deptMeta)||{}; const capN=18, shown=pending.slice(0,capN);
+  const cards=shown.map(s=>{const meta=dm[s.department]||{color:'#0f766e'}, isToday=s.date===todayStr;
+    return `<div class="pv-card" style="--c:${meta.color}"><span class="pv-stripe"></span>
+      <div class="pv-head"><b>${esc(s.department)}</b><span class="badge ${s.session==='Opening'?'warn':'info'}">${s.session}</span>${isToday?'<span class="badge ok">Today</span>':''}</div>
+      <div class="pv-meta"><span>📅 ${esc(s.date)} — ${esc(s.dayName)}</span>${isSuper()?`<span>🏪 ${esc(s.store)}</span>`:''}<span>👤 ${esc(s.by)}</span></div>
+      <div class="pv-prog"><span class="pbar" style="flex:1"><i style="width:${s.progress}%"></i></span><b>${s.done}/${s.total}</b></div>
+      <button class="btn primary block sm" onclick="mgrVerify('${s.id}')">✓ Review &amp; Verify</button></div>`;}).join('');
   $('#content').innerHTML=`
-    <div class="page-head"><div class="ph-ic">🛡️</div><div><h2>Manager Panel</h2><p>Everything awaiting your review across all registers — sorted by date for easy control.</p></div>
+    <div class="page-head"><div class="ph-ic">🛡️</div><div><h2>Manager Panel</h2><p>Verify today’s checklists and action open issues across ${isSuper()?'all stores':esc(State.branch)}.</p></div>
       <div class="ph-actions"><button class="btn sm" onclick="mgrSort()"><i class="fas fa-arrow-down-wide-short"></i>&nbsp; ${State.mgr.sort==='newest'?'Newest first':'Oldest first'}</button></div></div>
     <div class="kpi-grid">${stats.map(s=>`<div class="kpi tone-${s[3]}"><div class="k-top"><div class="k-ic">${s[0]}</div></div><div class="k-val">${s[1]}</div><div class="k-lbl">${esc(s[2])}</div></div>`).join('')}</div>
-    <div class="section-title">Pending review · ${queue.length}</div>
-    <div class="card"><div class="table-wrap"><table class="grid"><thead><tr><th>Ref</th><th>Register</th><th>Store</th><th>Summary</th><th>Priority</th><th>Status</th><th>Date</th><th></th></tr></thead><tbody>
-      ${queue.length?queue.map(r=>`<tr onclick='openDetail("${r.mod}","${esc(r.id)}")'><td class="cell-id">${esc(r.id)}</td><td><span class="reg-tag">${r.icon} ${esc(r.short)}</span></td><td>${esc(r.store||'')}</td><td><div class="wrap">${esc(sumOf(r))}</div></td><td>${prioOf(r)?badge(prioOf(r)):''}</td><td>${badge(r.status)}</td><td>${esc(dt(r).slice(0,16))}</td><td><button class="btn sm primary" onclick='event.stopPropagation();openDetail("${r.mod}","${esc(r.id)}")'>Review</button></td></tr>`).join(''):`<tr><td colspan="8"><div class="empty">🎉 Nothing pending — all caught up.</div></td></tr>`}
+    <div class="section-title"><i class="fas fa-clock" style="color:#f59e0b"></i> Pending Verification · ${pending.length}${pending.length>capN?` (showing ${capN})`:''}</div>
+    <div class="pv-grid">${cards||'<div class="empty">🎉 All checklists verified.</div>'}</div>
+    <div class="section-title"><i class="fas fa-triangle-exclamation" style="color:#ef4444"></i> Open issues today · ${issues.length}</div>
+    <div class="card"><div class="table-wrap"><table class="grid"><thead><tr><th>Ref</th><th>Register</th><th>Store</th><th>Summary</th><th>Priority</th><th>Status</th><th></th></tr></thead><tbody>
+      ${issues.length?issues.slice(0,20).map(r=>`<tr onclick='openDetail("${r.mod}","${esc(r.id)}")'><td class="cell-id">${esc(r.id)}</td><td><span class="reg-tag">${r.icon} ${esc(r.short)}</span></td><td>${esc(r.store||'')}</td><td><div class="wrap">${esc(r.title||r.equipment||r.summary||r.shortDescription||r.staffName||r.category||'')}</div></td><td>${(r.priority||r.severity||r.step)?badge(r.priority||r.severity||r.step):''}</td><td>${badge(r.status)}</td><td><button class="btn sm primary" onclick='event.stopPropagation();openDetail("${r.mod}","${esc(r.id)}")'>Review</button></td></tr>`).join(''):'<tr><td colspan="7"><div class="empty">No open issues 🎉</div></td></tr>'}
     </tbody></table></div></div>
-    <div class="section-title">Recent activity log</div>
-    <div class="card"><div class="table-wrap"><table class="grid"><thead><tr><th>Ref</th><th>Register</th><th>Store</th><th>Summary</th><th>Status</th><th>Date</th></tr></thead><tbody>
-      ${recent.map(r=>`<tr onclick='openDetail("${r.mod}","${esc(r.id)}")'><td class="cell-id">${esc(r.id)}</td><td><span class="reg-tag">${r.icon} ${esc(r.short)}</span></td><td>${esc(r.store||'')}</td><td><div class="wrap">${esc(sumOf(r))}</div></td><td>${badge(r.status)}</td><td>${esc(dt(r).slice(0,16))}</td></tr>`).join('')}
-    </tbody></table></div></div>`;
+    <div class="section-title">📋 Activity Log — ${todayStr}</div>
+    <div class="card"><div class="feed">${mgrActivity().map(f=>`<div class="feed-row"><div class="feed-ic" style="background:${soft(f.accent)};color:${f.accent}">${f.icon}</div><div class="feed-main"><div class="fm-t">${esc(f.title)}</div><div class="fm-s">${esc(f.sub)}</div></div><div class="feed-time">${esc(f.time)}</div></div>`).join('')||'<div class="empty">No recent activity.</div>'}</div></div>`;
 }
 function mgrSort(){ State.mgr.sort=State.mgr.sort==='newest'?'oldest':'newest'; renderManager(); }
 
