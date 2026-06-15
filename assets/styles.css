@@ -16,7 +16,7 @@
   --accent:#0e9f6e;           /* overridden per-module */
   --accent-soft:#e6f6ef;
   /* brand accent palette (from the MCQ Supermarket logo) */
-  --mcq-orange:#f47a1f; --mcq-purple:#8e3fb0; --mcq-green:#6dbe45; --mcq-grey:#5b6770;
+  --mcq-orange:#ff9700; --mcq-green:#91d900; --mcq-purple:#930096; --mcq-grey:#737d86;
   --ok:#10b981; --ok-bg:#e7f8f1;
   --warn:#f59e0b; --warn-bg:#fef4e2;
   --bad:#ef4444; --bad-bg:#fdeaea;
@@ -65,7 +65,7 @@ button{font-family:inherit;cursor:pointer}
   border-right:1px solid rgba(255,255,255,.06);
 }
 .brand{
-  display:flex;align-items:center;gap:12px;padding:18px 20px;
+  display:flex;align-items:center;justify-content:center;gap:12px;padding:16px 14px;
   border-bottom:1px solid rgba(255,255,255,.06);
 }
 .brand .logo{
