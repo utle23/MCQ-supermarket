@@ -330,16 +330,40 @@ function bdSubmit(){ const staff=$('#bd-staff').value, date=$('#bd-date').value;
 /* ============================================================ STAFF STRUCTURE (restaurant-style) */
 function renderStructure(){
   setAccent('#0e9f6e'); setCrumb('🏢','Staff Structure','Organisation chart');
+  if(!State.struct) State.struct={edit:false};
+  if(isAdmin() && State.struct.edit) return structEditor();
   const top=DB.structure[0];
-  const depts=DB.structure.slice(1).map(d=>{const [lead,...rest]=[d.head,...d.members];
-    return `<div class="ssd" style="--c:${d.color}"><div class="ssd-card"><div class="ssd-title">${esc(d.dept)}</div><div class="ssd-lead">${esc(d.head.split('—')[0].trim())}</div><div class="ssd-badge">${esc((d.head.split('—')[1]||'LEAD').trim().toUpperCase())}</div></div>
-      <div class="ssd-members">${d.members.map(m=>`<div class="ssd-member">${esc(m)}</div>`).join('')}</div></div>`;}).join('');
+  const depts=DB.structure.slice(1).map(d=>`<div class="ssd" style="--c:${d.color}"><div class="ssd-card"><div class="ssd-title">${esc(d.dept)}</div><div class="ssd-lead">${esc((d.head||'').split('—')[0].trim())}</div><div class="ssd-badge">${esc(((d.head||'').split('—')[1]||'LEAD').trim().toUpperCase())}</div></div>
+      <div class="ssd-members">${(d.members||[]).map(m=>`<div class="ssd-member">${esc(m)}</div>`).join('')}</div></div>`).join('');
   $('#content').innerHTML=`
-    <div class="page-head"><div class="ph-ic">🏢</div><div><h2>Staff Structure</h2><p>How MCQ Supermarket teams report and connect.</p></div></div>
+    <div class="page-head"><div class="ph-ic">🏢</div><div><h2>Staff Structure</h2><p>How MCQ Supermarket teams report and connect.</p></div>
+      ${isAdmin()?`<div class="ph-actions"><button class="btn primary" onclick="structEditToggle()">✎ Live editor</button></div>`:''}</div>
     <div class="ss-wrap">
-      <div class="ss-mgr"><div class="ss-mgr-role">${esc((top.head.split('—')[1]||'HEAD OFFICE').trim().toUpperCase())}</div><div class="ss-mgr-name">${esc(top.head.split('—')[0].trim())}</div>
-        <div class="ss-mgr-sub">${top.members.map(m=>esc(m)).join(' · ')}</div></div>
+      <div class="ss-mgr"><div class="ss-mgr-role">${esc(((top.head||'').split('—')[1]||'HEAD OFFICE').trim().toUpperCase())}</div><div class="ss-mgr-name">${esc((top.head||'').split('—')[0].trim())}</div>
+        <div class="ss-mgr-sub">${(top.members||[]).map(m=>esc(m)).join(' · ')}</div></div>
       <div class="ss-line"></div>
       <div class="ss-grid">${depts}</div>
     </div>`;
+}
+function structEditToggle(){ State.struct=State.struct||{}; State.struct.edit=!State.struct.edit; renderStructure(); }
+function structSet(i,f,v){ if(DB.structure[i]) DB.structure[i][f]=v; }
+function structSetMembers(i,txt){ if(DB.structure[i]) DB.structure[i].members=txt.split('\n').map(s=>s.trim()).filter(Boolean); }
+function structAddDept(){ DB.structure.push({dept:'NEW DEPARTMENT',color:'#0e9f6e',head:'Name — Lead',members:[]}); renderStructure(); }
+function structDelDept(i){ if(!confirm('Delete this department branch?')) return; DB.structure.splice(i,1); renderStructure(); }
+function structEditor(){
+  setCrumb('🏢','Staff Structure','Live editor');
+  const card=(d,i)=>`<div class="card struct-edit-card" style="border-top:4px solid ${d.color||'#0e9f6e'}"><div class="card-pad">
+    <div class="grid2">
+      <div class="field"><label>${i===0?'Top / Head Office':'Department / branch'}</label><input value="${esc(d.dept)}" oninput="structSet(${i},'dept',this.value)"></div>
+      <div class="field"><label>Lead / Head &nbsp;<small style="color:var(--muted)">(Name — Role)</small></label><input value="${esc(d.head||'')}" oninput="structSet(${i},'head',this.value)"></div>
+      ${i>0?`<div class="field"><label>Colour</label><input type="color" value="${d.color||'#0e9f6e'}" oninput="structSet(${i},'color',this.value)"></div>`:''}
+    </div>
+    <div class="field" style="margin-top:12px"><label>Members <small style="color:var(--muted)">(one per line)</small></label><textarea rows="4" oninput="structSetMembers(${i},this.value)">${esc((d.members||[]).join('\n'))}</textarea></div>
+    ${i>0?`<button class="btn sm" style="margin-top:10px;color:var(--bad);border-color:#f3c9c9" onclick="structDelDept(${i})"><i class="fas fa-trash"></i>&nbsp; Delete branch</button>`:''}
+  </div></div>`;
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🏢</div><div><h2>Staff Structure · Live editor</h2><p>Edit departments, leads &amp; members — changes apply instantly. Add new branches/levels or rename.</p></div>
+      <div class="ph-actions"><button class="btn" onclick="structAddDept()">＋ Add branch</button><button class="btn primary" onclick="structEditToggle()">✓ Done</button></div></div>
+    ${card(DB.structure[0],0)}
+    <div class="section-title">Departments / branches</div>
+    <div class="struct-edit-grid">${DB.structure.slice(1).map((d,k)=>card(d,k+1)).join('')}</div>`;
 }

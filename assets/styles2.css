@@ -551,3 +551,7 @@ input.invalid,select.invalid,textarea.invalid{border-color:var(--bad)!important;
 .ck-edit-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .ck-edit-row select{width:auto;min-width:128px}
 .ck-del{color:var(--bad);border-color:#f3c9c9}
+
+/* ---------------- staff structure live editor ---------------- */
+.struct-edit-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px}
+.struct-edit-card{box-shadow:var(--shadow)}

@@ -659,17 +659,47 @@ function renderStructure(){
 /* ============================================================ STAFF MEMBERS */
 function renderStaff(){
   setAccent('#0e9f6e'); setCrumb('🧑‍🤝‍🧑','Staff Members',`${DB.staff.length} people`);
-  const rows=DB.staff.filter(s=>isAdmin()||s.store===State.branch);
+  const rows=DB.staff.filter(s=>isSuper()||s.store===State.branch);
   const active=rows.filter(s=>s.active).length;
-  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🧑‍🤝‍🧑</div><div><h2>Staff Members</h2><p>Team directory across stores.</p></div></div>
+  const ed=State.staffEdit, roles=DB.staffRoles||['Staff'];
+  let editForm='';
+  if(ed){ const s = ed==='new'?{id:'',name:'',role:roles[4]||roles[0],store:State.branch,phone:'',dob:'',start:new Date().toISOString().slice(0,10),active:1} : (DB.staff.find(x=>x.id===ed)||{});
+    editForm=`<div class="card" style="margin-bottom:16px;border:2px solid var(--accent-soft)"><div class="card-head"><h3>${ed==='new'?'➕ Add staff member':'✎ Edit '+esc(s.name)}</h3><button class="btn sm" style="margin-left:auto" onclick="staffCancel()">✕ Cancel</button></div>
+      <div class="card-pad"><div class="grid2">
+        <div class="field"><label>Full name <span class="req">*</span></label><input id="st-name" value="${esc(s.name||'')}"></div>
+        <div class="field"><label>Role</label><select id="st-role">${roles.map(r=>`<option ${r===s.role?'selected':''}>${esc(r)}</option>`).join('')}</select></div>
+        <div class="field"><label>Store</label><select id="st-store">${DB.stores.map(x=>`<option ${x===s.store?'selected':''}>${esc(x)}</option>`).join('')}</select></div>
+        <div class="field"><label>Phone</label><input id="st-phone" value="${esc(s.phone||'')}" placeholder="0400 000 000"></div>
+        <div class="field"><label>Date of birth</label><input type="date" id="st-dob" value="${esc(s.dob||'')}"></div>
+        <div class="field"><label>Start date</label><input type="date" id="st-start" value="${esc(s.start||'')}"></div>
+        <div class="field"><label>Status</label><select id="st-active"><option value="1" ${s.active?'selected':''}>Active</option><option value="0" ${!s.active?'selected':''}>Inactive</option></select></div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:14px"><button class="btn primary" onclick="staffSave('${ed}')">💾 Save</button>${ed!=='new'?`<button class="btn" style="color:var(--bad);border-color:#f3c9c9" onclick="staffDelete('${esc(ed)}')"><i class="fas fa-trash"></i>&nbsp; Delete</button>`:''}</div>
+      </div></div>`;
+  }
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🧑‍🤝‍🧑</div><div><h2>Staff Members</h2><p>Team directory${isSuper()?' · all stores':' · '+esc(State.branch)}.</p></div>
+      <div class="ph-actions"><button class="btn primary" onclick="staffNew()"><i class="fas fa-user-plus"></i>&nbsp; Add member</button></div></div>
     <div class="kpi-grid"><div class="kpi tone-info"><div class="k-top"><div class="k-ic">👥</div></div><div class="k-val">${rows.length}</div><div class="k-lbl">Total staff</div></div>
       <div class="kpi tone-ok"><div class="k-top"><div class="k-ic">✅</div></div><div class="k-val">${active}</div><div class="k-lbl">Active</div></div>
       <div class="kpi tone-warn"><div class="k-top"><div class="k-ic">🏪</div></div><div class="k-val">${new Set(rows.map(s=>s.store)).size}</div><div class="k-lbl">Stores</div></div>
       <div class="kpi tone-mute"><div class="k-top"><div class="k-ic">🧰</div></div><div class="k-val">${new Set(rows.map(s=>s.role)).size}</div><div class="k-lbl">Roles</div></div></div>
-    <div class="card" style="margin-top:16px"><div class="card-head"><h3>Directory</h3></div><div class="table-wrap"><table class="grid"><thead><tr><th>ID</th><th>Name</th><th>Role</th><th>Store</th><th>Phone</th><th>Started</th><th>Status</th></tr></thead><tbody>
-      ${rows.map(s=>`<tr><td class="cell-id">#${esc(s.id)}</td><td><b>${esc(s.name)}</b></td><td>${esc(s.role)}</td><td>${esc(s.store)}</td><td>${esc(s.phone)}</td><td>${esc(s.start)}</td><td>${s.active?'<span class="badge ok"><span class="bdot"></span>Active</span>':'<span class="badge mute"><span class="bdot"></span>Inactive</span>'}</td></tr>`).join('')}
+    ${editForm}
+    <div class="card" style="margin-top:16px"><div class="card-head"><h3>Directory · ${rows.length}</h3></div><div class="table-wrap"><table class="grid"><thead><tr><th>ID</th><th>Name</th><th>Role</th><th>Store</th><th>Phone</th><th>DOB</th><th>Started</th><th>Status</th><th></th></tr></thead><tbody>
+      ${rows.map(s=>`<tr><td class="cell-id">#${esc(s.id)}</td><td><b>${esc(s.name)}</b></td><td>${esc(s.role||'')}</td><td>${esc(s.store)}</td><td>${esc(s.phone||'')}</td><td>${esc(s.dob||'—')}</td><td>${esc(s.start||'')}</td><td>${s.active?'<span class="badge ok"><span class="bdot"></span>Active</span>':'<span class="badge mute"><span class="bdot"></span>Inactive</span>'}</td><td><span class="ck-task-admin"><button onclick="staffEditOpen('${esc(s.id)}')" title="Edit">✎</button><button onclick="staffDelete('${esc(s.id)}')" title="Delete">🗑</button></span></td></tr>`).join('')}
       </tbody></table></div></div>`;
 }
+function staffNew(){ State.staffEdit='new'; renderStaff(); window.scrollTo({top:0,behavior:'smooth'}); }
+function staffEditOpen(id){ State.staffEdit=id; renderStaff(); window.scrollTo({top:0,behavior:'smooth'}); }
+function staffCancel(){ State.staffEdit=null; renderStaff(); }
+function staffSave(ed){
+  const g=id=>(document.getElementById(id)?.value||'');
+  const name=g('st-name').trim(); if(!name){ toast('Enter a name'); return; }
+  const rec={name,role:g('st-role'),store:g('st-store'),phone:g('st-phone'),dob:g('st-dob'),start:g('st-start'),active:g('st-active')==='1'?1:0};
+  if(ed==='new'){ rec.id=String(20000+Math.floor(Math.random()*9000)); DB.staff.unshift(rec); }
+  else { const s=DB.staff.find(x=>x.id===ed); if(s) Object.assign(s,rec); }
+  State.staffEdit=null; toast('✓ Staff saved'); renderStaff();
+}
+function staffDelete(id){ if(!confirm('Delete this staff member permanently?')) return; const i=DB.staff.findIndex(x=>x.id===id); if(i>=0) DB.staff.splice(i,1); State.staffEdit=null; toast('🗑 Staff deleted'); renderStaff(); }
 
 /* ============================================================ JOB SCHEDULE (weekly) */
 function renderSchedule(){
