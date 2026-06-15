@@ -102,8 +102,20 @@ function ckDraw(){
     html+=`<div class="ck-dept"><div class="ck-dept-h" style="--dc:${dm.color}"><span class="chk-dot" style="background:${dm.color}"></span>${esc(dept)}<span class="ck-dept-n">${Object.values(areas).flat().length} tasks</span></div>`;
     html+=ckRespHTML(dept);
     Object.entries(areas).forEach(([area,items])=>{
-      html+=`<div class="ck-area-h">${esc(area)}</div>`;
+      html+=`<div class="ck-area-h">${esc(area)}${isAdmin()?`<button class="ck-add-task" onclick="ckAddTask('${ckJS(dept)}','${ckJS(area)}')">＋ Add task</button>`:''}</div>`;
       items.forEach(r=>{ const st=State.chk.state[r.i]||{}; const done=st.done;
+        if(isAdmin() && State.chk.editing===r.i){
+          html+=`<div class="ck-task editing" id="ck-row-${r.i}"><div class="ck-edit">
+            <input id="cke-task" class="ck-edit-name" value="${esc(r.task)}" placeholder="Task description">
+            <div class="ck-edit-row">
+              <select id="cke-when"><option value="O" ${r.when==='O'?'selected':''}>☀️ Opening</option><option value="C" ${r.when==='C'?'selected':''}>🌙 Closing</option><option value="A" ${r.when==='A'?'selected':''}>All day</option></select>
+              <select id="cke-photo"><option value="0" ${!r.photo?'selected':''}>No photo</option><option value="O" ${r.photo&&!r.photo.req?'selected':''}>📷 Photo optional</option><option value="R1-5" ${r.photo&&r.photo.req?'selected':''}>📷 Photo required</option></select>
+              <button class="btn sm primary" onclick="ckSaveTask(${r.i})">💾 Save</button>
+              <button class="btn sm" onclick="ckCancelEdit()">Cancel</button>
+              <button class="btn sm ck-del" onclick="ckDelTask(${r.i})"><i class="fas fa-trash"></i></button>
+            </div></div></div>`;
+          return;
+        }
         let photoHtml='';
         if(r.photo){
           if(r.meta.temp && st.defrosting){
@@ -118,7 +130,7 @@ function ckDraw(){
         }
         html+=`<div class="ck-task ${done?'done':''}" id="ck-row-${r.i}">
           <button class="ck-check" onclick="ckTick(${r.i})">${done?'✓':''}</button>
-          <div class="ck-main"><div class="ck-name">${esc(r.task)}</div>
+          <div class="ck-main"><div class="ck-name">${esc(r.task)}${isAdmin()?`<span class="ck-task-admin"><button onclick="ckEditTask(${r.i})" title="Edit task">✎</button><button onclick="ckDelTask(${r.i})" title="Delete task">🗑</button></span>`:''}</div>
             ${r.meta.temp?ckTempBox(r,st):''}
             <input class="ck-note" placeholder="Add note…" value="${esc(st.note||'')}" oninput="ckNote(${r.i},this.value)">${photoHtml}</div></div>`;
       });
@@ -201,6 +213,31 @@ function ckRmPhoto(e,i,url){
 }
 function ckSession(v){State.chk.session=v;State.chk.area='ALL';renderChecklist();}
 function ckDept(d){State.chk.dept=d;State.chk.area='ALL';renderChecklist();}
+/* ---- admin checklist CRUD (add / edit / delete task) ---- */
+function ckEditTask(i){ State.chk.editing=i; renderChecklist(); }
+function ckCancelEdit(){ State.chk.editing=null; renderChecklist(); }
+function ckSaveTask(i){
+  const it=DB.checklist.items[i]; if(!it) return;
+  const name=(document.getElementById('cke-task')?.value||'').trim(); if(name) it[2]=name;
+  const w=document.getElementById('cke-when')?.value; if(w) it[3]=w;
+  const p=document.getElementById('cke-photo')?.value; it[4]= (p==='0'||!p)?0:p;
+  State.chk.editing=null; renderChecklist(); toast('✓ Task saved');
+}
+function ckAddTask(dept,area){
+  const when=State.chk.session==='Opening'?'O':'C';
+  DB.checklist.items.push([dept,area,'NEW TASK',when,0]);
+  State.chk.editing=DB.checklist.items.length-1;
+  if(State.chk.dept!=='ALL' && State.chk.dept!==dept) State.chk.dept=dept;
+  renderChecklist();
+}
+function ckDelTask(i){
+  if(!confirm('Delete this checklist task permanently?')) return;
+  DB.checklist.items.splice(i,1);
+  const ns={}; Object.entries(State.chk.state||{}).forEach(([k,v])=>{k=+k; if(k===i)return; ns[k>i?k-1:k]=v;});
+  State.chk.state=ns;
+  if(State.chk.editing===i) State.chk.editing=null; else if(State.chk.editing>i) State.chk.editing--;
+  renderChecklist(); toast('🗑 Task deleted');
+}
 function ckArea(a){State.chk.area=a;renderChecklist();}
 function ckAll(v){ckList().forEach(r=>{const st=State.chk.state[r.i]=State.chk.state[r.i]||{};st.done=v;});ckDraw();}
 function ckDefrost(i,on){
