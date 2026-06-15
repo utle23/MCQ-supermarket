@@ -11,50 +11,89 @@ const STEP_COLOR={'Verbal Discussion':'#FBC02D','Written Warning':'#FB8C00','Fin
 
 /* ============================================================ VIOLATION RULES */
 function renderViolation(){
-  setAccent('#c62828'); setCrumb('⚠️','Violation Rules','Conduct, warnings & escalation');
-  if(!State.vio) State.vio={rule:'',sev:'Minor',step:'Verbal Discussion'};
+  if(!State.vio) State.vio={rule:'',sev:'Minor',step:'Verbal Discussion',tab:'stats'};
+  setAccent('#c62828');
+  const tab=State.vio.tab||'stats';
+  if(tab==='new') return vioNew();
+  if(tab==='records') return vioRecords();
+  return vioStats();
+}
+function vioSeg(a){ return `<div class="seg seg-light"><button class="seg-btn ${a==='stats'?'active':''}" onclick="vioTab('stats')">📊 Stats</button><button class="seg-btn ${a==='records'?'active':''}" onclick="vioTab('records')">📋 Records</button><button class="seg-btn ${a==='new'?'active':''}" onclick="vioTab('new')">➕ New Case</button></div>`; }
+function vioTab(t){ State.vio.tab=t; renderViolation(); }
+function vioDrill(cat){ State.vio.drillCat = State.vio.drillCat===cat?null:cat; vioStats(); }
+function vioHead(a){ return `<div class="page-head"><div class="ph-ic" style="background:#fdeaea">⚠️</div><div><h2>Violation Rules</h2><p>Log staff rule breaches and manage the Verbal → Written → Final escalation.</p></div><div class="ph-actions">${vioSeg(a)}</div></div>`; }
+
+function vioStats(){
+  setCrumb('⚠️','Violation Rules','Stats & escalation');
   const recs=scopedRecords('violation');
   const active=recs.filter(r=>!['Resolved','Cancelled'].includes(r.status));
   const byStaff={}; active.forEach(r=>{(byStaff[r.staffName]=byStaff[r.staffName]||[]).push(r);});
-  const TH=3;
-  const watch=Object.entries(byStaff).filter(([n,v])=>v.length>=2).sort((a,b)=>b[1].length-a[1].length);
+  const TH=3, watch=Object.entries(byStaff).filter(([n,v])=>v.length>=2).sort((a,b)=>b[1].length-a[1].length);
   const total=recs.length, open=active.length, serious=recs.filter(r=>['Major','Critical'].includes(r.severity)).length, resolved=recs.filter(r=>r.status==='Resolved').length, rate=total?Math.round(resolved/total*100):0;
-  const staff=['— Select staff —',...DB.staff.filter(x=>isAdmin()||x.store===State.branch).map(x=>x.name)];
-
   const strikeHtml = watch.length?`<div class="card"><div class="card-head"><h3><i class="fas fa-user-shield" style="color:#b71c1c"></i>&nbsp; Staff Strike Standings</h3><span class="ch-sub">${TH}+ active = review for termination</span></div>
     <div class="card-pad"><div class="strike-grid">${watch.map(([name,vs])=>{const crit=vs.length>=TH; return `<div class="strike-card ${crit?'crit':'warn'}">
       <div class="strike-top"><b>${esc(name)}</b><span class="badge ${crit?'bad':'warn'}">${crit?'REVIEW FOR TERMINATION':'WARNING'}</span></div>
       <div class="strike-dots">${Array.from({length:TH}).map((_,i)=>`<span class="sdot ${i<vs.length?'on':''}">${i+1}</span>`).join('')}<b style="margin-left:6px">${vs.length} active</b></div>
       <div class="strike-sev">${[...new Set(vs.map(v=>v.step))].map(s=>`<span class="badge ${toneOf(s)}">${esc(s)}</span>`).join(' ')}</div></div>`;}).join('')}</div></div></div>`:'';
-
-  const ruleCards=DB.violationRules.map(rl=>`<button type="button" class="vrule ${State.vio.rule===rl.code?'active':''}" style="--rc:${sevColor(rl.severity)}" onclick="vioPick('${rl.code}')">
-    <div class="vrule-h"><span class="vrule-ic" style="background:${sevColor(rl.severity)}"><i class="fas fa-triangle-exclamation"></i></span>
-      <div><div class="vrule-t">${esc(rl.title)}</div><div class="vrule-tags"><span class="chip">${esc(rl.category)}</span><span class="badge ${toneOf(rl.severity)}">${esc(rl.severity)}</span></div></div></div>
-    <div class="vrule-d">${esc(rl.action)}</div></button>`).join('');
-
-  const list=recs.slice().sort((a,b)=>String(b.created||'').localeCompare(String(a.created||''))).map(v=>`
-    <div class="card vcard" style="--rc:${sevColor(v.severity)}" onclick='openDetail("violation","${esc(v.id)}")'>
-      <div class="vcard-h"><i class="fas fa-triangle-exclamation" style="color:${sevColor(v.severity)}"></i><b>${esc(v.category)}</b>
-        <span class="badge ${toneOf(v.severity)}">${esc(v.severity)}</span><span class="badge ${toneOf(v.step)}">${esc(v.step||'')}</span><span class="badge ${toneOf(v.status)}">${esc(v.status)}</span>
-        <span class="vcard-meta">👤 ${esc(v.staffName)} · 🏪 ${esc(v.store||'')} · ${esc((v.created||'').slice(0,16))}</span></div>
-      <div class="vcard-b">${esc(v.description||'')}</div></div>`).join('');
-
-  $('#content').innerHTML=`
-    <div class="page-head"><div class="ph-ic" style="background:#fdeaea">⚠️</div><div><h2>Violation Rules</h2><p>Log staff rule breaches and manage the Verbal → Written → Final warning escalation.</p></div></div>
+  const catCount={}; recs.forEach(r=>{const c=r.category||'Other';catCount[c]=(catCount[c]||0)+1;});
+  const catEnt=Object.entries(catCount).sort((a,b)=>b[1]-a[1]);
+  const dc=State.vio.drillCat||null;
+  const catChips=catEnt.map(([lbl,n])=>`<button class="drill-chip ${dc===lbl?'on':''}" onclick="vioDrill('${String(lbl).replace(/'/g,'’')}')">${esc(lbl)} <b>${n}</b></button>`).join('')||'<span style="color:var(--muted)">No data.</span>';
+  const stores=isSuper()?DB.stores:[State.branch];
+  let drillHtml='';
+  if(dc){ const dRecs=recs.filter(r=>(r.category||'Other')===dc), dOpen=dRecs.filter(r=>!['Resolved','Cancelled'].includes(r.status)).length;
+    drillHtml=`<div class="card drill-card"><div class="card-head"><h3>🔎 ${esc(dc)}</h3><span class="ch-sub">${dRecs.length} cases · ${dOpen} active</span><button class="btn sm" style="margin-left:auto" onclick="vioDrill('${String(dc).replace(/'/g,'’')}')">✕ Close</button></div>
+      <div class="card-pad"><div class="chart-grid cols-2"><div><div class="mini-h">By store</div><div class="chart-box"><canvas id="vd-store"></canvas></div></div><div><div class="mini-h">By warning step</div><div class="chart-box"><canvas id="vd-step"></canvas></div></div></div></div></div>`; }
+  const superCmp = isSuper()?`<div class="card"><div class="card-head"><h3>Store comparison</h3><span class="ch-sub">stacked by step</span></div><div class="card-pad"><div class="chart-box"><canvas id="vio-bystore"></canvas></div></div></div>`:'';
+  $('#content').innerHTML=`${vioHead('stats')}
     ${strikeHtml}
     <div class="kpi-grid" style="margin-top:${strikeHtml?'16px':'0'}">
       <div class="kpi tone-info"><div class="k-top"><div class="k-ic">📋</div></div><div class="k-val">${total}</div><div class="k-lbl">Total violations</div></div>
       <div class="kpi tone-bad"><div class="k-top"><div class="k-ic">🔴</div></div><div class="k-val">${open}</div><div class="k-lbl">Open / active</div></div>
       <div class="kpi tone-warn"><div class="k-top"><div class="k-ic">⚠️</div></div><div class="k-val">${serious}</div><div class="k-lbl">Serious / Major</div></div>
       <div class="kpi tone-ok"><div class="k-top"><div class="k-ic">✅</div></div><div class="k-val">${rate}%</div><div class="k-lbl">Resolved rate</div></div></div>
-    <div class="chart-grid cols-2">
+    <div class="chart-grid ${isSuper()?'cols-3':'cols-2'}">
       <div class="card"><div class="card-head"><h3>By warning step</h3></div><div class="card-pad"><div class="chart-box"><canvas id="vio-step"></canvas></div></div></div>
-      <div class="card"><div class="card-head"><h3>By severity</h3></div><div class="card-pad"><div class="chart-box"><canvas id="vio-sev"></canvas></div></div></div></div>
+      <div class="card"><div class="card-head"><h3>By severity</h3></div><div class="card-pad"><div class="chart-box"><canvas id="vio-sev"></canvas></div></div></div>
+      ${superCmp}</div>
+    <div class="section-title">Per-rule analytics — click a rule to drill in</div>
+    <div class="drill-chips">${catChips}</div>
+    ${drillHtml}`;
+  const stepG=groupCount(recs,'step'), sevG=groupCount(recs,'severity');
+  mkChart('vio-step',{type:'doughnut',data:{labels:stepG.labels,datasets:[{data:stepG.data,backgroundColor:stepG.labels.map(l=>STEP_COLOR[l]||'#90A4AE'),borderColor:'#fff',borderWidth:3}]},options:baseOpts({legend:true,donut:true})});
+  mkChart('vio-sev',{type:'doughnut',data:{labels:sevG.labels,datasets:[{data:sevG.data,backgroundColor:sevG.labels.map(sevColor),borderColor:'#fff',borderWidth:3}]},options:baseOpts({legend:true,donut:true})});
+  if(isSuper()){ const ds=DB.warningSteps.map(st=>({label:st,data:stores.map(s=>recs.filter(r=>r.store===s&&r.step===st).length),backgroundColor:STEP_COLOR[st]||'#90A4AE',borderRadius:4}));
+    mkChart('vio-bystore',{type:'bar',data:{labels:stores,datasets:ds},options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:true,position:'bottom',labels:{boxWidth:9,boxHeight:9,usePointStyle:true,pointStyle:'circle',padding:8,font:{family:'Inter',size:10,weight:'600'},color:'#475569'}}},scales:{x:{stacked:true,grid:{display:false},ticks:{font:{size:10},color:'#64748b'},border:{display:false}},y:{stacked:true,grid:{color:'#eef2f7'},ticks:{precision:0,color:'#64748b'},border:{display:false}}}}}); }
+  if(dc){ const dRecs=recs.filter(r=>(r.category||'Other')===dc);
+    mkChart('vd-store',{type:'bar',data:{labels:stores,datasets:[{data:stores.map(s=>dRecs.filter(r=>r.store===s).length),backgroundColor:'#c62828',borderRadius:6,maxBarThickness:30}]},options:baseOpts({legend:false})});
+    const sg=groupCount(dRecs,'step'); mkChart('vd-step',{type:'doughnut',data:{labels:sg.labels,datasets:[{data:sg.data,backgroundColor:sg.labels.map(l=>STEP_COLOR[l]||'#90A4AE'),borderColor:'#fff',borderWidth:3}]},options:baseOpts({legend:true,donut:true})}); }
+}
+
+function vioRecords(){
+  setCrumb('⚠️','Violation Rules','All records');
+  const recs=scopedRecords('violation').slice().sort((a,b)=>String(b.created||'').localeCompare(String(a.created||'')));
+  const list=recs.map(v=>`
+    <div class="card vcard" style="--rc:${sevColor(v.severity)}" onclick='openDetail("violation","${esc(v.id)}")'>
+      <div class="vcard-h"><i class="fas fa-triangle-exclamation" style="color:${sevColor(v.severity)}"></i><b>${esc(v.category)}</b>
+        <span class="badge ${toneOf(v.severity)}">${esc(v.severity)}</span><span class="badge ${toneOf(v.step)}">${esc(v.step||'')}</span><span class="badge ${toneOf(v.status)}">${esc(v.status)}</span>
+        <span class="vcard-meta">👤 ${esc(v.staffName)} · 🏪 ${esc(v.store||'')} · ${esc((v.created||'').slice(0,16))}</span></div>
+      <div class="vcard-b">${esc(v.description||'')}</div></div>`).join('');
+  $('#content').innerHTML=`${vioHead('records')}<div style="margin:0 2px 12px;color:var(--muted);font-size:12.5px;font-weight:600">${isSuper()?'All stores':esc(State.branch)} · ${recs.length} records</div>${list||'<div class="empty">No violations recorded.</div>'}`;
+}
+
+function vioNew(){
+  setCrumb('⚠️','Violation Rules','Record a violation');
+  const staff=DB.staff.filter(x=>isAdmin()||x.store===State.branch).map(x=>x.name);
+  const ruleCards=DB.violationRules.map(rl=>`<button type="button" class="vrule ${State.vio.rule===rl.code?'active':''}" style="--rc:${sevColor(rl.severity)}" onclick="vioPick('${rl.code}')">
+    <div class="vrule-h"><span class="vrule-ic" style="background:${sevColor(rl.severity)}"><i class="fas fa-triangle-exclamation"></i></span>
+      <div><div class="vrule-t">${esc(rl.title)}</div><div class="vrule-tags"><span class="chip">${esc(rl.category)}</span><span class="badge ${toneOf(rl.severity)}">${esc(rl.severity)}</span></div></div></div>
+    <div class="vrule-d">${esc(rl.action)}</div></button>`).join('');
+  $('#content').innerHTML=`${vioHead('new')}
     <div class="vio-grid">
       <div class="card"><div class="card-head"><h3><i class="fas fa-pen-to-square"></i>&nbsp; Record violation</h3></div><div class="card-pad">
-        <div class="rail-tip" style="margin-bottom:14px">💡 Click a rule card to auto-fill the rule, severity &amp; suggested action.</div>
+        <div class="rail-tip" style="margin-bottom:14px">💡 Click a rule card to auto-fill the rule, severity &amp; suggested action. Picking a staff member auto-suggests the next warning step.</div>
         <div class="grid2">
-          <div class="field"><label>Staff member <span class="req">*</span></label><select id="vio-staff" onchange="vioStaffChange()"><option value="">— Select staff —</option>${staff.filter(n=>!n.startsWith('—')).map(n=>`<option>${esc(n)}</option>`).join('')}</select></div>
+          <div class="field"><label>Staff member <span class="req">*</span></label><select id="vio-staff" onchange="vioStaffChange()"><option value="">— Select staff —</option>${staff.map(n=>`<option>${esc(n)}</option>`).join('')}</select></div>
           <div class="field"><label>Store</label><select id="vio-store">${(isAdmin()?DB.stores:[State.branch]).map(s=>`<option ${s===State.branch?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
           <div class="field"><label>Severity</label><select id="vio-sev2">${['Minor','Moderate','Major','Critical'].map(s=>`<option ${s===State.vio.sev?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
           <div class="field"><label>Warning step <span class="auto-tag" id="vio-step-auto" style="display:none">auto</span></label><select id="vio-step" onchange="State.vio.step=this.value">${DB.warningSteps.map(s=>`<option ${s===State.vio.step?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
@@ -68,25 +107,19 @@ function renderViolation(){
         <button class="btn block lg" style="margin-top:14px;background:linear-gradient(135deg,#e53935,#c62828);color:#fff;border:0" onclick="vioSubmit()"><i class="fas fa-save"></i>&nbsp; Submit Violation</button>
       </div></div>
       <div><div class="section-title" style="margin-top:0">Rule catalog</div><div class="vrule-grid">${ruleCards}</div></div>
-    </div>
-    <div class="section-title">Violation records</div>
-    ${list||'<div class="empty">No violations recorded.</div>'}`;
-
-  const stepG=groupCount(recs,'step'), sevG=groupCount(recs,'severity');
-  mkChart('vio-step',{type:'doughnut',data:{labels:stepG.labels,datasets:[{data:stepG.data,backgroundColor:stepG.labels.map(l=>STEP_COLOR[l]||'#90A4AE'),borderColor:'#fff',borderWidth:3}]},options:baseOpts({legend:true,donut:true})});
-  mkChart('vio-sev',{type:'doughnut',data:{labels:sevG.labels,datasets:[{data:sevG.data,backgroundColor:sevG.labels.map(sevColor),borderColor:'#fff',borderWidth:3}]},options:baseOpts({legend:true,donut:true})});
+    </div>`;
 }
 function vioPick(code){ const r=DB.violationRules.find(x=>x.code===code); if(!r) return; State.vio.rule=code; State.vio.ruleTitle=r.title; State.vio.sev=r.severity;
   document.querySelectorAll('.vrule').forEach(c=>c.classList.remove('active')); event.currentTarget.classList.add('active');
   const ri=$('#vio-rule'); if(ri) ri.value=r.title; const sv=$('#vio-sev2'); if(sv) sv.value=r.severity; const ac=$('#vio-action'); if(ac&&!ac.value) ac.value=r.action; }
 function vioSubmit(){
   const staff=$('#vio-staff').value, desc=$('#vio-desc').value.trim();
-  if(staff.startsWith('—')||!State.vio.ruleTitle||!desc){ toast('Pick a rule, staff and description'); return; }
+  if(!staff||staff.startsWith('—')||!State.vio.ruleTitle||!desc){ toast('Pick a rule, staff and description'); return; }
   const step=$('#vio-step').value;
   const id=`VIO-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${Math.floor(1000+Math.random()*9000)}`;
   DB.modules.violation.records.unshift({id,created:new Date().toISOString().slice(0,16).replace('T',' '),staffName:staff,store:$('#vio-store').value,
     category:State.vio.ruleTitle,severity:$('#vio-sev2').value,step,status:step,description:desc,actionTaken:$('#vio-action').value,followUpDate:$('#vio-follow').value});
-  State.vio={rule:'',sev:'Minor',step:'Verbal Discussion'}; toast(`✓ Violation logged · ${step}`); buildSidebar(); renderViolation();
+  State.vio={rule:'',sev:'Minor',step:'Verbal Discussion',tab:'records'}; toast(`✓ Violation logged · ${step}`); buildSidebar(); renderViolation();
 }
 /* Auto-suggest the next escalation step from the staff's history (Verbal→Written→Final→Termination) */
 function vioStaffChange(){
