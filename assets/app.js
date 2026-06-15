@@ -40,7 +40,7 @@ function showLogin(notice){
     <div class="login-bg"><span class="orb o1"></span><span class="orb o2"></span><span class="orb o3"></span><span class="orb o4"></span></div>
     <div class="login-card">
       <div class="login-brand">${logoHTML('lg')}
-        <div><div class="lb-name">MCQ Supermarket</div><div class="lb-sub">Operations Platform</div></div>
+        <div class="lb-sub">Supermarket Operations Platform</div>
       </div>
       <h1 class="login-h">Welcome back</h1>
       <p class="login-p">Sign in to your store operations workspace.</p>
