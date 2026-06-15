@@ -864,17 +864,26 @@ function waCopy(){ navigator.clipboard?.writeText($('#wa-msg').value); toast('Su
 
 /* ============================================================ EMAIL NOTIFICATIONS */
 function renderEmail(){
-  setAccent('#1565c0'); setCrumb('✉️','Email Notifications','Who gets alerted, and for what');
-  const recips=[['tony@mcqinternational.com','Head Office','all'],['ops@mcqinternational.com','Operations','critical'],['hr@mcqinternational.com','HR','violations'],['maintenance@mcqinternational.com','Facilities','maintenance']];
-  const events=[['Critical / Major incident',true],['New complaint (Major)',true],['Maintenance Critical',true],['Violation — Final Warning',true],['Daily checklist not completed',false],['Monthly reward approved',false]];
-  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">✉️</div><div><h2>Email Notifications</h2><p>Configure recipients and which events trigger an email.</p></div></div>
-    <div class="split-2"><div class="card"><div class="card-head"><h3>Recipients</h3></div><div class="table-wrap"><table class="grid"><thead><tr><th>Email</th><th>Role</th><th>Scope</th><th></th></tr></thead><tbody>
-      ${recips.map(r=>`<tr><td><b>${esc(r[0])}</b></td><td>${esc(r[1])}</td><td><span class="badge info"><span class="bdot"></span>${esc(r[2])}</span></td><td><label class="switch"><input type="checkbox" checked><span></span></label></td></tr>`).join('')}
-      </tbody></table></div><div class="card-pad"><button class="btn sm">＋ Add recipient</button></div></div>
-      <div class="card"><div class="card-head"><h3>Trigger events</h3></div><div class="card-pad">
-      ${events.map(e=>`<label class="ev-row"><span>${esc(e[0])}</span><label class="switch"><input type="checkbox" ${e[1]?'checked':''}><span></span></label></label>`).join('')}
-      <button class="btn primary block" style="margin-top:14px" onclick="toast('Email settings saved (demo)')">💾 Save settings</button></div></div></div>`;
+  setAccent('#1565c0'); setCrumb('✉️','Email Notifications','Customise who gets which alerts');
+  const recips=DB.emailRecipients||[], cats=DB.issueCategories||{}, groups=DB.issueGroups||[];
+  const cards=recips.map(r=>{
+    const myN=Object.keys(cats).filter(k=>(DB.issueEmailRoutes[k]||[]).includes(r.key)).length;
+    const open=State.emailOpen===r.key;
+    const dd=open?`<div class="email-dd">${groups.map(g=>{const inG=Object.entries(cats).filter(([k,c])=>c.group===g); return inG.length?`<div class="email-grp">${esc(g)}</div><div class="email-cats">`+inG.map(([k,c])=>{const on=(DB.issueEmailRoutes[k]||[]).includes(r.key);return `<label class="email-cat"><input type="checkbox" ${on?'checked':''} onchange="issEmailToggle('${k}','${r.key}',this.checked);emailRefreshCount('${r.key}')"><i class="fas ${c.icon}" style="color:${c.color}"></i> ${esc(c.label)}</label>`;}).join('')+`</div>`:'';}).join('')}</div>`:'';
+    return `<div class="card email-card"><div class="email-row">
+        <div class="avatar">${esc(r.name.slice(0,1))}</div>
+        <div class="email-info"><b>${esc(r.name)}</b><small>${esc(r.email)}</small></div>
+        <span class="badge info" id="email-cnt-${r.key}">${myN} categories</span>
+        <button class="btn sm" onclick="emailToggleDD('${r.key}')">Customise ${open?'▲':'▾'}</button>
+      </div>${dd}</div>`;
+  }).join('');
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic" style="background:#e8f1fe">✉️</div><div><h2>Email Notifications</h2><p>For each person, tick which Report-Issue categories they get emailed. Violation alerts always go to everyone.</p></div></div>
+    <div class="rail-tip" style="margin-bottom:16px;background:var(--bad-bg);border-color:#f3c9c9">⚠️ <b>Violation alerts</b> are sent to <b>all recipients</b> by default — no per-category opt-out.</div>
+    <div class="section-title">Report Issue · who receives which category</div>
+    <div class="email-list">${cards||'<div class="empty">No recipients.</div>'}</div>`;
 }
+function emailToggleDD(k){ State.emailOpen=State.emailOpen===k?null:k; renderEmail(); }
+function emailRefreshCount(k){ const cats=DB.issueCategories||{}; const n=Object.keys(cats).filter(c=>(DB.issueEmailRoutes[c]||[]).includes(k)).length; const el=document.getElementById('email-cnt-'+k); if(el) el.textContent=n+' categories'; }
 
 /* ============================================================ DATA MANAGEMENT */
 function renderData(){
