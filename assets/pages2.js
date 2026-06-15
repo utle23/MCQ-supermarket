@@ -141,13 +141,15 @@ function vioStaffChange(){
 
 /* ============================================================ TRAINING ASSESSMENT */
 const TRN_RATINGS=[['Excellent','#2E7D32','#E8F5E9'],['Good','#1565C0','#E3F2FD'],['Satisfactory','#F57C00','#FFF3E0'],['Needs work','#C62828','#FDECEA']];
+/* training topics are DERIVED from the live checklist: role = department, topics grouped by area */
+function trnTopics(){ const t={}; ((DB.checklist&&DB.checklist.items)||[]).forEach(it=>{ const d=it[0],a=it[1],task=it[2]; (t[d]=t[d]||{}); (t[d][a]=t[d][a]||[]); if(!t[d][a].includes(task)) t[d][a].push(task); }); return t; }
 function renderTraining(){
-  setAccent('#c0392b'); setCrumb('🎓','Training Assessment','Score staff training by role & topic');
+  setAccent('#c0392b'); setCrumb('🎓','Training Assessment','Score staff training by role & checklist task');
   if(!State.trn) State.trn={mode:'list',role:'',rating:'',items:[]};
   if(State.trn.mode==='new') return trnForm();
   const recs=scopedRecords('training');
   const done=recs.filter(r=>r.status==='Completed').length;
-  const roles=Object.keys(DB.trainingTopics).length;
+  const roles=Object.keys(trnTopics()).length;
   const thisMonth=recs.filter(r=>(r.sessionDate||'').slice(0,7)===new Date().toISOString().slice(0,7)).length;
   const ratingColor=v=>(TRN_RATINGS.find(r=>r[0]===v)||['','#888','#eee']);
   $('#content').innerHTML=`
@@ -168,7 +170,7 @@ function trnBack(){ State.trn.mode='list'; renderTraining(); }
 function trnForm(){
   setCrumb('🎓','New Training Session','Score each topic by role');
   const staff=DB.staff.map(x=>x.name);
-  const roles=Object.keys(DB.trainingTopics);
+  const roles=Object.keys(trnTopics());
   $('#content').innerHTML=`
     <div class="page-head"><div class="ph-ic" style="background:#fdeaea">🎓</div><div><h2>New Training Session</h2><p>Pick a role to load its topics, then mark each as Achieved / Needs practice / Not covered.</p></div>
       <div class="ph-actions"><button class="btn" onclick="trnBack()"><i class="fas fa-arrow-left"></i>&nbsp; Back</button></div></div>
@@ -191,9 +193,9 @@ function trnForm(){
       </div></div></div>
     <button class="btn primary lg" style="margin:6px 0 16px" onclick="trnSave()"><i class="fas fa-save"></i>&nbsp; Submit Training Report</button>`;
 }
-function trnRole(role){ const c=$('#trn-topics'); if(!role||!DB.trainingTopics[role]){c.innerHTML='<div class="topics-ph">Select a role…</div>';return;}
+function trnRole(role){ const c=$('#trn-topics'); const topics=trnTopics()[role]; if(!role||!topics){c.innerHTML='<div class="topics-ph">Select a role…</div>';return;}
   State.trn.role=role; let html='';
-  Object.entries(DB.trainingTopics[role]).forEach(([cat,items])=>{ html+=`<div class="cat-h2">${esc(cat)}</div>`;
+  Object.entries(topics).forEach(([cat,items])=>{ html+=`<div class="cat-h2">${esc(cat)}</div>`;
     items.forEach((it,i)=>{ const id=cat+'::'+it; html+=`<div class="trow s-not" data-id="${esc(id)}"><span class="tname">${esc(it)}</span><div class="sbtns">
       <button class="sbtn" data-s="achieved" onclick="trnStatus(this,'achieved')" title="Achieved"><i class="fas fa-check"></i></button>
       <button class="sbtn" data-s="needs" onclick="trnStatus(this,'needs')" title="Needs practice"><i class="fas fa-exclamation"></i></button>
