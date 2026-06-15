@@ -9,7 +9,8 @@ const State = { account:null, role:'store', branch:'Morley', route:{mod:'home',t
 const $  = (s,r=document)=>r.querySelector(s);
 const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const isAdmin = ()=> State.account && State.account.role==='admin';
+const isAdmin = ()=> State.account && (State.account.role==='admin' || State.account.role==='super');
+const isSuper = ()=> State.account && State.account.role==='super';
 function logoHTML(cls){ return `<span class="mcq-logo ${cls||''}"><img src="assets/mcq-logo-exact.png" alt="MCQ Supermarket logo"></span>`; }
 
 /* ---------- tones / colours ---------- */
@@ -21,13 +22,14 @@ const toneHex=l=>TONE_HEX[toneOf(l)];
 /* ---------- current user / scope ---------- */
 function me(){
   const a=State.account||{name:'Guest',role:'staff',branch:'Morley'};
-  return { name:a.name, role:isAdmin()?'Head Office / Admin':'Store Staff',
-    scope:isAdmin()?'All stores':a.branch, store:a.branch, initials:a.initials||'?', kind:isAdmin()?'ho':'store' };
+  const roleLabel = a.role==='super'?'Super Admin':a.role==='admin'?'Store Admin':'Store Staff';
+  return { name:a.name, role:roleLabel,
+    scope:isSuper()?'All stores':a.branch, store:a.branch, initials:a.initials||'?', kind:isAdmin()?'ho':'store' };
 }
 function scopedRecords(mod){
   const m=DB.modules[mod]; if(!m||!m.records) return [];
-  if(!isAdmin()){ const s=State.branch; return m.records.filter(r=>!r.store || r.store===s); }
-  return m.records;
+  if(isSuper()) return m.records;                 // super admin: every store
+  const s=State.branch; return m.records.filter(r=>!r.store || r.store===s);  // admin + staff: own store only
 }
 
 /* ============================================================ LOGIN */
@@ -48,6 +50,7 @@ function showLogin(notice){
       <div class="seg" id="login-mode">
         <button class="seg-btn active" data-mode="staff">🧑‍💼 Staff</button>
         <button class="seg-btn" data-mode="admin">🛡️ Admin</button>
+        <button class="seg-btn" data-mode="super">👑 Super</button>
       </div>
       <label class="login-lbl">Store / Branch</label>
       <select id="login-branch" class="login-input">${branches}</select>
@@ -86,11 +89,16 @@ function loginMode(){ return $('#login-mode .seg-btn.active').dataset.mode; }
 function togglePw(){ const p=$('#login-pw'); p.type=p.type==='password'?'text':'password'; }
 function loginFail(m){ const e=$('#login-err'); if(e) e.textContent='❌ '+m; const c=$('.login-card'); if(c){ c.classList.add('shake'); setTimeout(()=>c.classList.remove('shake'),450); } }
 function updateLoginHint(){ const el=$('#login-hint'); if(!el) return; const mode=loginMode(), branch=$('#login-branch')?.value;
-  el.innerHTML = mode==='admin' ? `Admin password: <b>${esc(DB.auth.adminPassword)}</b> · full access, all stores`
+  el.innerHTML = mode==='super' ? `Super Admin password: <b>${esc(DB.auth.superAdminPassword)}</b> · all stores + compare`
+    : mode==='admin' ? `Admin password: <b>${esc(DB.auth.adminPassword)}</b> · this store only`
     : `MCQ ${esc(branch||'')} staff password: <b>${esc(DB.auth.branchPasswords[branch]||'—')}</b>`; }
 function doLogin(){
   const pw=$('#login-pw').value.trim(), branch=$('#login-branch').value, mode=loginMode();
   $('#login-err').textContent='';
+  if(mode==='super'){
+    if(pw===DB.auth.superAdminPassword) return loginAs('super',branch);
+    return loginFail('Incorrect super admin password.');
+  }
   if(mode==='admin'){
     if(pw===DB.auth.adminPassword) return loginAs('admin',branch);
     return loginFail('Incorrect admin password.');
@@ -101,10 +109,10 @@ function doLogin(){
   loginFail(`Wrong password for MCQ ${branch}.`);
 }
 function loginAs(role, branch){
-  const name = role==='admin' ? 'Tony Lam' : (branch+' Staff');
-  const initials = role==='admin' ? 'TL' : branch.slice(0,2).toUpperCase();
+  const name = role==='super' ? 'Head Office' : role==='admin' ? (branch+' Admin') : (branch+' Staff');
+  const initials = role==='super' ? 'HO' : role==='admin' ? branch.slice(0,2).toUpperCase() : branch.slice(0,2).toUpperCase();
   State.account={ name, role, branch, initials };
-  State.branch=branch; State.role=role==='admin'?'ho':'store';
+  State.branch=branch; State.role=role==='staff'?'store':'ho';
   try{ sessionStorage.setItem('mcq_acct', JSON.stringify(State.account)); }catch(e){}
   enterApp();
 }
@@ -136,7 +144,7 @@ async function faceIdLogin(){
   }catch(e){ sub.textContent='Camera blocked — simulating scan (open via localhost for live camera)'; }
   State._fidStream=stream;
   setTimeout(()=>{ sub.innerHTML='✅ Face recognised'; }, 1900);
-  setTimeout(()=>{ closeFid(); const role=loginMode()==='admin'?'admin':'staff'; loginAs(role, $('#login-branch').value); }, 2600);
+  setTimeout(()=>{ closeFid(); loginAs(loginMode(), $('#login-branch').value); }, 2600);
 }
 function closeFid(){ const m=$('#fid-modal'); if(m) m.classList.remove('open');
   if(State._fidStream){ State._fidStream.getTracks().forEach(t=>t.stop()); State._fidStream=null; } }

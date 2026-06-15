@@ -9,7 +9,8 @@
 /* ---------- Auth & branches ---------- */
 DB.branches = ['Morley','Mirrabooka','Malaga','Subiaco','Armadale','Beechboro Fresh','Market West','Warehouse'];
 DB.auth = {
-  adminPassword: '77771',                 // single admin password (full access, all stores)
+  adminPassword: '77771',                 // store admin — own store only
+  superAdminPassword: '99999',             // super admin — ALL stores + cross-store compare
   branchPasswords: {                      // each branch has its OWN staff password
     'Morley':'1111', 'Mirrabooka':'2222', 'Malaga':'3333', 'Subiaco':'4444',
     'Armadale':'5555', 'Beechboro Fresh':'6666', 'Market West':'7000', 'Warehouse':'8000',
@@ -473,7 +474,7 @@ DB.modules.issue = {
 
 /* ---------- navigation groups (sidebar) ---------- */
 DB.navGroups = [
-  { id:'ops',    label:'Operations', icon:'fa-clipboard-list', items:['checklist','complaint','maintenance','incident','delivery','people'] },
+  { id:'ops',    label:'Operations', icon:'fa-clipboard-list', items:['checklist','delivery','people'] },
   { id:'hr',     label:'Staff & HR', icon:'fa-users',          items:['structure','staff','schedule','training','violation','reward','raise','birthday'], admin:true },
   { id:'mgmt',   label:'Management', icon:'fa-user-shield',     items:['manager','analytics','photos','whatsapp','email','data'], admin:true },
   { id:'reports',label:'Reports & Rules', icon:'fa-flag',       items:['rules','issue'] },
