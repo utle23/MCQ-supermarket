@@ -441,7 +441,7 @@ function renderIssue(){
   setAccent('#e53935'); setCrumb('🚩','Report an Issue','Report anything that needs management attention');
   if(!State.iss) State.iss={cat:'',photo:null,prio:'Normal',tab:'report'};
   if(State.iss.tab==='analytics') return renderIssueAnalytics();
-  if(State.iss.tab==='email' && isAdmin()) return renderIssueEmail();
+  if(State.iss.tab==='records') return renderIssueRecords();
   const cats=DB.issueCategories;
   const card=(k,c)=>`<button type="button" class="cat-card ${State.iss.cat===k?'selected':''}" data-k="${k}" style="--cc:${c.color}" onclick="issCat('${k}')"><i class="fas ${c.icon} cat-ic" style="color:${c.color}"></i><span class="cat-label">${esc(c.label)}</span></button>`;
   const cards=DB.issueGroups.map(g=>{const inG=Object.entries(cats).filter(([k,c])=>c.group===g); return inG.length?`<div class="cat-group-h">${esc(g)}</div><div class="cat-grid">${inG.map(([k,c])=>card(k,c)).join('')}</div>`:'';}).join('');
@@ -482,11 +482,7 @@ function renderIssue(){
          <ul><li>Only management can view submitted reports</li><li>Reports are reviewed promptly</li><li>For urgent issues, speak to your manager directly</li><li>Missed clock-in/out: management will adjust your timesheet</li><li>Suggestions are always welcome</li></ul></div>
        <div class="card rail-card"><h4>Categories</h4><div class="cat-list">${Object.values(cats).map(c=>`<div class="cat-list-row"><i class="fas ${c.icon}" style="color:${c.color}"></i> ${esc(c.label)}</div>`).join('')}</div></div>
      </aside>
-   </div>
-   ${recent.length?`<div class="section-title">Recent reports${isAdmin()?'':' · '+esc(State.branch)}</div>
-     <div class="card"><div class="table-wrap"><table class="grid"><thead><tr><th>Ref</th><th>Register</th><th>Title</th><th>Store</th><th>Priority</th><th>Status</th></tr></thead><tbody>
-     ${recent.map(r=>`<tr onclick='openDetail("${r.mod}","${esc(r.id)}")'><td class="cell-id">${esc(r.id)}</td><td><span class="reg-tag">${r.icon} ${esc(r.short)}</span></td><td><div class="wrap">${esc(r.title||r.equipment||r.summary||r.shortDescription||r.category||'')}</div></td><td>${esc(r.store||'')}</td><td>${(r.priority||r.severity)?badge(r.priority||r.severity):''}</td><td>${r.status?badge(r.status):''}</td></tr>`).join('')}
-     </tbody></table></div></div>`:''}`;
+   </div>`;
 }
 function issCat(k){ State.iss.cat=k;
   $$('.cat-card').forEach(c=>c.classList.toggle('selected',c.getAttribute('data-k')===k));
@@ -531,7 +527,21 @@ function issGroupOf(r){
   const c=Object.values(DB.issueCategories).find(x=>x.label===r.category); return c?c.group:'Other';
 }
 function issTab(t){ if(!State.iss)State.iss={cat:'',photo:null,prio:'Normal'}; State.iss.tab=t; renderIssue(); }
-function issSeg(active){ return `<div class="seg seg-light"><button class="seg-btn ${active==='report'?'active':''}" onclick="issTab('report')">➕ Report</button><button class="seg-btn ${active==='analytics'?'active':''}" onclick="issTab('analytics')">📊 Analytics</button>${isAdmin()?`<button class="seg-btn ${active==='email'?'active':''}" onclick="issTab('email')">📧 Email</button>`:''}</div>`; }
+function issDrill(cat){ if(!State.iss)State.iss={}; State.iss.drillCat = State.iss.drillCat===cat?null:cat; renderIssueAnalytics(); }
+function issSeg(active){ return `<div class="seg seg-light"><button class="seg-btn ${active==='report'?'active':''}" onclick="issTab('report')">➕ New</button><button class="seg-btn ${active==='records'?'active':''}" onclick="issTab('records')">📋 Records</button><button class="seg-btn ${active==='analytics'?'active':''}" onclick="issTab('analytics')">📊 Analytics</button></div>`; }
+function renderIssueRecords(){
+  setAccent('#e53935'); setCrumb('🚩','Report an Issue · Records','All reports across registers');
+  const regMods=['issue','maintenance','incident','complaint'];
+  let all=[]; regMods.forEach(id=>DB.modules[id].records.forEach(r=>all.push({mod:id,icon:DB.modules[id].icon,short:DB.modules[id].short,...r})));
+  if(!isSuper()) all=all.filter(r=>r.store===State.branch);
+  all.sort((a,b)=>String(b.created||b.date||'').localeCompare(String(a.created||a.date||'')));
+  $('#content').innerHTML=`
+    <div class="page-head"><div class="ph-ic" style="background:#fdeaea">🚩</div><div><h2>Report an Issue · Records</h2><p>Every report — Issue / Maintenance / Incident / Complaint, newest first.</p></div>
+      <div class="ph-actions">${issSeg('records')}</div></div>
+    <div class="card"><div class="card-head"><h3>${isSuper()?'All stores':esc(State.branch)} · ${all.length} reports</h3></div><div class="table-wrap"><table class="grid"><thead><tr><th>Ref</th><th>Register</th><th>Title</th><th>Store</th><th>Priority</th><th>Status</th><th>Date</th></tr></thead><tbody>
+    ${all.length?all.map(r=>`<tr onclick='openDetail("${r.mod}","${esc(r.id)}")'><td class="cell-id">${esc(r.id)}</td><td><span class="reg-tag">${r.icon} ${esc(r.short)}</span></td><td><div class="wrap">${esc(r.title||r.equipment||r.summary||r.shortDescription||r.category||'')}</div></td><td>${esc(r.store||'')}</td><td>${(r.priority||r.severity)?badge(r.priority||r.severity):''}</td><td>${r.status?badge(r.status):''}</td><td>${esc((r.created||r.date||'').slice(0,16))}</td></tr>`).join(''):'<tr><td colspan="7"><div class="empty">No reports yet.</div></td></tr>'}
+    </tbody></table></div></div>`;
+}
 function renderIssueEmail(){
   setAccent('#1565c0'); setCrumb('🚩','Report an Issue · Email routing','Choose who gets emailed per category');
   const cats=DB.issueCategories, recips=DB.emailRecipients;
@@ -563,6 +573,13 @@ function renderIssueAnalytics(){
   const matRows=stores.map(s=>{const row=matrix[s],tot=groups.reduce((n,g)=>n+row[g],0);
     return `<tr><td><b>${esc(s)}</b></td>${groups.map(g=>`<td class="num">${row[g]?`<span class="mx" style="background:${ISS_GROUP_COLOR[g]};opacity:${(0.5+Math.min(0.5,row[g]/8)).toFixed(2)}">${row[g]}</span>`:'<span class="mx0">·</span>'}</td>`).join('')}<td class="num"><b>${tot}</b></td></tr>`;}).join('');
   const totRow=`<tr class="mx-tot"><td><b>All branches</b></td>${groups.map(g=>`<td class="num"><b>${stores.reduce((n,s)=>n+matrix[s][g],0)}</b></td>`).join('')}<td class="num"><b>${all.length}</b></td></tr>`;
+  const dc=State.iss.drillCat||null;
+  const catChips=catEnt.map(([lbl,n])=>`<button class="drill-chip ${dc===lbl?'on':''}" onclick="issDrill('${lbl}')">${esc(lbl)} <b>${n}</b></button>`).join('');
+  let drillHtml='';
+  if(dc){ const dRecs=all.filter(r=>(r.category||'Other')===dc), dOpen=dRecs.filter(r=>!['Closed','Cancelled','Resolved','Store Confirmed'].includes(r.status)).length;
+    const topStore=stores.map(s=>[s,dRecs.filter(r=>r.store===s).length]).sort((a,b)=>b[1]-a[1])[0];
+    drillHtml=`<div class="card drill-card"><div class="card-head"><h3>🔎 ${esc(dc)}</h3><span class="ch-sub">${dRecs.length} reports · ${dOpen} open${isSuper()&&topStore&&topStore[1]?` · most at ${esc(topStore[0])}`:''}</span><button class="btn sm" style="margin-left:auto" onclick="issDrill('${dc}')">✕ Close</button></div>
+      <div class="card-pad"><div class="chart-grid cols-2"><div><div class="mini-h">By store</div><div class="chart-box"><canvas id="iad-store"></canvas></div></div><div><div class="mini-h">By status</div><div class="chart-box"><canvas id="iad-status"></canvas></div></div></div></div></div>`; }
   $('#content').innerHTML=`
     <div class="page-head"><div class="ph-ic" style="background:#fdeaea">🚩</div><div><h2>Report an Issue · Analytics</h2><p>Breakdown by category, with a side-by-side comparison across branches.</p></div>
       <div class="ph-actions">${issSeg('analytics')}</div></div>
@@ -572,7 +589,16 @@ function renderIssueAnalytics(){
       <div class="card"><div class="card-head"><h3>Branch comparison</h3><span class="ch-sub">stacked by type</span></div><div class="card-pad"><div class="chart-box"><canvas id="ia-branch"></canvas></div></div></div>
     </div>
     <div class="section-title">Branch × category matrix</div>
-    <div class="card"><div class="table-wrap"><table class="grid mx-table"><thead><tr><th>Store</th>${groups.map(g=>`<th>${esc(g.split(' & ')[0].replace('Maintenance','Maint.'))}</th>`).join('')}<th>Total</th></tr></thead><tbody>${matRows}${totRow}</tbody></table></div></div>`;
+    <div class="card"><div class="table-wrap"><table class="grid mx-table"><thead><tr><th>Store</th>${groups.map(g=>`<th>${esc(g.split(' & ')[0].replace('Maintenance','Maint.'))}</th>`).join('')}<th>Total</th></tr></thead><tbody>${matRows}${totRow}</tbody></table></div></div>
+    <div class="section-title">Per-category analytics — click a category to drill in</div>
+    <div class="drill-chips">${catChips||'<span class="text-muted" style="color:var(--muted)">No data.</span>'}</div>
+    ${drillHtml}`;
+  if(dc){ const dRecs=all.filter(r=>(r.category||'Other')===dc);
+    const sCounts=stores.map(s=>dRecs.filter(r=>r.store===s).length);
+    mkChart('iad-store',{type:'bar',data:{labels:stores,datasets:[{data:sCounts,backgroundColor:'#e53935',borderRadius:6,maxBarThickness:30}]},options:baseOpts({legend:false})});
+    const stMap={}; dRecs.forEach(r=>{const s=r.status||'—';stMap[s]=(stMap[s]||0)+1;}); const se=Object.entries(stMap);
+    mkChart('iad-status',{type:'doughnut',data:{labels:se.map(x=>x[0]),datasets:[{data:se.map(x=>x[1]),backgroundColor:se.map(x=>toneHex(x[0])),borderColor:'#fff',borderWidth:3}]},options:baseOpts({legend:true,donut:true})});
+  }
   mkChart('ia-cat',{type:'bar',data:{labels:catEnt.map(e=>e[0]),datasets:[{data:catEnt.map(e=>e[1]),backgroundColor:catEnt.map((e,i)=>PALETTE[i%PALETTE.length]),borderRadius:7,maxBarThickness:20}]},options:baseOpts({indexAxis:'y',legend:false})});
   const datasets=groups.map(g=>({label:g,data:stores.map(s=>matrix[s][g]),backgroundColor:ISS_GROUP_COLOR[g],borderRadius:4}));
   mkChart('ia-branch',{type:'bar',data:{labels:stores,datasets},options:{responsive:true,maintainAspectRatio:false,

@@ -517,3 +517,13 @@ input.invalid,select.invalid,textarea.invalid{border-color:var(--bad)!important;
   .form-section,.card-pad{padding:16px}
   .grid2{grid-template-columns:1fr}
 }
+
+/* ---------------- per-category analytics drill-down ---------------- */
+.drill-chips{display:flex;flex-wrap:wrap;gap:8px}
+.drill-chip{display:inline-flex;align-items:center;gap:7px;border:1.5px solid var(--line);background:#fff;color:var(--ink-soft);font-weight:700;font-size:12.5px;padding:7px 13px;border-radius:20px;cursor:pointer;transition:.14s;font-family:inherit}
+.drill-chip:hover{border-color:var(--accent);box-shadow:var(--shadow)}
+.drill-chip.on{background:var(--accent);border-color:var(--accent);color:#fff}
+.drill-chip b{font-size:11px;background:rgba(0,0,0,.08);padding:1px 7px;border-radius:20px}
+.drill-chip.on b{background:rgba(255,255,255,.25)}
+.drill-card{margin-top:14px;border:2px solid var(--accent-soft)}
+.mini-h{font-size:12px;font-weight:800;color:var(--ink-soft);margin-bottom:8px;text-align:center}
