@@ -814,10 +814,10 @@ function mgrSubs(){
   const stores=DB.stores, names=DB.staff.map(s=>s.name);
   const today=new Date(), fmt=d=>d.toISOString().slice(0,10), dn=d=>d.toLocaleDateString(undefined,{weekday:'long'});
   const out=[];
-  [0,1].forEach(off=>{ const d=new Date(today); d.setDate(d.getDate()-off); const ds=fmt(d), dname=dn(d);
+  [0,1,2,3,4,5,6].forEach(off=>{ const d=new Date(today); d.setDate(d.getDate()-off); const ds=fmt(d), dname=dn(d);
     stores.forEach((store,si)=>depts.forEach((dept,di)=>['Opening','Closing'].forEach((session,sei)=>{
       const total=8+((di*3+sei*2)%14), done=Math.max(0,total-((si+di+off+sei)%3));
-      const status = off>0 ? 'Verified' : (session==='Closing'?(di%2===0?'Submitted':'Verified'):(di%3===0?'Submitted':'Verified'));
+      const status = ((si+di*2+sei+off)%4===0) ? 'Submitted' : 'Verified';
       out.push({id:`CHK-${ds.replace(/-/g,'')}-${si}${di}${sei}`,date:ds,dayName:dname,store,department:dept,session,by:names[(si+di+sei)%names.length]||'Staff',total,done,progress:Math.round(done/total*100),status});
     })));
   });
@@ -828,32 +828,77 @@ function mgrActivity(){
   mods.forEach(id=>{const m=DB.modules[id]; (m.records||[]).forEach(r=>{ if(isSuper()||r.store===State.branch) items.push({accent:m.accent,icon:m.icon,sortKey:r.created||r.date||'',title:`${m.short}: ${r.id}`,sub:`${r.store||''} · ${(r.title||r.summary||r.shortDescription||r.category||r.staffName||r.equipment||'').slice(0,60)}`,time:relTime(r.created||r.date)}); });});
   return items.sort((a,b)=>String(b.sortKey).localeCompare(String(a.sortKey))).slice(0,12);
 }
-function mgrVerify(id){ const s=mgrSubs().find(x=>x.id===id); if(s) s.status='Verified'; toast('✓ Checklist verified'); renderManager(); }
+function mgrVerify(id){ const s=mgrSubs().find(x=>x.id===id); if(s) s.status='Verified'; closeDrawer&&closeDrawer(); toast('✓ Checklist verified'); renderManager(); }
+function mgrDate(v){ if(!State.mgr) State.mgr={}; State.mgr.date=v; renderManager(); }
+/* derive the actual checklist (items, done state, notes, evidence photos) for a submission */
+function mgrSubTasks(s){
+  const items=((DB.checklist&&DB.checklist.items)||[]).map(ckItem).filter(r=>r.dept===s.department && ckInSession(r,s.session));
+  const doneN=Math.max(0,Math.min(items.length, Math.round(items.length*((s.progress||0)/100))));
+  const col=(((DB.checklist&&DB.checklist.deptMeta)||{})[s.department]||{}).color||'#0f766e';
+  return items.map((r,idx)=>{
+    const done=idx<doneN, photoReq=!!r.photo;
+    const photos=(done&&photoReq)?[mgrPhotoStub(r.area,col)]:[];
+    let temp=null; if(r.meta&&r.meta.temp){ temp={ok:done, label: done?(idx%4===0?'4.2°C':'2.8°C'):'pending'}; }
+    const note=(!done&&idx%3===0)?'Not completed — needs follow-up':'';
+    return {task:r.task, area:r.area, done, photoReq, photos, temp, note};
+  });
+}
+function mgrPhotoStub(label,color){
+  const svg=`<svg xmlns='http://www.w3.org/2000/svg' width='220' height='150'><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='${color}'/><stop offset='1' stop-color='${color}aa'/></linearGradient></defs><rect width='100%' height='100%' rx='10' fill='url(#g)'/><text x='50%' y='45%' fill='#fff' font-size='30' text-anchor='middle' font-family='sans-serif'>&#128247;</text><text x='50%' y='72%' fill='#ffffffdd' font-size='12' text-anchor='middle' font-family='sans-serif'>${String(label).slice(0,24)}</text></svg>`;
+  return 'data:image/svg+xml;utf8,'+encodeURIComponent(svg);
+}
+function mgrReview(id){
+  const s=mgrSubs().find(x=>x.id===id); if(!s) return;
+  const tasks=mgrSubTasks(s);
+  const meta=(((DB.checklist&&DB.checklist.deptMeta)||{})[s.department])||{color:'#0f766e'};
+  const doneN=tasks.filter(t=>t.done).length, outN=tasks.length-doneN, photoN=tasks.reduce((n,t)=>n+t.photos.length,0);
+  const rows=tasks.map(t=>`<div class="mr-task ${t.done?'done':'todo'}">
+      <div class="mr-tk"><span class="mr-check">${t.done?'✓':'○'}</span><div class="mr-name">${esc(t.task)}<small>${esc(t.area)}</small></div>${t.temp?`<span class="badge ${t.temp.ok?'ok':'warn'}">${esc(t.temp.label)}</span>`:''}</div>
+      ${t.note?`<div class="mr-note">📝 ${esc(t.note)}</div>`:''}
+      ${t.photos.length?`<div class="mr-photos">${t.photos.map(p=>`<a href="${imgSrc(p)}" target="_blank" rel="noopener"><img src="${imgSrc(p)}"></a>`).join('')}</div>`:(t.photoReq&&!t.done?`<div class="mr-nophoto">📷 Photo required — not attached</div>`:'')}
+    </div>`).join('');
+  $('#drawer').innerHTML=`<div class="drawer-head"><div class="dh-ic" style="background:${meta.color}1f;color:${meta.color}">✅</div>
+    <div><div style="font-weight:840;font-size:16px">${esc(s.department)} · ${esc(s.session)}</div>
+    <div style="color:var(--muted);font-size:12.5px">${esc(s.store)} · ${esc(s.date)} (${esc(s.dayName)}) · by ${esc(s.by)}</div>
+    <div style="margin-top:7px;display:flex;gap:6px;flex-wrap:wrap"><span class="badge ok">${doneN} done</span>${outN?`<span class="badge warn">${outN} outstanding</span>`:''}<span class="badge info">📷 ${photoN}</span><span class="badge ${s.status==='Verified'?'ok':'warn'}">${esc(s.status)}</span></div></div>
+    <button class="x-btn" onclick="closeDrawer()">✕</button></div>
+    <div class="drawer-body">
+      <div class="mr-prog"><span class="pbar" style="flex:1"><i style="width:${s.progress}%;background:${meta.color}"></i></span><b>${s.progress}%</b></div>
+      <div class="mr-list">${rows||'<div class="empty">No tasks for this session.</div>'}</div>
+      ${s.status==='Verified'
+        ? `<div class="rail-tip" style="margin-top:16px">✅ This checklist is already verified.</div>`
+        : `<button class="btn primary block lg" style="margin-top:16px" onclick="mgrVerify('${s.id}')"><i class="fas fa-check-double"></i>&nbsp; Verify this checklist</button>
+           ${outN?`<div class="fhint" style="text-align:center;margin-top:8px">⚠️ ${outN} task(s) still outstanding</div>`:''}`}
+    </div>`;
+  $('#drawer').classList.add('open'); $('#drawer-mask').classList.add('open');
+}
 function renderManager(){
   setAccent('#0f766e'); setCrumb('🛡️','Manager Panel','Verify checklists & action today’s issues');
-  if(!State.mgr) State.mgr={sort:'newest'};
   const todayStr=new Date().toISOString().slice(0,10);
+  if(!State.mgr) State.mgr={sort:'newest',date:todayStr};
+  if(!State.mgr.date) State.mgr.date=todayStr;
   const subs=mgrSubs().filter(s=>isSuper()||s.store===State.branch);
-  const pending=subs.filter(s=>s.status==='Submitted').sort((a,b)=>{const at=a.date===todayStr?0:1,bt=b.date===todayStr?0:1; if(at!==bt)return at-bt; return State.mgr.sort==='newest'?b.date.localeCompare(a.date):a.date.localeCompare(b.date);});
+  const allPending=subs.filter(s=>s.status==='Submitted');
+  const pending=allPending.filter(s=>s.date===State.mgr.date).sort((a,b)=>State.mgr.sort==='newest'?b.id.localeCompare(a.id):a.id.localeCompare(b.id));
   const doneStat=['Closed','Cancelled','Resolved','Store Confirmed','Completed'];
   let issues=[]; ['maintenance','incident','complaint','violation','issue'].forEach(id=>{const m=DB.modules[id]; (m.records||[]).forEach(r=>{ if((isSuper()||r.store===State.branch)&&!doneStat.includes(r.status)) issues.push({mod:id,icon:m.icon,short:m.short,...r}); });});
   issues.sort((a,b)=>String(b.created||b.date||'').localeCompare(String(a.created||a.date||'')));
   const verifiedToday=subs.filter(s=>s.date===todayStr&&s.status==='Verified').length;
   const critical=issues.filter(r=>['Critical','Major'].includes(r.severity)||['Critical','Urgent'].includes(r.priority)||r.step==='Final Warning').length;
-  const stats=[['🕒',pending.length,'Awaiting verification','warn'],['✅',verifiedToday,'Verified today','ok'],['🚩',issues.length,'Open issues','info'],['🔴',critical,'Critical / urgent','bad']];
+  const stats=[['🕒',allPending.length,'Awaiting verification','warn'],['✅',verifiedToday,'Verified today','ok'],['🚩',issues.length,'Open issues','info'],['🔴',critical,'Critical / urgent','bad']];
   const dm=(DB.checklist&&DB.checklist.deptMeta)||{}; const capN=18, shown=pending.slice(0,capN);
   const cards=shown.map(s=>{const meta=dm[s.department]||{color:'#0f766e'}, isToday=s.date===todayStr;
     return `<div class="pv-card" style="--c:${meta.color}"><span class="pv-stripe"></span>
       <div class="pv-head"><b>${esc(s.department)}</b><span class="badge ${s.session==='Opening'?'warn':'info'}">${s.session}</span>${isToday?'<span class="badge ok">Today</span>':''}</div>
       <div class="pv-meta"><span>📅 ${esc(s.date)} — ${esc(s.dayName)}</span>${isSuper()?`<span>🏪 ${esc(s.store)}</span>`:''}<span>👤 ${esc(s.by)}</span></div>
       <div class="pv-prog"><span class="pbar" style="flex:1"><i style="width:${s.progress}%"></i></span><b>${s.done}/${s.total}</b></div>
-      <button class="btn primary block sm" onclick="mgrVerify('${s.id}')">✓ Review &amp; Verify</button></div>`;}).join('');
+      <button class="btn primary block sm" onclick="mgrReview('${s.id}')"><i class="fas fa-eye"></i>&nbsp; Review &amp; Verify</button></div>`;}).join('');
   $('#content').innerHTML=`
     <div class="page-head"><div class="ph-ic">🛡️</div><div><h2>Manager Panel</h2><p>Verify today’s checklists and action open issues across ${isSuper()?'all stores':esc(State.branch)}.</p></div>
-      <div class="ph-actions"><button class="btn sm" onclick="mgrSort()"><i class="fas fa-arrow-down-wide-short"></i>&nbsp; ${State.mgr.sort==='newest'?'Newest first':'Oldest first'}</button></div></div>
+      <div class="ph-actions"><input type="date" class="mgr-date" value="${esc(State.mgr.date)}" max="${todayStr}" onchange="mgrDate(this.value)"><button class="btn sm" onclick="mgrSort()"><i class="fas fa-arrow-down-wide-short"></i>&nbsp; ${State.mgr.sort==='newest'?'Newest first':'Oldest first'}</button></div></div>
     <div class="kpi-grid">${stats.map(s=>`<div class="kpi tone-${s[3]}"><div class="k-top"><div class="k-ic">${s[0]}</div></div><div class="k-val">${s[1]}</div><div class="k-lbl">${esc(s[2])}</div></div>`).join('')}</div>
-    <div class="section-title"><i class="fas fa-clock" style="color:#f59e0b"></i> Pending Verification · ${pending.length}${pending.length>capN?` (showing ${capN})`:''}</div>
-    <div class="pv-grid">${cards||'<div class="empty">🎉 All checklists verified.</div>'}</div>
+    <div class="section-title"><i class="fas fa-clock" style="color:#f59e0b"></i> Pending Verification · ${esc(State.mgr.date)}${State.mgr.date===todayStr?' (Today)':''} · ${pending.length}${pending.length>capN?` (showing ${capN})`:''}</div>
+    <div class="pv-grid">${cards||`<div class="empty">🎉 Nothing pending for ${esc(State.mgr.date)}.${allPending.length?` <b>${allPending.length}</b> still pending on other dates — change the date above.`:''}</div>`}</div>
     <div class="section-title"><i class="fas fa-triangle-exclamation" style="color:#ef4444"></i> Open issues today · ${issues.length}</div>
     <div class="card"><div class="table-wrap"><table class="grid"><thead><tr><th>Ref</th><th>Register</th><th>Store</th><th>Summary</th><th>Priority</th><th>Status</th><th></th></tr></thead><tbody>
       ${issues.length?issues.slice(0,20).map(r=>`<tr onclick='openDetail("${r.mod}","${esc(r.id)}")'><td class="cell-id">${esc(r.id)}</td><td><span class="reg-tag">${r.icon} ${esc(r.short)}</span></td><td>${esc(r.store||'')}</td><td><div class="wrap">${esc(r.title||r.equipment||r.summary||r.shortDescription||r.staffName||r.category||'')}</div></td><td>${(r.priority||r.severity||r.step)?badge(r.priority||r.severity||r.step):''}</td><td>${badge(r.status)}</td><td><button class="btn sm primary" onclick='event.stopPropagation();openDetail("${r.mod}","${esc(r.id)}")'>Review</button></td></tr>`).join(''):'<tr><td colspan="7"><div class="empty">No open issues 🎉</div></td></tr>'}
