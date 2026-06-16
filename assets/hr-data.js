@@ -28,6 +28,9 @@ DB.emailRecipients = [
   { key:'safety',name:'Safety Officer',          email:'safety@mcqinternational.com' },
   { key:'mgr',   name:'Store Manager',           email:'manager@mcqinternational.com' },
 ];
+/* email sending config (copies the restaurant: Brevo HTTP API, + Gmail-compose / mailto fallbacks).
+   channel: 'preview' (demo toast) | 'brevo' (auto-send via api.brevo.com) | 'gmail' | 'mailto' */
+DB.emailConfig = { channel:'preview', apiKey:'', fromEmail:'', fromName:'MCQ Supermarket' };
 /* default recipients per category group */
 const _GROUP_RECIPIENTS = {
   'Maintenance & Facility':['fac','ho'],

@@ -442,7 +442,22 @@ function chkSubmit(){
   const done=rows.filter(r=>(State.chk.state[r.i]||{}).done).length;
   if(!done){ toast('Tick at least one task before submitting'); return; }
   const out=rows.filter(r=>r.meta.temp&&(State.chk.state[r.i]||{}).temp&&!((State.chk.state[r.i]||{}).temp.inRange)).length;
-  toast(`✓ ${State.chk.session} checklist submitted${isAdmin()?'':' for '+State.branch} · ${done} done${out?' · '+out+' temp alert(s)':''}`);
+  // ---- persist a REAL submission (Manager verify / Performance / records all read this) ----
+  const allRows=DB.checklist.items.map(ckItem).filter(r=>r.dept===State.chk.dept && ckInSession(r,State.chk.session));
+  const items=allRows.map(r=>{ const st=State.chk.state[r.i]||{};
+    return {task:r.task, area:r.area, done:!!st.done, note:st.note||'', photos:(st.photos||[]).slice(), temp: st.temp?{value:st.temp.value,inRange:!!st.temp.inRange,defrosting:!!st.defrosting}:null }; });
+  const doneN=items.filter(i=>i.done).length, totalN=items.length;
+  const resp=(State.chk.resp||{})[State.chk.dept]||{};
+  const ymd=new Date().toISOString().slice(0,10);
+  const sub={ id:`CKS-${ymd.replace(/-/g,'')}-${String(State.chk.dept).replace(/[^A-Z]/gi,'').slice(0,3).toUpperCase()}-${State.chk.session[0]}-${Math.floor(1000+Math.random()*9000)}`,
+    store:State.branch, dept:State.chk.dept, session:State.chk.session, date:ymd, dayName:new Date().toLocaleDateString(undefined,{weekday:'long'}),
+    by:resp.submittedBy||'', responsible:resp.p1||'', created:new Date().toISOString().slice(0,16).replace('T',' '),
+    progress: totalN?Math.round(doneN/totalN*100):0, done:doneN, total:totalN, status:'Submitted', tempAlerts:out, items };
+  DB.checklistSubs=DB.checklistSubs||[]; DB.checklistSubs.unshift(sub);
+  if(window.persist) window.persist();
+  if(window.mcqEmail) mcqEmail.notify('checklist', `Checklist submitted · ${sub.dept} ${sub.session} · ${State.branch}`,
+    `Department: ${sub.dept}\nSession: ${sub.session}\nStore: ${State.branch}\nProgress: ${doneN}/${totalN} (${sub.progress}%)\nSubmitted by: ${sub.by||'—'}\nResponsible: ${sub.responsible||'—'}${out?`\n⚠️ ${out} temperature alert(s)`:''}`, {dept:sub.dept});
+  toast(`✓ ${State.chk.session} checklist submitted${isAdmin()?'':' for '+State.branch} · ${done} done${out?' · '+out+' temp alert(s)':''} · saved`);
 }
 function ckMarkRespMissing(depts){
   depts.forEach(dept=>{
@@ -640,10 +655,12 @@ function issSubmit(){
     rec={id:ref,created:now,store,title,category:c.label,priority:prio,status:'Open',reportedBy:name,description:desc,photo};
   }
   DB.modules[modOut].records.unshift(rec);
-  const names=(DB.issueEmailRoutes[State.iss.cat]||[]).map(k=>(DB.emailRecipients.find(x=>x.key===k)||{}).name).filter(Boolean);
+  const cat=State.iss.cat;
+  const names=(DB.issueEmailRoutes[cat]||[]).map(k=>(DB.emailRecipients.find(x=>x.key===k)||{}).name).filter(Boolean);
+  if(window.mcqEmail) mcqEmail.notify('issue', `${ref} · ${c.label} · ${store}`, `New report: ${c.label}\nReference: ${ref}\nStore: ${store}\nReported by: ${name}\nPriority: ${prio}\n\n${desc}`, {cat});
   State.iss={cat:'',photo:null,prio:'Normal',tab:'report'};
   if(window.persist) window.persist();
-  toast(`✓ ${ref} → ${DB.modules[modOut].short}${names.length?' · 📧 '+names.length+' emailed':''}`); buildSidebar(); renderIssue();
+  toast(`✓ ${ref} → ${DB.modules[modOut].short}${names.length?' · 📧 '+names.length+' notified':''}`); buildSidebar(); renderIssue();
 }
 
 /* ---- Report Issue · Analytics (by category + branch comparison) ---- */
@@ -986,8 +1003,8 @@ function renderSchedules(){
 }
 
 /* ============================================================ MANAGER PANEL */
-function mgrSubs(){
-  if(State._subs) return State._subs;
+function mgrSynthSubs(){
+  if(State._synthSubs) return State._synthSubs;
   const depts=(DB.checklist&&DB.checklist.depts)||['MANAGER','CASHIER','FV','GROCERY','FROZEN & DAIRY','BUTCHER'];
   const stores=DB.stores, names=DB.staff.map(s=>s.name);
   const today=new Date(), fmt=d=>d.toISOString().slice(0,10), dn=d=>d.toLocaleDateString(undefined,{weekday:'long'});
@@ -999,17 +1016,30 @@ function mgrSubs(){
       out.push({id:`CHK-${ds.replace(/-/g,'')}-${si}${di}${sei}`,date:ds,dayName:dname,store,department:dept,session,by:names[(si+di+sei)%names.length]||'Staff',total,done,progress:Math.round(done/total*100),status});
     })));
   });
-  State._subs=out; return out;
+  State._synthSubs=out; return out;
+}
+/* real submitted checklists FIRST, then synthetic demo history */
+function mgrSubs(){
+  const real=(DB.checklistSubs||[]).map(s=>({ id:s.id, date:s.date, dayName:s.dayName||new Date(s.date+'T00:00').toLocaleDateString(undefined,{weekday:'long'}),
+    store:s.store, department:s.dept, session:s.session, by:s.by||s.responsible||'Staff',
+    total:s.total, done:s.done, progress:s.progress, status:s.status||'Submitted', real:true, items:s.items }));
+  return real.concat(mgrSynthSubs());
 }
 function mgrActivity(){
   const mods=['issue','maintenance','incident','complaint','violation','reward']; let items=[];
   mods.forEach(id=>{const m=DB.modules[id]; (m.records||[]).forEach(r=>{ if(isSuper()||r.store===State.branch) items.push({accent:m.accent,icon:m.icon,sortKey:r.created||r.date||'',title:`${m.short}: ${r.id}`,sub:`${r.store||''} · ${(r.title||r.summary||r.shortDescription||r.category||r.staffName||r.equipment||'').slice(0,60)}`,time:relTime(r.created||r.date)}); });});
   return items.sort((a,b)=>String(b.sortKey).localeCompare(String(a.sortKey))).slice(0,12);
 }
-function mgrVerify(id){ const s=mgrSubs().find(x=>x.id===id); if(s) s.status='Verified'; closeDrawer&&closeDrawer(); toast('✓ Checklist verified'); renderManager(); }
+function mgrVerify(id){ const s=mgrSubs().find(x=>x.id===id); if(s) s.status='Verified';
+  const real=(DB.checklistSubs||[]).find(x=>x.id===id); if(real){ real.status='Verified'; if(window.persist) window.persist(); }
+  closeDrawer&&closeDrawer(); toast('✓ Checklist verified'); renderManager(); }
 function mgrDate(v){ if(!State.mgr) State.mgr={}; State.mgr.date=v; renderManager(); }
 /* derive the actual checklist (items, done state, notes, evidence photos) for a submission */
 function mgrSubTasks(s){
+  if(s.real && Array.isArray(s.items)){   // real submission — show exactly what was submitted
+    return s.items.map(it=>({task:it.task, area:it.area, done:!!it.done, photoReq:(it.photos||[]).length>0||false,
+      photos:(it.photos||[]).slice(), note:it.note||'', temp: it.temp?{ok:it.temp.inRange, label: it.temp.defrosting?'Defrosting':(it.temp.value!=null?it.temp.value+'°C':'—')}:null }));
+  }
   const items=((DB.checklist&&DB.checklist.items)||[]).map(ckItem).filter(r=>r.dept===s.department && ckInSession(r,s.session));
   const doneN=Math.max(0,Math.min(items.length, Math.round(items.length*((s.progress||0)/100))));
   const col=(((DB.checklist&&DB.checklist.deptMeta)||{})[s.department]||{}).color||'#0f766e';
@@ -1175,8 +1205,39 @@ function waShare(){ const txt=$('#wa-msg')?$('#wa-msg').value:''; const t=encode
 function waCopy(){ navigator.clipboard?.writeText($('#wa-msg').value); toast('Summary copied'); }
 
 /* ============================================================ EMAIL NOTIFICATIONS */
+/* ============================================================ EMAIL SENDING (copies the restaurant: Brevo HTTP API + Gmail-compose / mailto) */
+window.mcqEmail={
+  cfg(){ return DB.emailConfig||(DB.emailConfig={channel:'preview',apiKey:'',fromEmail:'',fromName:'MCQ Supermarket'}); },
+  recipients(eventType,meta){ const recips=DB.emailRecipients||[]; let keys;
+    if(eventType==='checklist') keys=(DB.checklistEmailRoutes&&DB.checklistEmailRoutes[meta&&meta.dept])||[];
+    else if(eventType==='issue') keys=(DB.issueEmailRoutes&&DB.issueEmailRoutes[meta&&meta.cat])||[];
+    else keys=recips.map(r=>r.key);   // violation & others broadcast
+    return recips.filter(r=>keys.includes(r.key)&&r.email); },
+  _html(title,body){ return `<div style="font-family:Arial,Helvetica,sans-serif;color:#1f2937;max-width:640px;margin:auto"><div style="background:linear-gradient(135deg,#0e9f6e,#0891b2);color:#fff;padding:16px 20px;border-radius:12px 12px 0 0"><div style="font-weight:800;font-size:18px">MCQ Supermarket</div><div style="opacity:.9;font-size:13px">${esc(title)}</div></div><div style="border:1px solid #e5e7eb;border-top:0;padding:18px 20px;border-radius:0 0 12px 12px;white-space:pre-wrap;font-size:14px;line-height:1.55">${esc(body)}</div><div style="color:#9ca3af;font-size:11px;text-align:center;margin-top:10px">Automated notification · MCQ Supermarket Operations</div></div>`; },
+  notify(eventType,subject,body,meta){ const to=this.recipients(eventType,meta); if(!to.length) return; const cfg=this.cfg();
+    if(cfg.channel==='brevo'&&cfg.apiKey&&cfg.fromEmail) return this._brevo(to,subject,body,cfg);
+    if(cfg.channel==='gmail'){ this._gmail(to,subject,body); toast(`📧 Gmail compose opened · ${to.length} recipient(s)`); return; }
+    if(cfg.channel==='mailto'){ window.location.href=this._mailto(to,subject,body); return; }
+    toast(`📧 ${to.length} recipient(s) would be notified (demo) — enable real sending in Email settings`); },
+  _brevo(to,subject,body,cfg){
+    fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'accept':'application/json','content-type':'application/json','api-key':cfg.apiKey},
+      body:JSON.stringify({sender:{name:cfg.fromName||'MCQ Supermarket',email:cfg.fromEmail},to:to.map(r=>({email:r.email,name:r.name})),subject,htmlContent:this._html(subject,body)})})
+      .then(r=>{ if(r.ok) toast(`📧 Sent to ${to.length} via Brevo`); else toast('📧 Brevo error '+r.status+' — check API key / sender'); })
+      .catch(()=>toast('📧 Browser blocked Brevo (CORS) — use Gmail compose, or send via a server relay')); },
+  _gmail(to,subject,body){ window.open('https://mail.google.com/mail/?view=cm&fs=1&to='+encodeURIComponent(to.map(r=>r.email).join(','))+'&su='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body),'_blank'); },
+  _mailto(to,subject,body){ return 'mailto:'+encodeURIComponent(to.map(r=>r.email).join(','))+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body); },
+  test(){ const cfg=this.cfg(), to=(DB.emailRecipients||[]).filter(r=>r.email).slice(0,1); if(!to.length){toast('No recipients with an email');return;}
+    if(cfg.channel==='brevo'&&cfg.apiKey&&cfg.fromEmail) this._brevo(to,'MCQ Supermarket — test email','This is a test notification from MCQ Supermarket. If you received this, real email sending works.',cfg);
+    else if(cfg.channel==='gmail'){ this._gmail(to,'MCQ Supermarket — test email','This is a test notification from MCQ Supermarket.'); toast('📧 Gmail compose opened'); }
+    else if(cfg.channel==='mailto'){ window.location.href=this._mailto(to,'MCQ Supermarket — test email','Test'); }
+    else toast('Demo mode — choose Brevo or Gmail to actually send'); }
+};
+function emailCfgSet(f,v){ mcqEmail.cfg()[f]=v; if(window.persist) window.persist(); }
+function emailCfgChannel(v){ emailCfgSet('channel',v); renderEmail(); }
+function emailTest(){ mcqEmail.test(); }
 function renderEmail(){
   setAccent('#1565c0'); setCrumb('✉️','Email Notifications','Customise who gets which alerts');
+  const cfg=mcqEmail.cfg();
   const recips=DB.emailRecipients||[], cats=DB.issueCategories||{}, groups=DB.issueGroups||[];
   const cards=recips.map(r=>{
     const myN=Object.keys(cats).filter(k=>(DB.issueEmailRoutes[k]||[]).includes(r.key)).length;
@@ -1202,7 +1263,17 @@ function renderEmail(){
         <button class="btn sm" onclick="emailToggleChk('${r.key}')">Customise ${open?'▲':'▾'}</button>
       </div>${dd}</div>`;
   }).join('');
-  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic" style="background:#e8f1fe">✉️</div><div><h2>Email Notifications</h2><p>For each person, tick which Report-Issue categories and which checklists they get emailed. Violation alerts always go to everyone.</p></div></div>
+  const chan=[['preview','🧪 Demo (preview only)'],['brevo','📨 Brevo (auto-send)'],['gmail','✉️ Gmail compose'],['mailto','📧 Mail app']];
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic" style="background:#e8f1fe">✉️</div><div><h2>Email Notifications</h2><p>For each person, tick which Report-Issue categories and which checklists they get emailed. Violation alerts always go to everyone.</p></div><div class="ph-actions"><button class="btn sm primary" onclick="emailTest()"><i class="fas fa-paper-plane"></i>&nbsp; Send test</button></div></div>
+    <div class="card" style="margin-bottom:16px"><div class="card-head"><h3><i class="fas fa-gear"></i>&nbsp; Sending method</h3><span class="ch-sub">Same approach as the restaurant — Brevo HTTP API, or Gmail compose</span></div>
+      <div class="card-pad"><div class="grid2">
+        <div class="field"><label>Channel</label><select onchange="emailCfgChannel(this.value)">${chan.map(c=>`<option value="${c[0]}" ${cfg.channel===c[0]?'selected':''}>${esc(c[1])}</option>`).join('')}</select></div>
+        <div class="field"><label>From name</label><input value="${esc(cfg.fromName||'')}" oninput="emailCfgSet('fromName',this.value)" placeholder="MCQ Supermarket"></div>
+        ${cfg.channel==='brevo'?`<div class="field"><label>Brevo API key</label><input type="password" value="${esc(cfg.apiKey||'')}" oninput="emailCfgSet('apiKey',this.value)" placeholder="xkeysib-…"></div>
+        <div class="field"><label>Verified sender email</label><input value="${esc(cfg.fromEmail||'')}" oninput="emailCfgSet('fromEmail',this.value)" placeholder="ops@mcqinternational.com"></div>`:''}
+      </div>
+      <div class="rail-tip" style="margin-top:12px">${cfg.channel==='brevo'?'📨 <b>Brevo</b> auto-sends over HTTPS (300/day free) — paste your API key + a verified sender. If your browser blocks it (CORS), use Gmail compose or relay through a tiny server.':cfg.channel==='gmail'?'✉️ <b>Gmail compose</b> opens a pre-filled Gmail window so you click Send — works everywhere, no setup.':cfg.channel==='mailto'?'📧 <b>Mail app</b> opens your device email client pre-filled.':'🧪 <b>Demo</b> only shows who would be notified. Pick Brevo or Gmail to actually send.'}</div>
+      </div></div>
     <div class="rail-tip" style="margin-bottom:16px;background:var(--bad-bg);border-color:#f3c9c9">⚠️ <b>Violation alerts</b> are sent to <b>all recipients</b> by default — no per-category opt-out.</div>
     <div class="section-title">Report Issue · who receives which category</div>
     <div class="email-list">${cards||'<div class="empty">No recipients.</div>'}</div>
