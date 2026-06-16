@@ -266,6 +266,7 @@ function renderHome(){
         <div class="hs"><b>${critical}</b><span>Critical / Major</span></div>
         <div class="hs"><b>${records}</b><span>Records</span></div>
       </div></div>
+    ${isSuper()?superHomeBlock():''}
     <div class="section-title">Daily Operations</div>
     <div class="tiles">${opsTiles}</div>
     <div class="section-title">Staff & HR</div>
@@ -276,6 +277,24 @@ function renderHome(){
     </div>`;
   const labels=DB.order.map(id=>DB.modules[id].short), data=DB.order.map(id=>openCount(id)), colors=DB.order.map(id=>DB.modules[id].accent);
   mkChart('home-chart',{type:'bar',data:{labels,datasets:[{data,backgroundColor:colors,borderRadius:8,maxBarThickness:38}]},options:baseOpts({legend:false})});
+}
+/* super-admin only: cross-store load & risk comparison */
+function superCrossStore(){
+  const closed=['Closed','Cancelled','Resolved','Store Confirmed','Completed'];
+  return DB.stores.map(store=>{ let open=0,crit=0,recs=0;
+    DB.order.forEach(id=>{ const m=DB.modules[id]; (m.records||[]).forEach(r=>{ if(r.store!==store) return; recs++;
+      if(!closed.includes(r.status)) open++;
+      if(['Critical','Major'].includes(r.severity)||r.priority==='Critical') crit++; }); });
+    return {store,open,crit,recs};
+  }).sort((a,b)=>b.open-a.open);
+}
+function superHomeBlock(){
+  const rows=superCrossStore(); const maxOpen=Math.max(1,...rows.map(r=>r.open));
+  return `<div class="section-title">🏪 Cross-store overview <span class="badge bad" style="margin-left:8px">Super Admin</span></div>
+    <div class="card"><div class="card-head"><h3>All stores — open load &amp; risk</h3><span class="ch-sub" style="margin-right:auto">Highest open load first</span>${exportBtns('super-store-table','All Stores Overview')}</div>
+      <div class="table-wrap"><table class="grid" id="super-store-table"><thead><tr><th>Store</th><th>Open items</th><th>Critical / Major</th><th>Total records</th><th>Open load</th></tr></thead><tbody>
+      ${rows.map(r=>`<tr onclick="go('analytics')"><td><b>${esc(r.store)}</b></td><td class="num">${r.open}</td><td class="num">${r.crit?`<span class="badge bad">${r.crit}</span>`:'0'}</td><td class="num">${r.recs}</td><td><span class="pbar" style="display:inline-flex;width:130px;vertical-align:middle"><i style="width:${Math.round(r.open/maxOpen*100)}%;background:#4f46e5"></i></span></td></tr>`).join('')}
+      </tbody></table></div></div>`;
 }
 function tileFor(id){
   const m=DB.modules[id]; const open=openCount(id);
