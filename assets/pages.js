@@ -46,12 +46,13 @@ function ckItem(it,i){ return {i,dept:it[0],area:it[1],task:it[2],when:it[3],pho
 function ckInSession(r,session){ return session==='Opening'?(r.when==='O'||r.when==='A'):(r.when==='C'||r.when==='A'); }
 function renderChecklist(){
   const C=DB.checklist; setAccent('#0e9f6e');
-  if(!State.chk) State.chk={session:'Opening',dept:'ALL',area:'ALL',state:{}};
+  if(!State.chk) State.chk={session:'Opening',dept:C.depts[0],area:'ALL',state:{}};
+  if(State.chk.dept==='ALL' || !C.depts.includes(State.chk.dept)) State.chk.dept=C.depts[0];
   if(!State.chk.area) State.chk.area='ALL';
   if(!State.chk.resp) State.chk.resp={};
   const s=State.chk;
   setCrumb('✅','Store Operation Checklist',`${isAdmin()?'All stores':State.branch} · ${s.session}`);
-  const chips=['ALL',...C.depts].map(d=>`<button class="dept-chip ${d===s.dept?'active':''}" onclick="ckDept('${ckJS(d)}')">${d==='ALL'?'All':esc(d)}</button>`).join('');
+  const chips=C.depts.map(d=>`<button class="dept-chip ${d===s.dept?'active':''}" onclick="ckDept('${ckJS(d)}')">${esc(d)}</button>`).join('');
   const areaChips=ckAreaChips();
   const staff=DB.staff.filter(x=>isAdmin()||x.store===State.branch).map(x=>x.name);
   $('#content').innerHTML=`
@@ -67,8 +68,7 @@ function renderChecklist(){
      <div class="tb-spacer"></div>
      <div class="filter"><label>Date</label><input type="date" value="${new Date().toISOString().slice(0,10)}"></div>
    </div>
-   <div class="ck-toolbar"><div class="dept-chips">${chips}</div><div class="tb-spacer"></div>
-     <button class="btn sm" onclick="ckAll(true)">✓ Check all</button><button class="btn sm" onclick="ckAll(false)">✕ Uncheck</button></div>
+   <div class="ck-toolbar"><div class="dept-chips">${chips}</div></div>
    ${areaChips}
    <div id="chk-prog" class="ck-progbar"></div>
    <div id="ck-temp-report"></div>
@@ -86,11 +86,10 @@ function ckList(){
 }
 function ckAreaChips(){
   const s=State.chk;
-  if(s.dept==='ALL') return '';
   const areas=[...new Set(ckRows(true).map(r=>r.area))];
-  if(areas.length<=1) return '';
-  if(s.area!=='ALL' && !areas.includes(s.area)) s.area='ALL';
-  const chips=['ALL',...areas].map(a=>`<button class="area-chip ${a===s.area?'active':''}" onclick="ckArea('${ckJS(a)}')">${a==='ALL'?'All '+esc(s.dept):esc(a)}</button>`).join('');
+  if(areas.length<=1){ s.area='ALL'; return ''; }
+  if(!areas.includes(s.area)) s.area=areas[0];
+  const chips=areas.map(a=>`<button class="area-chip ${a===s.area?'active':''}" onclick="ckArea('${ckJS(a)}')">${esc(a)}</button>`).join('');
   return `<div class="ck-subtoolbar"><span>Sections</span><div class="area-chips">${chips}</div></div>`;
 }
 function ckDraw(){
@@ -123,7 +122,7 @@ function ckDraw(){
           }else{
             const need=r.photo.req?r.photo.min:1, have=(st.photos||[]).length;
             const cap=r.meta.temp?(r.photo.max||1):Math.max(r.photo.max||5,5);   // allow up to 5 photos for normal tasks
-            let slots=(st.photos||[]).map(u=>`<span class="ck-slot filled"><img class="ck-slot-img" src="${u}"><span class="ck-rm" onclick="ckRmPhoto(event,${r.i},'${u}')">✕</span></span>`).join('');
+            let slots=(st.photos||[]).map(u=>`<span class="ck-slot filled"><img class="ck-slot-img" src="${imgSrc(u)}"><span class="ck-rm" onclick="ckRmPhoto(event,${r.i},'${u}')">✕</span></span>`).join('');
             if(have<cap) slots+=`<label class="ck-slot"><input type="file" accept="image/*" capture="environment" onchange="ckPhoto(this,${r.i})"><span class="ck-slot-empty">📷<small>${r.meta.temp?'AI read':'Photo'}</small></span></label>`;
             photoHtml=`<div class="ck-photos" id="ck-photo-${r.i}"><div class="ck-photos-h">${photoChip(r.photo)} <span class="ck-pc ${have>=need?'ok':''}">${have}/${need}</span></div><div class="ck-slots">${slots}</div></div>`;
           }
@@ -197,11 +196,12 @@ function ckTick(i){
   ckProgress();
 }
 function ckNote(i,v){const st=State.chk.state[i]=State.chk.state[i]||{};st.note=v;}
-function ckPhoto(input,i){
+async function ckPhoto(input,i){
   const f=input.files&&input.files[0]; if(!f)return;
   const r=ckItem(DB.checklist.items[i],i), st=State.chk.state[i]=State.chk.state[i]||{};
   if(r.meta.temp&&st.defrosting){ input.value=''; toast('Defrosting is ticked, so photo capture is locked'); return; }
-  const url=URL.createObjectURL(f); st.photos=st.photos||[]; st.photos.push(url);
+  let ref; try{ const d=await compressImage(f); ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d; }catch(e){ ref=URL.createObjectURL(f); }
+  st.photos=st.photos||[]; st.photos.push(ref);
   if(r.meta.temp){ st.aiStatus='scanning'; st.temp=null; st.done=false; ckDraw(); toast('AI Vision reading temperature...');
     setTimeout(()=>ckAiTemp(i,f.name,f),700);
   }else{ ckDraw(); toast('📷 Photo added'); }
@@ -576,7 +576,7 @@ function issPhotoBox(){ const has=!!State.iss.photo;
   return `<div class="field" style="margin-top:14px"><label>Photo <span class="opt">(optional)</span></label>
      <label class="photo-box" id="iss-photobox"><input type="file" accept="image/*" capture="environment" onchange="issPhoto(this)" style="display:none">
        <div id="iss-ph-empty" style="display:${has?'none':'block'}"><i class="fas fa-camera"></i><div class="pb-t">Tap to take / attach a photo (optional)</div></div>
-       <img id="iss-ph-img" src="${has?State.iss.photo:''}" style="display:${has?'block':'none'}"></label>
+       <img id="iss-ph-img" src="${has?imgSrc(State.iss.photo):''}" style="display:${has?'block':'none'}"></label>
      <div id="iss-ph-rm" style="display:${has?'block':'none'};margin-top:8px"><button class="btn sm" onclick="issClearPhoto(event)">✕ Remove photo</button></div>
    </div>`;
 }
@@ -596,8 +596,11 @@ function issCat(k){
   const fc=$('#iss-formcard'); if(fc) fc.scrollIntoView({behavior:'smooth',block:'start'});
 }
 function issPrio(btn){ $$('#iss-prio .prio-pill').forEach(p=>p.classList.remove('on')); btn.classList.add('on'); State.iss.prio=btn.dataset.v; }
-function issPhoto(input){ const f=input.files&&input.files[0]; if(!f) return; const url=URL.createObjectURL(f); State.iss.photo=url;
-  $('#iss-ph-img').src=url; $('#iss-ph-img').style.display='block'; $('#iss-ph-empty').style.display='none'; $('#iss-ph-rm').style.display='block'; }
+async function issPhoto(input){ const f=input.files&&input.files[0]; if(!f) return;
+  let ref; try{ const d=await compressImage(f); ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d; }catch(e){ ref=URL.createObjectURL(f); }
+  State.iss.photo=ref;
+  const img=$('#iss-ph-img'); if(img){ img.src=imgSrc(ref); img.style.display='block'; }
+  const em=$('#iss-ph-empty'); if(em) em.style.display='none'; const rm=$('#iss-ph-rm'); if(rm) rm.style.display='block'; }
 function issClearPhoto(e){ e.preventDefault(); e.stopPropagation(); State.iss.photo=null; $('#iss-ph-img').style.display='none'; $('#iss-ph-empty').style.display='block'; $('#iss-ph-rm').style.display='none'; }
 function issSubmit(){
   if(!State.iss.cat){ const w=$('#iss-warn'); if(w){w.style.display='flex';} window.scrollTo({top:0,behavior:'smooth'}); return; }
@@ -913,7 +916,7 @@ function renderWhatsapp(){
   const date=new Date().toLocaleDateString();
   const deptCards=Object.entries(byDept).map(([dept,d])=>{
     const pct=d.total?Math.round(d.done/d.total*100):0;
-    const realThumbs=d.photos.map(u=>`<img src="${u}">`).join('');
+    const realThumbs=d.photos.map(u=>`<img src="${imgSrc(u)}">`).join('');
     const ph=d.photos.length?'':Array.from({length:Math.max(2,Math.min(5,d.reqMissing))}).map(()=>`<span class="wa-ph" style="background:${d.meta.color||'#888'}"><i class="fas ${d.meta.icon||'fa-camera'}"></i></span>`).join('');
     return `<div class="wa-card"><span class="wa-stripe" style="background:${d.meta.color||'#888'}"></span>
       <div class="wa-body"><div class="wa-pills">
@@ -937,7 +940,7 @@ function renderWhatsapp(){
     <div class="wa-cards">${deptCards||'<div class="empty">No checklist tasks for this period.</div>'}</div>
     <div class="section-title">Operations snapshot</div>
     <div class="kpi-grid">${snap.map(s=>`<div class="kpi"><div class="k-top"><div class="k-ic" style="background:${s[4]}1f;color:${s[4]}">${s[0]}</div></div><div class="k-val" style="color:${s[4]}">${s[2]}</div><div class="k-lbl">${s[1]} ${s[3]}</div></div>`).join('')}</div>
-    ${allPhotos.length?`<div class="section-title">Photo evidence · ${allPhotos.length}</div><div class="wa-gallery">${allPhotos.map(u=>`<img src="${u}">`).join('')}</div>`:''}
+    ${allPhotos.length?`<div class="section-title">Photo evidence · ${allPhotos.length}</div><div class="wa-gallery">${allPhotos.map(u=>`<img src="${imgSrc(u)}">`).join('')}</div>`:''}
     <div class="section-title">Message preview</div>
     <div class="card card-pad"><textarea id="wa-msg" style="min-height:170px;font-family:monospace">${esc(msg)}</textarea>
       <div class="fhint" style="margin-top:8px">💡 Photos are attached automatically. Scheduled auto-send daily at 10:30 AM (opening) and 9:30 PM (closing).</div></div>`;

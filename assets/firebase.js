@@ -19,6 +19,48 @@
 
   function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=()=>rej(new Error('load '+src)); document.head.appendChild(s); }); }
 
+  /* ---------- Photo storage ----------
+     Photos are compressed on capture and each saved as its own doc in the
+     `mcq_photos` collection, so the main state doc stays tiny. Records/checklist
+     keep only the photo id; imgSrc() resolves an id to a usable src (lazy-fetched). */
+  const PhotoStore = window.PhotoStore = window.PhotoStore || {};
+  const _photoPending = {};
+  const LOADING_IMG = 'data:image/svg+xml;utf8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="90" height="70"><rect width="100%" height="100%" rx="8" fill="#eef2f7"/><text x="50%" y="54%" font-size="10" fill="#94a3b8" text-anchor="middle" font-family="sans-serif">loading…</text></svg>');
+  let _rrTimer; function rerenderSoon(){ clearTimeout(_rrTimer); _rrTimer=setTimeout(()=>{ try{ if(window.State&&State.account&&typeof render==='function') render(); }catch(e){} }, 150); }
+
+  // resize to <= maxDim on the long edge, return a JPEG data URL (~40–120KB)
+  window.compressImage = function(file, maxDim, quality){
+    maxDim=maxDim||1000; quality=quality||0.55;
+    return new Promise((resolve,reject)=>{
+      const img=new Image(), url=URL.createObjectURL(file);
+      img.onload=()=>{ let w=img.naturalWidth||img.width, h=img.naturalHeight||img.height;
+        if(w>h && w>maxDim){ h=Math.round(h*maxDim/w); w=maxDim; } else if(h>=w && h>maxDim){ w=Math.round(w*maxDim/h); h=maxDim; }
+        const c=document.createElement('canvas'); c.width=w; c.height=h; c.getContext('2d').drawImage(img,0,0,w,h); URL.revokeObjectURL(url);
+        try{ resolve(c.toDataURL('image/jpeg',quality)); }catch(e){ reject(e); } };
+      img.onerror=()=>{ URL.revokeObjectURL(url); reject(new Error('img-load')); };
+      img.src=url;
+    });
+  };
+  // data/blob/http/asset paths pass through; a photo id is looked up (and lazily fetched from cloud)
+  window.imgSrc = function(ref){
+    if(!ref) return '';
+    if(/^(data:|blob:|https?:|assets\/|\/)/.test(ref)) return ref;
+    if(PhotoStore[ref]) return PhotoStore[ref];
+    FB.fetchPhoto(ref); return LOADING_IMG;
+  };
+  FB.savePhoto = function(dataUrl){
+    const id='p_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+    PhotoStore[id]=dataUrl;
+    if(FB.enabled && FB._db){ try{ FB._db.collection('mcq_photos').doc(id).set({data:dataUrl,created:Date.now()}).catch(e=>console.warn('[FB] photo save', e&&e.message)); }catch(e){} }
+    return id;
+  };
+  FB.fetchPhoto = function(id){
+    if(!id || PhotoStore[id] || _photoPending[id] || !(FB.enabled&&FB._db)) return;
+    _photoPending[id]=true;
+    FB._db.collection('mcq_photos').doc(id).get().then(snap=>{ delete _photoPending[id];
+      if(snap&&snap.exists){ PhotoStore[id]=snap.data().data; rerenderSoon(); } }).catch(e=>{ delete _photoPending[id]; });
+  };
+
   function buildState(){
     const modules={}; RECORD_MODS.forEach(m=>{ if(DB.modules[m]) modules[m]=DB.modules[m].records; });
     return { modules, staff:DB.staff, structure:DB.structure,

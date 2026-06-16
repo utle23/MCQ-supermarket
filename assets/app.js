@@ -440,16 +440,18 @@ function submitForm(e,modId){
 /* ============================================================ DETAIL DRAWER */
 function openDetail(modId,id){
   const m=DB.modules[modId]; const r=m.records.find(x=>x.id===id); if(!r) return;
-  const skip=new Set(['id','created','age']);
+  const skip=new Set(['id','created','age','photo']);
   const rows=Object.entries(r).filter(([k,v])=>!skip.has(k)&&v!==''&&v!=null).map(([k,v])=>{
     const isB=m.severities.includes(v)||m.statuses.includes(v)||TONES[v];
     return `<dt>${esc(prettyKey(k))}</dt><dd>${isB?badge(v):esc(v)}</dd>`;}).join('');
+  const photoBlk=r.photo?`<div class="section-title" style="margin-top:4px">📷 Photo</div><a href="${imgSrc(r.photo)}" target="_blank" rel="noopener"><img src="${imgSrc(r.photo)}" style="max-width:100%;border-radius:12px;border:1px solid var(--line);margin-bottom:14px"></a>`:'';
   const canEdit=isAdmin();
   $('#drawer').innerHTML=`<div class="drawer-head"><div class="dh-ic">${m.icon}</div>
     <div><div style="font-weight:840;font-size:16px">${esc(r.id)}</div><div style="color:var(--muted);font-size:12.5px">${esc(m.label)} · ${esc(r.store||'')} ${r.created?'· '+esc(r.created):''}</div>
     <div style="margin-top:7px;display:flex;gap:6px;flex-wrap:wrap">${r.severity?badge(r.severity):''}${r.priority&&r.priority!==r.severity?badge(r.priority):''}${r.step?badge(r.step):''}${r.status?badge(r.status):''}</div></div>
     <button class="x-btn" onclick="closeDrawer()">✕</button></div>
     <div class="drawer-body">
+    ${photoBlk}
     ${canEdit?`<div class="section-title" style="margin-top:4px">Edit record <span class="badge info" style="margin-left:6px">Admin · full access</span></div>
       <div class="grid2">${editFields(r,m)}</div>
       <div style="display:flex;gap:10px;margin-top:16px">
@@ -473,7 +475,7 @@ function reviewSave(modId,id){
 }
 /* admin full-edit: render an editable control for every field of the record */
 function editFields(r,m){
-  const skip=new Set(['id','created','age','icon','short','mod']);
+  const skip=new Set(['id','created','age','icon','short','mod','photo']);
   return Object.keys(r).filter(k=>!skip.has(k)).map(k=>{
     const v=r[k]; let f={key:k,label:prettyKey(k)};
     if((m.statuses||[]).includes(v)) f.type='select',f.options=m.statuses;
