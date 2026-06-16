@@ -799,21 +799,38 @@ function staffSave(ed){
 }
 function staffDelete(id){ if(!confirm('Delete this staff member permanently?')) return; const i=DB.staff.findIndex(x=>x.id===id); if(i>=0) DB.staff.splice(i,1); State.staffEdit=null; toast('🗑 Staff deleted'); renderStaff(); }
 
-/* ============================================================ JOB SCHEDULE (weekly) */
+/* ============================================================ JOB SCHEDULE — duties per department + weekly roster */
+const JOB_DUTIES={
+  'Cashier':{icon:'fa-cash-register',color:'#0ea5e9',kw:'cashier',tasks:['Open tills, count float & test EFTPOS by 7:50am','Greet & serve customers, keep queues moving','Restock bags, receipt rolls & front counter','Face up cigarettes, medicine & front cabinets','Cash-up, process returns & reconcile tills at close']},
+  'FV':{icon:'fa-carrot',color:'#10b981',kw:'fv',tasks:['Fill fruit & veg displays by 8:30am and 2:00pm','Quality-check & rotate stock, remove spoilage','Cut fruit / salad & pack second stock','Spray water on greens every 30 minutes','Clean cutting area, coolroom & crates']},
+  'Grocery':{icon:'fa-basket-shopping',color:'#f59e0b',kw:'grocer',tasks:['Fill key-value lines & face up front shelves','Check price-label accuracy & promo tags','Random expiry check on short-dated stock','Keep aisles clear — no pallet jacks / boxes blocking','Flatten cartons & return left-behind products']},
+  'Frozen & Dairy':{icon:'fa-snowflake',color:'#0891b2',kw:'dairy',tasks:['Fill dairy & frozen lines, face up shelves','Confirm fridge / freezer temps logged with Manager','Expiry check & markdowns completed','Keep fridges clean, clear & organised','Report any temperature alarm immediately']},
+  'Butcher':{icon:'fa-drumstick-bite',color:'#ef4444',kw:'butcher',tasks:['Prepare sanitizer & paper towel at the station','Fill & face meat display, labels correct','Keep trays gapped front & back, rotate stock','Label & date all crates in the coldroom','Wrap & wash trays, wipe windows at close']},
+  'Cosmetic':{icon:'fa-wand-magic-sparkles',color:'#ec4899',kw:'cosmetic',tasks:['Fully stock & face up all cosmetic shelves','Wipe glass cabinets fingerprint-free','Clean & top up tester units','Price new arrivals & check expiry / markdowns','Keep section neat, organised & shoppable']},
+  'Office':{icon:'fa-file-invoice-dollar',color:'#64748b',kw:'manager',tasks:['Keep desks & tables clean and organised','Sort, file & check invoices against deliveries','Update price changes & print shelf labels','Send invoice batch to Head Office (Mon & Thu)','Count petty cash & back up daily sales report']},
+  'Café':{icon:'fa-mug-hot',color:'#b45309',kw:'caf',tasks:['Set up café & check homemade / supplier fridge temps','Prep & display fresh items with correct labels','Keep counter, machine & seating clean','Descale coffee machine weekly','Cash-up & switch off appliances at close']},
+};
 function renderSchedule(){
-  setAccent('#6a1b9a'); setCrumb('🗓️','Job Schedule','Weekly roster by department');
+  setAccent('#6a1b9a'); setCrumb('🗓️','Job Schedule','Daily duties by department & weekly roster');
+  const staff=DB.staff.filter(x=>x.active&&(isSuper()||x.store===State.branch));
+  const pickFor=(d)=>{ let m=staff.filter(s=>String(s.role||'').toLowerCase().includes(d.kw)); if(!m.length) m=staff.filter(s=>/manager|supervisor/i.test(s.role||'')); if(!m.length) m=staff.slice(0,2); return m.slice(0,3); };
+  const depts=Object.keys(JOB_DUTIES);
+  const dutyRows=depts.map(dept=>{ const d=JOB_DUTIES[dept]; const team=pickFor(d); const names=team.length?team.map(s=>esc(s.name)).join(', '):'—';
+    return `<tr><td><span class="jd-dept" style="--c:${d.color}"><i class="fas ${d.icon}"></i> ${esc(dept)}</span></td><td>${names}</td><td><ul class="jd-tasks">${d.tasks.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></td></tr>`;}).join('');
   const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
   const shifts=[['Open','06:00–14:00'],['Mid','09:00–17:00'],['Close','13:00–21:00']];
-  const depts=['Cashier','FV','Grocery','Butcher','Café'];
-  const names=['Anna B.','Sarah N.','Kim H.','David T.','Mai L.','Tuan N.','James P.','Lucy T.'];
-  const cellName=(d,i)=>names[(d+i)%names.length];
-  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🗓️</div><div><h2>Job Schedule</h2><p>Roster grid — who works which shift this week.</p></div>
-    <div class="ph-actions"><button class="btn sm">‹ Prev</button><button class="btn sm">This week</button><button class="btn sm">Next ›</button></div></div>
+  let rnames=staff.map(s=>s.name); if(!rnames.length) rnames=['Anna B.','Sarah N.','Kim H.','David T.','Mai L.','Tuan N.','James P.','Lucy T.'];
+  const cellName=(d,i)=>rnames[(d+i)%rnames.length];
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🗓️</div><div><h2>Job Schedule</h2><p>Concrete daily duties per department${isSuper()?' (all stores)':' · '+esc(State.branch)} and this week's roster.</p></div>
+    <div class="ph-actions">${exportBtns('sched-duty-table','Job Schedule — Daily Duties')}</div></div>
+    <div class="section-title">Daily duties by department</div>
+    <div class="card"><div class="table-wrap"><table class="grid jobduty" id="sched-duty-table"><thead><tr><th>Department</th><th>Team on shift</th><th>Key daily duties</th></tr></thead><tbody>${dutyRows}</tbody></table></div></div>
+    <div class="section-title">This week's roster</div>
     <div class="card"><div class="table-wrap"><table class="grid sched"><thead><tr><th>Shift</th>${days.map(d=>`<th class="ctr">${d}</th>`).join('')}</tr></thead><tbody>
     ${shifts.map((sh,si)=>`<tr><td><b>${sh[0]}</b><div class="cell-sub">${sh[1]}</div></td>${days.map((d,di)=>`<td class="ctr"><span class="shift-pill s${si}">${esc(cellName(di,si))}</span></td>`).join('')}</tr>`).join('')}
     </tbody></table></div></div>
     <div class="section-title">Coverage by department</div><div class="card"><div class="card-pad"><div class="chart-box"><canvas id="sched-chart"></canvas></div></div></div>`;
-  mkChart('sched-chart',{type:'bar',data:{labels:depts,datasets:[{label:'Shifts',data:depts.map(()=>5+Math.floor(Math.random()*9)),backgroundColor:PALETTE,borderRadius:8,maxBarThickness:40}]},options:baseOpts({legend:false})});
+  mkChart('sched-chart',{type:'bar',data:{labels:depts,datasets:[{label:'Shifts',data:depts.map((_,i)=>5+((i*3+4)%9)),backgroundColor:depts.map(d=>JOB_DUTIES[d].color),borderRadius:8,maxBarThickness:38}]},options:baseOpts({legend:false})});
 }
 
 /* ============================================================ EXPORT (PDF / Excel) — branded, reusable */
