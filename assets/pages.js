@@ -473,7 +473,7 @@ function ckMarkTempMissing(rows){
   setTimeout(()=>$$('.ck-temp-box.shake').forEach(el=>el.classList.remove('shake')),500);
 }
 
-/* ============================================================ REPORT ISSUE (copied from restaurant) */
+/* ============================================================ REPORT ISSUE — dynamic per-category form */
 function renderIssue(){
   setAccent('#e53935'); setCrumb('🚩','Report an Issue','Report anything that needs management attention');
   if(!State.iss) State.iss={cat:'',photo:null,prio:'Normal',tab:'report'};
@@ -482,85 +482,171 @@ function renderIssue(){
   const cats=DB.issueCategories;
   const card=(k,c)=>`<button type="button" class="cat-card ${State.iss.cat===k?'selected':''}" data-k="${k}" style="--cc:${c.color}" onclick="issCat('${k}')"><i class="fas ${c.icon} cat-ic" style="color:${c.color}"></i><span class="cat-label">${esc(c.label)}</span></button>`;
   const cards=DB.issueGroups.map(g=>{const inG=Object.entries(cats).filter(([k,c])=>c.group===g); return inG.length?`<div class="cat-group-h">${esc(g)}</div><div class="cat-grid">${inG.map(([k,c])=>card(k,c)).join('')}</div>`:'';}).join('');
-  const staff=['— Select your name —',...DB.staff.filter(x=>isAdmin()||x.store===State.branch).map(x=>x.name)];
-  const prio=[['Low','mute'],['Normal','info'],['High','warn'],['Urgent','bad']];
-  const regMods=['issue','maintenance','incident','complaint'];
-  let recent=[]; regMods.forEach(id=>DB.modules[id].records.forEach(r=>recent.push({mod:id,icon:DB.modules[id].icon,short:DB.modules[id].short,...r})));
-  if(!isAdmin()) recent=recent.filter(r=>r.store===State.branch);
-  recent.sort((a,b)=>String(b.created||b.date||'').localeCompare(String(a.created||a.date||''))); recent=recent.slice(0,12);
+  const c=State.iss.cat?cats[State.iss.cat]:null, mod=c?c.mod:'issue';
+  const fhBg=c?c.color+'1f':'#fdeaea', fhTitle=c?`<i class="fas ${c.icon}" style="color:${c.color}"></i>&nbsp; ${esc(c.label)}`:`<i class="fas fa-pen"></i>&nbsp; Issue details`;
+  const routeLbl={maintenance:'Maintenance register',incident:'Incident register',complaint:'Customer Complaint register',issue:'Issues register'}[mod];
   $('#content').innerHTML=`
    <div class="page-head"><div class="ph-ic" style="background:#fdeaea">🚩</div><div><h2>Report an Issue</h2><p>Report any operational issue, request or suggestion — reviewed by management only.</p></div>
      <div class="ph-actions">${issSeg('report')}</div></div>
    <div class="iss-cat-h">What would you like to report?</div>
    ${cards}
    <div class="iss-grid">
-     <div class="card">
-       <div class="card-head" id="iss-formhead"><h3><i class="fas fa-pen"></i>&nbsp; Issue details</h3></div>
+     <div class="card" id="iss-formcard">
+       <div class="card-head" id="iss-formhead" style="background:${fhBg}"><h3>${fhTitle}</h3>${c?`<span class="reg-tag" style="margin-left:auto">→ ${routeLbl}</span>`:''}</div>
        <div class="card-pad">
-         <div class="grid2">
-           <div class="field"><label>Your name <span class="req">*</span></label><select id="iss-name">${staff.map(n=>`<option>${esc(n)}</option>`).join('')}</select></div>
-           <div class="field"><label>Store</label><select id="iss-store">${(isAdmin()?DB.stores:[State.branch]).map(s=>`<option ${s===State.branch?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
-         </div>
-         <div class="field" style="margin-top:14px"><label>Priority</label><div class="prio-pills" id="iss-prio">${prio.map((p,i)=>`<button type="button" class="prio-pill ${p[1]} ${p[0]===State.iss.prio?'on':''}" data-v="${p[0]}" onclick="issPrio(this)">${p[0]}</button>`).join('')}</div></div>
-         <div class="field" style="margin-top:14px"><label>Brief title <span class="req">*</span></label><input id="iss-title" maxlength="120" placeholder="Short description of the issue…"></div>
-         <div class="field" style="margin-top:14px"><label>Full description <span class="req">*</span></label><textarea id="iss-desc" placeholder="Describe the issue in detail. Include dates, names and any relevant info…"></textarea><div class="fhint">All reports are confidential and reviewed by management only.</div></div>
-         <div class="field" style="margin-top:14px"><label>Photo <span class="req">* required</span></label>
-           <label class="photo-box" id="iss-photobox"><input type="file" accept="image/*" capture="environment" onchange="issPhoto(this)" style="display:none">
-             <div id="iss-ph-empty"><i class="fas fa-camera"></i><div class="pb-t">Tap to take / attach a photo — required to submit</div></div>
-             <img id="iss-ph-img" style="display:none"></label>
-           <div id="iss-ph-rm" style="display:none;margin-top:8px"><button class="btn sm" onclick="issClearPhoto(event)">✕ Remove photo</button></div>
-         </div>
+         ${issFormBody(c,mod)}
          <div id="iss-warn" class="rail-tip" style="display:none;margin-top:14px">⚠️ Please select a category above first.</div>
          <button class="btn block lg iss-submit" style="margin-top:16px" onclick="issSubmit()"><i class="fas fa-paper-plane"></i>&nbsp; Submit Report</button>
        </div>
      </div>
      <aside class="form-rail">
        <div class="card rail-card" style="background:var(--accent-soft)"><h4>🛡️ Your report is confidential</h4>
-         <ul><li>Only management can view submitted reports</li><li>Reports are reviewed promptly</li><li>For urgent issues, speak to your manager directly</li><li>Missed clock-in/out: management will adjust your timesheet</li><li>Suggestions are always welcome</li></ul></div>
-       <div class="card rail-card"><h4>Categories</h4><div class="cat-list">${Object.values(cats).map(c=>`<div class="cat-list-row"><i class="fas ${c.icon}" style="color:${c.color}"></i> ${esc(c.label)}</div>`).join('')}</div></div>
+         <ul><li>Only management can view submitted reports</li><li>Reports are reviewed promptly</li><li>For urgent issues, speak to your manager directly</li><li>Missed clock-in/out: management will adjust your timesheet</li><li>A photo is optional on every report</li></ul></div>
+       ${issRailTip(mod)}
      </aside>
    </div>`;
 }
-function issCat(k){ State.iss.cat=k;
-  $$('.cat-card').forEach(c=>c.classList.toggle('selected',c.getAttribute('data-k')===k));
-  const c=DB.issueCategories[k],h=$('#iss-formhead');
-  if(h){ h.style.background=c.color+'1f'; h.querySelector('h3').innerHTML=`<i class="fas ${c.icon}" style="color:${c.color}"></i>&nbsp; ${esc(c.label)}`; }
-  const w=$('#iss-warn'); if(w) w.style.display='none';
+/* dynamic form body by category mod */
+function issFormBody(c,mod){
+  const staffNames=DB.staff.filter(x=>isAdmin()||x.store===State.branch).map(x=>x.name);
+  const nameOpts=['— Select your name —',...staffNames];
+  const selName=State.iss.name||'', selStore=State.iss.store||State.branch;
+  const stores=isAdmin()?DB.stores:[State.branch];
+  const depts=(DB.checklist&&DB.checklist.depts)||[];
+  const deptSel=id=>`<select id="${id}"><option value="">— Select —</option>${depts.map(d=>`<option>${esc(d)}</option>`).join('')}<option>Front of store / Checkout</option><option>Loading dock</option><option>Coolroom / Freezer</option><option>Online</option><option>Other</option></select>`;
+  const prio=[['Low','mute'],['Normal','info'],['High','warn'],['Urgent','bad']];
+  const prioLbl=mod==='complaint'||mod==='incident'?'Severity':'Priority';
+  const prioHint=mod==='complaint'?'<div class="fhint">Low → Minor · Normal → Moderate · High / Urgent → Major</div>':'';
+  const nameStore=`<div class="grid2">
+       <div class="field"><label>${mod==='incident'||mod==='complaint'?'Submitted by':'Your name'} <span class="req">*</span></label><select id="iss-name">${nameOpts.map(n=>`<option ${n===selName?'selected':''}>${esc(n)}</option>`).join('')}</select></div>
+       <div class="field"><label>Store</label><select id="iss-store">${stores.map(s=>`<option ${s===selStore?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
+     </div>`;
+  const prioRow=`<div class="field" style="margin-top:14px"><label>${prioLbl}</label><div class="prio-pills" id="iss-prio">${prio.map(p=>`<button type="button" class="prio-pill ${p[1]} ${p[0]===State.iss.prio?'on':''}" data-v="${p[0]}" onclick="issPrio(this)">${p[0]}</button>`).join('')}</div>${prioHint}</div>`;
+  let body;
+  if(mod==='maintenance'){
+    body=`${nameStore}${prioRow}
+     <div class="grid2" style="margin-top:14px">
+       <div class="field"><label>Department / Area</label>${deptSel('iss-dept')}</div>
+       <div class="field"><label>Equipment name <span class="req">*</span></label><input id="iss-equip" maxlength="120" placeholder="e.g. Coolroom 1 compressor, Till 2 scanner…"></div>
+     </div>
+     <div class="field" style="margin-top:14px"><label>Location detail</label><input id="iss-loc" maxlength="120" placeholder="e.g. Till 2, Coolroom 1, Loading dock…"></div>
+     <div class="field" style="margin-top:14px"><label>What's wrong? <span class="req">*</span></label><textarea id="iss-desc" placeholder="Describe the fault — when it started, noises, leaks, error codes, what stopped working…"></textarea></div>`;
+  } else if(mod==='complaint'){
+    const staff2=`<select id="iss-staff2"><option value="">— N/A / Unknown —</option>${staffNames.map(n=>`<option>${esc(n)}</option>`).join('')}</select>`;
+    const channels=['In-store','Phone','Email','Social Media','Google Review','Other'];
+    const actions=['Refund / exchange processed','Product replaced','Voucher / goodwill given','Apology only (no transaction)','None (information only)','Acknowledged & escalated to Store Manager'];
+    body=`${nameStore}${prioRow}
+     <div class="field" style="margin-top:14px"><label>Channel</label><div class="iss-radios" id="iss-channel">${channels.map((ch,i)=>`<label class="iss-radio"><input type="radio" name="iss-channel" value="${esc(ch)}" ${i===0?'checked':''}> ${esc(ch)}</label>`).join('')}</div></div>
+     <div class="grid2" style="margin-top:14px">
+       <div class="field"><label>Department</label>${deptSel('iss-dept')}</div>
+       <div class="field"><label>Staff being complained about</label>${staff2}</div>
+     </div>
+     <div class="field" style="margin-top:14px"><label>Complaint details <span class="req">*</span></label><textarea id="iss-desc" placeholder="What did the customer complain about? Include product, price, time, and what was said…"></textarea></div>
+     <div class="field" style="margin-top:14px"><label>Immediate action taken</label><div class="iss-checks" id="iss-actions">${actions.map(a=>`<label class="iss-check"><input type="checkbox" value="${esc(a)}"> ${esc(a)}</label>`).join('')}</div>
+       <div class="fhint"><b>Minor:</b> tick what you did. <b>Moderate / Major:</b> you MUST tick “Acknowledged & escalated to Store Manager”.</div></div>
+     <div class="iss-subhead">Customer info <span class="opt">(optional)</span></div>
+     <div class="grid2">
+       <div class="field"><label>Customer name</label><input id="iss-cust-name" placeholder="Optional"></div>
+       <div class="field"><label>Customer contact (phone / email)</label><input id="iss-cust-contact" placeholder="Optional"></div>
+     </div>
+     <div class="field" style="margin-top:14px"><label>Did the customer request follow-up?</label><div class="iss-radios" id="iss-followup"><label class="iss-radio"><input type="radio" name="iss-followup" value="No" checked> No</label><label class="iss-radio"><input type="radio" name="iss-followup" value="Yes"> Yes</label></div></div>
+     <div class="field" style="margin-top:14px"><label>Photo / evidence URL <span class="opt">(optional)</span></label><input id="iss-url" placeholder="Paste a link to a photo, screenshot or online review…"></div>`;
+  } else if(mod==='incident'){
+    const nowLocal=new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16);
+    body=`${nameStore}${prioRow}
+     <div class="grid2" style="margin-top:14px">
+       <div class="field"><label>Area / Location</label><input id="iss-loc" maxlength="120" placeholder="e.g. Coolroom 1, Aisle 4, Loading dock…"></div>
+       <div class="field"><label>Incident date & time</label><input type="datetime-local" id="iss-when" value="${nowLocal}"></div>
+     </div>
+     <div class="grid2" style="margin-top:14px">
+       <div class="field"><label>Injury?</label><div class="iss-radios" id="iss-injury"><label class="iss-radio"><input type="radio" name="iss-injury" value="No" checked> No</label><label class="iss-radio"><input type="radio" name="iss-injury" value="Yes"> Yes</label></div></div>
+       <div class="field"><label>Medical attention required?</label><div class="iss-radios" id="iss-medical"><label class="iss-radio"><input type="radio" name="iss-medical" value="No" checked> No</label><label class="iss-radio"><input type="radio" name="iss-medical" value="Yes"> Yes</label></div></div>
+     </div>
+     <div class="field" style="margin-top:14px"><label>What happened? <span class="req">*</span></label><textarea id="iss-desc" placeholder="Describe clearly and factually — what happened, where, and who was involved…"></textarea></div>
+     <div class="field" style="margin-top:14px"><label>Immediate action taken? <span class="req">*</span></label><textarea id="iss-action" placeholder="e.g. first aid given, area isolated, equipment removed, manager informed…"></textarea></div>
+     <div class="field" style="margin-top:14px"><label>Photo / evidence URL <span class="opt">(optional)</span></label><input id="iss-url" placeholder="Paste a link to a photo or document…"></div>`;
+  } else { /* generic operational / people / other */
+    body=`${nameStore}${prioRow}
+     <div class="field" style="margin-top:14px"><label>Brief title <span class="req">*</span></label><input id="iss-title" maxlength="120" placeholder="Short description of the issue…"></div>
+     <div class="field" style="margin-top:14px"><label>Full description <span class="req">*</span></label><textarea id="iss-desc" placeholder="Describe the issue in detail. Include dates, names and any relevant info…"></textarea><div class="fhint">All reports are confidential and reviewed by management only.</div></div>`;
+  }
+  return body+issPhotoBox();
+}
+function issPhotoBox(){ const has=!!State.iss.photo;
+  return `<div class="field" style="margin-top:14px"><label>Photo <span class="opt">(optional)</span></label>
+     <label class="photo-box" id="iss-photobox"><input type="file" accept="image/*" capture="environment" onchange="issPhoto(this)" style="display:none">
+       <div id="iss-ph-empty" style="display:${has?'none':'block'}"><i class="fas fa-camera"></i><div class="pb-t">Tap to take / attach a photo (optional)</div></div>
+       <img id="iss-ph-img" src="${has?State.iss.photo:''}" style="display:${has?'block':'none'}"></label>
+     <div id="iss-ph-rm" style="display:${has?'block':'none'};margin-top:8px"><button class="btn sm" onclick="issClearPhoto(event)">✕ Remove photo</button></div>
+   </div>`;
+}
+function issRailTip(mod){
+  const tips={
+    maintenance:['Name the exact equipment + location so the right tech is sent','Refrigeration / electrical faults → mark Urgent','Add a photo of the fault or error code if you can'],
+    complaint:['Stay factual — record what the customer said','Moderate / Major must be escalated to the Store Manager','Customer details are optional and kept confidential'],
+    incident:['Make people safe first, then report','Record date, time and exact location','Note any injury and whether medical help was needed'],
+    issue:['Low stock / supplier / HR / suggestions go here','Missed clock-in/out: management will adjust your timesheet','Be specific so it can be actioned quickly'],
+  };
+  const t=tips[mod]||tips.issue;
+  return `<div class="card rail-card"><h4>Tips for this report</h4><ul>${t.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`;
+}
+function issCat(k){
+  if(State.iss){ const n=$('#iss-name'),s=$('#iss-store'); if(n)State.iss.name=n.value; if(s)State.iss.store=s.value; }
+  State.iss.cat=k; renderIssue();
+  const fc=$('#iss-formcard'); if(fc) fc.scrollIntoView({behavior:'smooth',block:'start'});
 }
 function issPrio(btn){ $$('#iss-prio .prio-pill').forEach(p=>p.classList.remove('on')); btn.classList.add('on'); State.iss.prio=btn.dataset.v; }
 function issPhoto(input){ const f=input.files&&input.files[0]; if(!f) return; const url=URL.createObjectURL(f); State.iss.photo=url;
   $('#iss-ph-img').src=url; $('#iss-ph-img').style.display='block'; $('#iss-ph-empty').style.display='none'; $('#iss-ph-rm').style.display='block'; }
 function issClearPhoto(e){ e.preventDefault(); e.stopPropagation(); State.iss.photo=null; $('#iss-ph-img').style.display='none'; $('#iss-ph-empty').style.display='block'; $('#iss-ph-rm').style.display='none'; }
 function issSubmit(){
-  ['iss-name','iss-title','iss-desc'].forEach(id=>$('#'+id)&&$('#'+id).classList.remove('invalid'));
-  $('#iss-photobox')&&$('#iss-photobox').classList.remove('invalid');
-  if(!State.iss.cat){ const w=$('#iss-warn'); w.style.display='flex'; window.scrollTo({top:0,behavior:'smooth'}); return; }
-  const nameEl=$('#iss-name'), titleEl=$('#iss-title'), descEl=$('#iss-desc'); let bad=null;
-  if(nameEl.value.startsWith('—')){nameEl.classList.add('invalid');bad=bad||nameEl;}
-  if(!titleEl.value.trim()){titleEl.classList.add('invalid');bad=bad||titleEl;}
-  if(!descEl.value.trim()){descEl.classList.add('invalid');bad=bad||descEl;}
-  if(!State.iss.photo){ const pb=$('#iss-photobox'); pb.classList.add('invalid','shake'); setTimeout(()=>pb.classList.remove('shake'),450); bad=bad||pb; }
-  if(bad){ toast(!State.iss.photo?'📷 A photo is required before you can submit':'Please complete the required fields'); bad.scrollIntoView({behavior:'smooth',block:'center'}); return; }
-  const name=nameEl.value, title=titleEl.value.trim(), desc=descEl.value.trim();
-  const c=DB.issueCategories[State.iss.cat], store=$('#iss-store').value, prio=State.iss.prio||'Normal';
+  if(!State.iss.cat){ const w=$('#iss-warn'); if(w){w.style.display='flex';} window.scrollTo({top:0,behavior:'smooth'}); return; }
+  const c=DB.issueCategories[State.iss.cat], mod=c.mod;
+  const val=id=>{const e=$('#'+id); return e?e.value.trim():'';};
+  const radio=nm=>{const e=document.querySelector(`input[name="${nm}"]:checked`); return e?e.value:'';};
+  const checks=id=>{const w=$('#'+id); return w?[...w.querySelectorAll('input:checked')].map(x=>x.value):[];};
+  // validation
+  $$('#iss-formcard .invalid').forEach(e=>e.classList.remove('invalid'));
+  const req= mod==='maintenance'?['iss-name','iss-equip','iss-desc']
+           : mod==='incident'   ?['iss-name','iss-desc','iss-action']
+           : mod==='complaint'  ?['iss-name','iss-desc']
+           :                      ['iss-name','iss-title','iss-desc'];
+  let bad=null;
+  req.forEach(id=>{const e=$('#'+id); if(!e) return; const empty=(id==='iss-name')?(e.value.startsWith('—')||!e.value.trim()):!e.value.trim();
+    if(empty){ e.classList.add('invalid','shake'); setTimeout(()=>e.classList.remove('shake'),450); bad=bad||e; }});
+  if(bad){ toast('Please complete the required fields'); bad.scrollIntoView({behavior:'smooth',block:'center'}); return; }
+  const name=val('iss-name'), desc=val('iss-desc'), store=$('#iss-store').value, prio=State.iss.prio||'Normal';
   const now=new Date().toISOString().slice(0,16).replace('T',' '), ymd=new Date().toISOString().slice(0,10).replace(/-/g,''), rnd=()=>Math.floor(1000+Math.random()*9000);
-  const sev=DB.prioToSeverity[prio]; let mod=c.mod, ref, rec;
-  if(mod==='maintenance'){ ref=`MTN-${ymd}-${rnd()}`; rec={id:ref,created:now,store,equipment:title,category:c.label,priority:sev,severity:sev,status:'New',issue:desc}; }
-  else if(mod==='incident'){ ref=`INC-${ymd}-${rnd()}`; rec={id:ref,created:now,store,type:c.label,severity:sev,status:'New',summary:desc}; }
-  else if(mod==='complaint'){ ref=`CCL-${ymd}-${rnd()}`; rec={id:ref,created:now,store,severity:DB.prioToComplaint[prio],category:c.label,shortDescription:desc,status:'Open',followup:'',age:0}; }
-  else { mod='issue'; ref=`ISS-${ymd}-${rnd()}`; rec={id:ref,created:now,store,title,category:c.label,priority:prio,status:'Open',reportedBy:name,description:desc}; }
-  DB.modules[mod].records.unshift(rec);
+  const sev=DB.prioToSeverity[prio]; const photo=State.iss.photo||''; let modOut=mod, ref, rec;
+  if(mod==='maintenance'){
+    const dept=val('iss-dept'), loc=val('iss-loc'), equip=val('iss-equip');
+    ref=`MTN-${ymd}-${rnd()}`;
+    rec={id:ref,created:now,store,equipment:equip,category:c.label,department:dept,location:loc,priority:sev,severity:sev,status:'New',issue:desc,reportedBy:name,photo};
+  } else if(mod==='incident'){
+    const loc=val('iss-loc'), when=(val('iss-when')||'').replace('T',' '), injury=radio('iss-injury'), medical=radio('iss-medical'), action=val('iss-action'), url=val('iss-url');
+    ref=`INC-${ymd}-${rnd()}`;
+    rec={id:ref,created:now,store,type:c.label,category:c.label,severity:sev,status:'New',location:loc,occurredAt:when,injury,medicalAttention:medical,summary:desc,actionTaken:action,reportedBy:name,evidenceUrl:url,photo};
+  } else if(mod==='complaint'){
+    const channel=radio('iss-channel'), dept=val('iss-dept'), staff2=val('iss-staff2'), actions=checks('iss-actions'), custName=val('iss-cust-name'), custContact=val('iss-cust-contact'), followup=radio('iss-followup'), url=val('iss-url');
+    ref=`CCL-${ymd}-${rnd()}`;
+    rec={id:ref,created:now,store,severity:DB.prioToComplaint[prio],category:c.label,channel,department:dept,staffComplained:staff2,shortDescription:desc,actionTaken:actions.join(', '),customerName:custName,customerContact:custContact,followup,status:'Open',reportedBy:name,evidenceUrl:url,age:0,photo};
+  } else {
+    modOut='issue'; const title=val('iss-title'); ref=`ISS-${ymd}-${rnd()}`;
+    rec={id:ref,created:now,store,title,category:c.label,priority:prio,status:'Open',reportedBy:name,description:desc,photo};
+  }
+  DB.modules[modOut].records.unshift(rec);
   const names=(DB.issueEmailRoutes[State.iss.cat]||[]).map(k=>(DB.emailRecipients.find(x=>x.key===k)||{}).name).filter(Boolean);
   State.iss={cat:'',photo:null,prio:'Normal',tab:'report'};
-  toast(`✓ ${ref} → ${DB.modules[mod].short}${names.length?' · 📧 '+names.length+' emailed':''}`); buildSidebar(); renderIssue();
+  if(window.persist) window.persist();
+  toast(`✓ ${ref} → ${DB.modules[modOut].short}${names.length?' · 📧 '+names.length+' emailed':''}`); buildSidebar(); renderIssue();
 }
 
 /* ---- Report Issue · Analytics (by category + branch comparison) ---- */
-const ISS_GROUP_COLOR={'Maintenance & Facility':'#f59e0b','Safety & Incident':'#ef4444','Customer':'#ec4899','Operational':'#3b82f6','People':'#8b5cf6','Other':'#64748b'};
+const ISS_GROUP_COLOR={'Maintenance & Facility':'#f59e0b','Customer Complaint':'#ec4899','Safety & Incident':'#ef4444','Operational':'#3b82f6','People':'#8b5cf6','Other':'#64748b'};
 function issGroupOf(r){
   if(r.mod==='maintenance') return 'Maintenance & Facility';
   if(r.mod==='incident') return 'Safety & Incident';
-  if(r.mod==='complaint') return 'Customer';
+  if(r.mod==='complaint') return 'Customer Complaint';
   const c=Object.values(DB.issueCategories).find(x=>x.label===r.category); return c?c.group:'Other';
 }
 function issTab(t){ if(!State.iss)State.iss={cat:'',photo:null,prio:'Normal'}; State.iss.tab=t; renderIssue(); }

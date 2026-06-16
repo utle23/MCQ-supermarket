@@ -32,7 +32,7 @@ DB.emailRecipients = [
 const _GROUP_RECIPIENTS = {
   'Maintenance & Facility':['fac','ho'],
   'Safety & Incident':['safety','ho','ops'],
-  'Customer':['mgr','ho'],
+  'Customer Complaint':['mgr','ho'],
   'Operational':['ops','mgr'],
   'People':['hr','ho'],
   'Other':['ho'],
@@ -487,36 +487,50 @@ DB.navGroups = [
    (mod) so there is one place to report and no meaning overlap.
    ============================================================ */
 DB.issueCategories = {
-  // — Maintenance & Facility → creates a Maintenance case —
-  equipment:   {label:'Equipment Problem',      icon:'fa-screwdriver-wrench',  color:'#F57C00', group:'Maintenance & Facility', mod:'maintenance'},
-  refrigeration:{label:'Refrigeration / Cool',  icon:'fa-snowflake',           color:'#0277BD', group:'Maintenance & Facility', mod:'maintenance'},
-  electrical:  {label:'Electrical / Lighting',  icon:'fa-bolt',                color:'#F9A825', group:'Maintenance & Facility', mod:'maintenance'},
-  plumbing:    {label:'Plumbing / Leak',        icon:'fa-faucet-drip',         color:'#0288D1', group:'Maintenance & Facility', mod:'maintenance'},
-  pos:         {label:'IT / POS / EFTPOS',      icon:'fa-cash-register',       color:'#5E35B1', group:'Maintenance & Facility', mod:'maintenance'},
-  building:    {label:'Building / Door / Fixture',icon:'fa-door-open',         color:'#6D4C41', group:'Maintenance & Facility', mod:'maintenance'},
-  // — Safety & Incident → creates an Incident —
-  injury:      {label:'Staff Injury',           icon:'fa-kit-medical',         color:'#C62828', group:'Safety & Incident', mod:'incident'},
-  nearmiss:    {label:'Near Miss',              icon:'fa-person-falling',      color:'#EF6C00', group:'Safety & Incident', mod:'incident'},
-  safety:      {label:'Safety Hazard',          icon:'fa-triangle-exclamation',color:'#B71C1C', group:'Safety & Incident', mod:'incident'},
-  security:    {label:'Security / Theft',       icon:'fa-shield-halved',       color:'#37474F', group:'Safety & Incident', mod:'incident'},
-  // — Customer → creates a Complaint —
-  customer:    {label:'Customer Complaint',     icon:'fa-comment-dots',        color:'#D84315', group:'Customer', mod:'complaint'},
-  // — Operational / stock → general issue —
-  low_stock:   {label:'Low Stock',              icon:'fa-box-open',            color:'#E65100', group:'Operational', mod:'issue'},
-  supplier:    {label:'Supplier Delivery',      icon:'fa-truck',               color:'#1565C0', group:'Operational', mod:'issue'},
-  product:     {label:'Product Quality',        icon:'fa-circle-exclamation',  color:'#C62828', group:'Operational', mod:'issue'},
-  pricing:     {label:'Price / Label Error',    icon:'fa-tag',                 color:'#0288D1', group:'Operational', mod:'issue'},
-  cleaning:    {label:'Cleaning Issue',         icon:'fa-broom',               color:'#2E7D32', group:'Operational', mod:'issue'},
-  supplies:    {label:'Supply / Stock Request', icon:'fa-cart-shopping',       color:'#00897B', group:'Operational', mod:'issue'},
-  // — People → general issue —
-  hr:          {label:'Salary / HR Issue',      icon:'fa-money-bill-wave',     color:'#7B1FA2', group:'People', mod:'issue'},
-  conflict:    {label:'Staff Conflict',         icon:'fa-user-slash',          color:'#E53935', group:'People', mod:'issue'},
-  timesheet:   {label:'Missed Clock-in / out',  icon:'fa-clock',               color:'#00796B', group:'People', mod:'issue'},
-  // — Other —
-  suggestion:  {label:'Idea / Suggestion',      icon:'fa-lightbulb',           color:'#F9A825', group:'Other', mod:'issue'},
-  other:       {label:'Other',                  icon:'fa-circle-question',     color:'#546E7A', group:'Other', mod:'issue'},
+  // ── Maintenance & Facility → creates a Maintenance case ──
+  refrigeration:{label:'Refrigeration',           icon:'fa-snowflake',          color:'#0277BD', group:'Maintenance & Facility', mod:'maintenance'},
+  electrical:   {label:'Electrical',               icon:'fa-bolt',               color:'#F9A825', group:'Maintenance & Facility', mod:'maintenance'},
+  plumbing:     {label:'Plumbing',                 icon:'fa-faucet-drip',        color:'#0288D1', group:'Maintenance & Facility', mod:'maintenance'},
+  pos:          {label:'POS / EFTPOS',             icon:'fa-cash-register',      color:'#5E35B1', group:'Maintenance & Facility', mod:'maintenance'},
+  it:           {label:'Printer / IT',             icon:'fa-print',              color:'#455A64', group:'Maintenance & Facility', mod:'maintenance'},
+  forklift:     {label:'Forklift / Pallet Jack',   icon:'fa-truck-ramp-box',     color:'#6D4C41', group:'Maintenance & Facility', mod:'maintenance'},
+  building:     {label:'Building / Door / Fixture',icon:'fa-door-open',          color:'#795548', group:'Maintenance & Facility', mod:'maintenance'},
+  m_cleaning:   {label:'Cleaning / Pest',          icon:'fa-broom',              color:'#2E7D32', group:'Maintenance & Facility', mod:'maintenance'},
+  kitchen_eq:   {label:'Kitchen Equipment',        icon:'fa-kitchen-set',        color:'#EF6C00', group:'Maintenance & Facility', mod:'maintenance'},
+  butcher_eq:   {label:'Butcher Equipment',        icon:'fa-drumstick-bite',     color:'#C2185B', group:'Maintenance & Facility', mod:'maintenance'},
+  m_safety:     {label:'Safety Hazard',            icon:'fa-triangle-exclamation',color:'#F57C00',group:'Maintenance & Facility', mod:'maintenance'},
+  m_other:      {label:'Other (maintenance)',      icon:'fa-screwdriver-wrench', color:'#607D8B', group:'Maintenance & Facility', mod:'maintenance'},
+  // ── Customer Complaint → creates a Complaint ──
+  c_product:    {label:'Product quality',          icon:'fa-box',                color:'#C62828', group:'Customer Complaint', mod:'complaint'},
+  c_price:      {label:'Price / scanning',         icon:'fa-tag',                color:'#0288D1', group:'Customer Complaint', mod:'complaint'},
+  c_staff:      {label:'Staff attitude / service', icon:'fa-user-tie',           color:'#6A1B9A', group:'Customer Complaint', mod:'complaint'},
+  c_clean:      {label:'Cleanliness',              icon:'fa-broom',              color:'#2E7D32', group:'Customer Complaint', mod:'complaint'},
+  c_safety:     {label:'Safety',                   icon:'fa-triangle-exclamation',color:'#B71C1C',group:'Customer Complaint', mod:'complaint'},
+  c_stock:      {label:'Stock availability',       icon:'fa-box-open',           color:'#E65100', group:'Customer Complaint', mod:'complaint'},
+  c_online:     {label:'Online / social media',    icon:'fa-hashtag',            color:'#1565C0', group:'Customer Complaint', mod:'complaint'},
+  c_other:      {label:'Other (complaint)',        icon:'fa-comment-dots',       color:'#D84315', group:'Customer Complaint', mod:'complaint'},
+  // ── Safety & Incident → creates an Incident ──
+  i_injury:     {label:'Staff injury',             icon:'fa-kit-medical',        color:'#C62828', group:'Safety & Incident', mod:'incident'},
+  i_nearmiss:   {label:'Near miss',                icon:'fa-person-falling',     color:'#EF6C00', group:'Safety & Incident', mod:'incident'},
+  i_equipment:  {label:'Equipment / facility damage',icon:'fa-helmet-safety',    color:'#F57C00', group:'Safety & Incident', mod:'incident'},
+  i_property:   {label:'Property damage',          icon:'fa-house-crack',        color:'#8D6E63', group:'Safety & Incident', mod:'incident'},
+  i_food:       {label:'Food safety internal issue',icon:'fa-utensils',          color:'#2E7D32', group:'Safety & Incident', mod:'incident'},
+  i_security:   {label:'Security / theft concern', icon:'fa-shield-halved',      color:'#37474F', group:'Safety & Incident', mod:'incident'},
+  i_vehicle:    {label:'Vehicle / loading dock',   icon:'fa-truck',              color:'#1565C0', group:'Safety & Incident', mod:'incident'},
+  i_behaviour:  {label:'Behaviour / conflict',     icon:'fa-user-slash',         color:'#E53935', group:'Safety & Incident', mod:'incident'},
+  i_other:      {label:'Other (incident)',         icon:'fa-circle-exclamation', color:'#546E7A', group:'Safety & Incident', mod:'incident'},
+  // ── Operational → general issue ──
+  low_stock:    {label:'Low Stock',                icon:'fa-box-open',           color:'#E65100', group:'Operational', mod:'issue'},
+  supplier:     {label:'Supplier Delivery',        icon:'fa-truck-fast',         color:'#1565C0', group:'Operational', mod:'issue'},
+  supplies:     {label:'Supply / Stock Request',   icon:'fa-cart-shopping',      color:'#00897B', group:'Operational', mod:'issue'},
+  // ── People → general issue ──
+  hr:           {label:'Salary / HR Issue',        icon:'fa-money-bill-wave',    color:'#7B1FA2', group:'People', mod:'issue'},
+  timesheet:    {label:'Missed Clock-in / out',    icon:'fa-clock',              color:'#00796B', group:'People', mod:'issue'},
+  // ── Other ──
+  suggestion:   {label:'Idea / Suggestion',        icon:'fa-lightbulb',          color:'#F9A825', group:'Other', mod:'issue'},
+  other:        {label:'Other',                    icon:'fa-circle-question',    color:'#546E7A', group:'Other', mod:'issue'},
 };
-DB.issueGroups = ['Maintenance & Facility','Safety & Incident','Customer','Operational','People','Other'];
+DB.issueGroups = ['Maintenance & Facility','Customer Complaint','Safety & Incident','Operational','People','Other'];
 /* per-category email routing (which recipients get notified) — default from group */
 DB.issueEmailRoutes = {};
 Object.entries(DB.issueCategories).forEach(([k,c])=>{ DB.issueEmailRoutes[k]=[...(_GROUP_RECIPIENTS[c.group]||['ho'])]; });
