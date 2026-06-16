@@ -575,6 +575,16 @@ input.invalid,select.invalid,textarea.invalid{border-color:var(--bad)!important;
 .freq-pill{display:inline-block;font-size:11px;font-weight:700;padding:3px 10px;border-radius:20px;border:1px solid;white-space:nowrap}
 .exp-x i{color:#1d6f42}.exp-p i{color:#c0392b}
 .exp-x,.exp-p{font-weight:700}
+.exp-dd{position:relative;display:inline-block}
+.exp-trigger{font-weight:700}.exp-trigger .fa-caret-down{margin-left:5px;font-size:10px;opacity:.7}
+.exp-menu{position:absolute;right:0;top:calc(100% + 6px);background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow-lg);padding:6px;min-width:168px;z-index:60;display:none;flex-direction:column;gap:2px}
+.exp-dd.open .exp-menu{display:flex;animation:expIn .12s ease}
+@keyframes expIn{from{opacity:0;transform:translateY(-4px)}to{opacity:1;transform:none}}
+.exp-menu button{display:flex;align-items:center;gap:11px;width:100%;border:0;background:transparent;font-family:inherit;font-size:13px;font-weight:600;color:var(--ink);padding:9px 12px;border-radius:8px;cursor:pointer;text-align:left}
+.exp-menu button:hover{background:var(--bg)}
+.exp-menu button i{width:16px;text-align:center}
+.exp-menu .fa-print{color:#475569}.exp-menu .fa-file-pdf{color:#c0392b}.exp-menu .fa-file-excel{color:#1d6f42}.exp-menu .fa-file-word{color:#2b579a}
+.card-head{overflow:visible}
 .f-daterange{display:flex;align-items:center;gap:6px}
 .f-daterange input[type=date]{font-family:inherit;font-size:12.5px;border:1.6px solid var(--line);border-radius:9px;padding:6px 9px;background:#fff;color:var(--ink)}
 /* job schedule duties */

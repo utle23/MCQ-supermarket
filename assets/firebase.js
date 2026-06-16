@@ -66,7 +66,7 @@
     return { modules, staff:DB.staff, structure:DB.structure,
       // checklist items are tuples (arrays) — Firestore forbids nested arrays, so store as JSON string
       checklistItems: JSON.stringify((DB.checklist&&DB.checklist.items)||[]),
-      issueEmailRoutes:DB.issueEmailRoutes||{}, updatedAt:Date.now() };
+      issueEmailRoutes:DB.issueEmailRoutes||{}, checklistEmailRoutes:DB.checklistEmailRoutes||{}, updatedAt:Date.now() };
   }
   function applyState(d){
     if(!d) return;
@@ -75,6 +75,7 @@
     if(Array.isArray(d.structure)) DB.structure=d.structure;
     if(d.checklistItems && DB.checklist){ let ci=d.checklistItems; if(typeof ci==='string'){ try{ ci=JSON.parse(ci); }catch(e){ ci=null; } } if(Array.isArray(ci)&&ci.length) DB.checklist.items=ci; }
     if(d.issueEmailRoutes) DB.issueEmailRoutes=d.issueEmailRoutes;
+    if(d.checklistEmailRoutes) DB.checklistEmailRoutes=d.checklistEmailRoutes;
   }
 
   // resolves to true(connected) / false(offline) — never rejects, so boot never hangs

@@ -602,6 +602,9 @@ DB.issueGroups = ['Maintenance & Facility','Customer Complaint','Safety & Incide
 /* per-category email routing (which recipients get notified) — default from group */
 DB.issueEmailRoutes = {};
 Object.entries(DB.issueCategories).forEach(([k,c])=>{ DB.issueEmailRoutes[k]=[...(_GROUP_RECIPIENTS[c.group]||['ho'])]; });
+/* default recipients per checklist department (who gets the daily submission email) */
+DB.checklistEmailRoutes = {};
+((DB.checklist&&DB.checklist.depts)||[]).forEach(d=>{ DB.checklistEmailRoutes[d]=['ho','mgr']; });
 /* priority (Low/Normal/High/Urgent) → module severity */
 DB.prioToSeverity = { Low:'Low', Normal:'Medium', High:'High', Urgent:'Critical' };
 DB.prioToComplaint = { Low:'Minor', Normal:'Moderate', High:'Major', Urgent:'Major' };

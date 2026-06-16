@@ -57,7 +57,8 @@ function renderChecklist(){
   const staff=DB.staff.filter(x=>isAdmin()||x.store===State.branch).map(x=>x.name);
   $('#content').innerHTML=`
    <div class="page-head"><div class="ph-ic">✅</div>
-     <div><h2>Store Operation Checklist</h2><p>Every photo task needs evidence before submit. Temperature checks must be read by AI Vision or marked defrosting.</p></div></div>
+     <div><h2>Store Operation Checklist</h2><p>Every photo task needs evidence before submit. Temperature checks must be read by AI Vision or marked defrosting.</p></div>
+     <div class="ph-actions">${checklistExportMenu()}</div></div>
    <datalist id="ck-staff-list">${staff.map(n=>`<option value="${esc(n)}"></option>`).join('')}</datalist>
    <div class="ck-sessionbar card">
      <div class="seg ck-seg">
@@ -833,43 +834,107 @@ function renderSchedule(){
   mkChart('sched-chart',{type:'bar',data:{labels:depts,datasets:[{label:'Shifts',data:depts.map((_,i)=>5+((i*3+4)%9)),backgroundColor:depts.map(d=>JOB_DUTIES[d].color),borderRadius:8,maxBarThickness:38}]},options:baseOpts({legend:false})});
 }
 
-/* ============================================================ EXPORT (PDF / Excel) — branded, reusable */
-function exportBtns(tableId,title){ return `<button class="btn sm exp-x" onclick="exportTableExcel('${tableId}','${ckJS(title||'')}')"><i class="fas fa-file-excel"></i>&nbsp; Excel</button><button class="btn sm exp-p" onclick="exportTablePDF('${tableId}','${ckJS(title||'')}')"><i class="fas fa-file-pdf"></i>&nbsp; PDF</button>`; }
+/* ============================================================ EXPORT — branded Print / PDF / Excel / Word (dropdown) */
+function exportBtns(tableId,title){ const t=ckJS(title||''), g=ckJS(tableId);
+  return `<div class="exp-dd"><button class="btn sm exp-trigger" onclick="expToggle(this,event)"><i class="fas fa-file-export"></i>&nbsp; Export <i class="fas fa-caret-down"></i></button>
+    <div class="exp-menu">
+      <button onclick="exportTablePrint('${g}','${t}')"><i class="fas fa-print"></i> Print</button>
+      <button onclick="exportTablePDF('${g}','${t}')"><i class="fas fa-file-pdf"></i> PDF</button>
+      <button onclick="exportTableExcel('${g}','${t}')"><i class="fas fa-file-excel"></i> Excel</button>
+      <button onclick="exportTableWord('${g}','${t}')"><i class="fas fa-file-word"></i> Word</button>
+    </div></div>`;
+}
+function expToggle(btn,e){ if(e)e.stopPropagation(); const dd=btn.closest('.exp-dd'); const wasOpen=dd.classList.contains('open');
+  document.querySelectorAll('.exp-dd.open').forEach(d=>d.classList.remove('open'));
+  if(!wasOpen){ dd.classList.add('open'); setTimeout(()=>document.addEventListener('click',expCloseAll,{once:true}),0); } }
+function expCloseAll(){ document.querySelectorAll('.exp-dd.open').forEach(d=>d.classList.remove('open')); }
 function expFileName(title,ext){ return 'MCQ_'+String(title||'report').replace(/[^a-z0-9]+/gi,'_').replace(/^_|_$/g,'')+'_'+new Date().toISOString().slice(0,10)+'.'+ext; }
 function expDownload(blob,name){ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},600); }
 function expScope(){ return isSuper()?'All stores':State.branch; }
-function exportTableExcel(tableId,title){
-  const tbl=document.getElementById(tableId); if(!tbl){ toast('Nothing to export'); return; }
-  const when=new Date().toLocaleString(), cols=tbl.querySelectorAll('thead th').length||12;
-  const style='<style>table{border-collapse:collapse;font-family:Calibri,Arial,sans-serif}th{background:#0e9f6e;color:#fff;border:1px solid #cbd5e1;padding:7px 10px;text-align:left;font-size:12px}td{border:1px solid #e2e8f0;padding:6px 10px;font-size:12px}</style>';
-  const head=`<tr><td colspan="${cols}" style="font-size:17px;font-weight:bold;color:#0e9f6e;padding:8px 10px">MCQ Supermarket — ${esc(title)}</td></tr><tr><td colspan="${cols}" style="color:#64748b;padding:0 10px 10px">${esc(expScope())} · Generated ${esc(when)}</td></tr>`;
-  const html='<html><head><meta charset="utf-8">'+style+'</head><body><table>'+head+tbl.innerHTML+'</table></body></html>';
-  expDownload(new Blob(['﻿'+html],{type:'application/vnd.ms-excel'}), expFileName(title,'xls'));
-  toast('⬇️ Excel exported');
-}
-function exportTablePDF(tableId,title){
-  const tbl=document.getElementById(tableId); if(!tbl){ toast('Nothing to export'); return; }
+function expGetTable(id){ const t=document.getElementById(id); return t?t.innerHTML:null; }
+function expColsOf(html){ const m=html.match(/<th[ >]/gi); return m?m.length:12; }
+const EXP_CSS=`*{box-sizing:border-box}body{font-family:'Segoe UI',Arial,sans-serif;color:#1f2937;margin:0;padding:28px}
+  .rpt-head{display:flex;align-items:center;gap:14px;border-bottom:3px solid #0e9f6e;padding-bottom:14px}
+  .rpt-logo{width:46px;height:46px;border-radius:12px;background:linear-gradient(135deg,#0e9f6e,#0891b2);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px;letter-spacing:.5px;box-shadow:0 4px 10px rgba(14,159,110,.3)}
+  .rpt-title{font-size:21px;font-weight:800;letter-spacing:-.01em}.rpt-sub{color:#6b7280;font-size:12px;margin-top:3px}
+  .rpt-stamp{margin-left:auto;text-align:right;color:#9ca3af;font-size:10.5px;line-height:1.5}
+  .rpt-meta{margin:14px 0 16px;color:#374151;font-size:12px;background:#f0fdf8;border:1px solid #bbf7d8;border-radius:10px;padding:10px 14px}.rpt-meta b{color:#0e9f6e}
+  table{border-collapse:collapse;width:100%;font-size:11.5px}thead{display:table-header-group}
+  th{background:#0e9f6e;color:#fff;text-align:left;padding:8px 10px;font-weight:700}
+  td{border-bottom:1px solid #e5e7eb;padding:7px 10px;vertical-align:top}
+  tr:nth-child(even) td{background:#f8fafc}
+  .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#eef2f7;color:#475569}
+  .cbx{font-size:16px}.cbx.on{color:#0e9f6e}.cbx.off{color:#cbd5e1}
+  ul{margin:0;padding-left:16px}li{margin:2px 0}
+  .rpt-foot{margin-top:22px;color:#9ca3af;font-size:10px;text-align:center;border-top:1px solid #e5e7eb;padding-top:10px}
+  @page{margin:13mm}`;
+const EXP_DOC_CSS=`table{border-collapse:collapse;width:100%;font-family:Calibri,Arial,sans-serif;font-size:11pt}th{background:#0e9f6e;color:#fff;border:1px solid #0b8f63;padding:6px 9px;text-align:left}td{border:1px solid #d9e2ec;padding:6px 9px;vertical-align:top}.cbx.on{color:#0e9f6e}`;
+function expPrintReport(title,inner,meta){
+  const w=window.open('','_blank'); if(!w){ toast('Allow pop-ups to print / export'); return; }
   const when=new Date().toLocaleString(), role=isSuper()?'Super Admin':isAdmin()?'Admin':'Staff';
-  const w=window.open('','_blank'); if(!w){ toast('Allow pop-ups to export PDF'); return; }
-  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
-    <style>*{box-sizing:border-box}body{font-family:'Segoe UI',Arial,sans-serif;color:#1f2937;margin:0;padding:26px}
-    .rpt-head{display:flex;align-items:center;gap:14px;border-bottom:3px solid #0e9f6e;padding-bottom:14px}
-    .rpt-logo{width:44px;height:44px;border-radius:11px;background:linear-gradient(135deg,#0e9f6e,#0891b2);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px;letter-spacing:.5px}
-    .rpt-title{font-size:21px;font-weight:800}.rpt-sub{color:#6b7280;font-size:12px;margin-top:3px}
-    .rpt-meta{margin:14px 0 16px;color:#374151;font-size:12px}
-    table{border-collapse:collapse;width:100%;font-size:11px}thead{display:table-header-group}
-    th{background:#0e9f6e;color:#fff;text-align:left;padding:8px 9px;font-weight:700}
-    td{border-bottom:1px solid #e5e7eb;padding:6px 9px;vertical-align:top}
-    tr:nth-child(even) td{background:#f8fafc}
-    .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#eef2f7;color:#475569}
-    .rpt-foot{margin-top:20px;color:#9ca3af;font-size:10px;text-align:center;border-top:1px solid #e5e7eb;padding-top:10px}
-    @page{margin:13mm}</style></head><body>
-    <div class="rpt-head"><div class="rpt-logo">MCQ</div><div><div class="rpt-title">${esc(title)}</div><div class="rpt-sub">MCQ Supermarket · ${esc(expScope())}</div></div></div>
-    <div class="rpt-meta">Generated ${esc(when)} · ${esc(role)} view</div>
-    <table>${tbl.innerHTML}</table>
-    <div class="rpt-foot">MCQ Supermarket — Operations report · Confidential</div>
-    <script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script></body></html>`);
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${EXP_CSS}</style></head><body>
+    <div class="rpt-head"><div class="rpt-logo">MCQ</div><div><div class="rpt-title">${esc(title)}</div><div class="rpt-sub">MCQ Supermarket · ${esc(expScope())}</div></div><div class="rpt-stamp">${esc(when)}<br>${esc(role)} view</div></div>
+    ${meta?`<div class="rpt-meta">${meta}</div>`:''}
+    <table>${inner}</table>
+    <div class="rpt-foot">MCQ Supermarket — Operations report · Confidential · Generated ${esc(when)}</div>
+    <script>window.onload=function(){setTimeout(function(){window.print();},350);};<\/script></body></html>`);
   w.document.close();
+}
+function expDocBlob(title,inner,meta){
+  const when=new Date().toLocaleString();
+  const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"><style>${EXP_DOC_CSS}</style></head><body>
+    <h2 style="color:#0e9f6e;margin:0 0 2px">MCQ Supermarket — ${esc(title)}</h2>
+    <div style="color:#64748b;font-size:10pt;margin-bottom:10px">${esc(expScope())} · Generated ${esc(when)}</div>
+    ${meta?`<div style="font-size:10pt;margin-bottom:10px">${meta}</div>`:''}
+    <table>${inner}</table></body></html>`;
+  expDownload(new Blob(['﻿'+html],{type:'application/msword'}), expFileName(title,'doc')); toast('⬇️ Word exported');
+}
+function expXlsBlob(title,inner,meta){
+  const when=new Date().toLocaleString(), cols=expColsOf(inner);
+  const style='<style>table{border-collapse:collapse;font-family:Calibri,Arial}th{background:#0e9f6e;color:#fff;border:1px solid #cbd5e1;padding:7px 10px;text-align:left;font-size:12px}td{border:1px solid #e2e8f0;padding:6px 10px;font-size:12px}</style>';
+  const head=`<tr><td colspan="${cols}" style="font-size:17px;font-weight:bold;color:#0e9f6e;padding:8px 10px">MCQ Supermarket — ${esc(title)}</td></tr><tr><td colspan="${cols}" style="color:#64748b;padding:0 10px 10px">${esc(expScope())} · Generated ${esc(when)}${meta?' · '+meta.replace(/<[^>]+>/g,''):''}</td></tr>`;
+  const html='<html><head><meta charset="utf-8">'+style+'</head><body><table>'+head+inner+'</table></body></html>';
+  expDownload(new Blob(['﻿'+html],{type:'application/vnd.ms-excel'}), expFileName(title,'xls')); toast('⬇️ Excel exported');
+}
+function exportTablePrint(id,title){ const h=expGetTable(id); if(!h){ toast('Nothing to export'); return; } const n=document.querySelectorAll('#'+id+' tbody tr').length; expPrintReport(title,h,`<b>Scope:</b> ${esc(expScope())} &nbsp; <b>Rows:</b> ${n}`); }
+function exportTablePDF(id,title){ exportTablePrint(id,title); }
+function exportTableExcel(id,title){ const h=expGetTable(id); if(!h){ toast('Nothing to export'); return; } expXlsBlob(title,h); }
+function exportTableWord(id,title){ const h=expGetTable(id); if(!h){ toast('Nothing to export'); return; } expDocBlob(title,h); }
+
+/* checklist export — reflects current done/notes/photos, with tick boxes */
+function checklistExportMenu(){
+  return `<div class="exp-dd"><button class="btn sm exp-trigger" onclick="expToggle(this,event)"><i class="fas fa-file-export"></i>&nbsp; Export <i class="fas fa-caret-down"></i></button>
+    <div class="exp-menu">
+      <button onclick="exportChecklist('print')"><i class="fas fa-print"></i> Print</button>
+      <button onclick="exportChecklist('pdf')"><i class="fas fa-file-pdf"></i> PDF</button>
+      <button onclick="exportChecklist('excel')"><i class="fas fa-file-excel"></i> Excel</button>
+      <button onclick="exportChecklist('word')"><i class="fas fa-file-word"></i> Word</button>
+    </div></div>`;
+}
+function exportChecklist(fmt){
+  const C=DB.checklist, s=State.chk;
+  const rows=C.items.map(ckItem).filter(r=>r.dept===s.dept && ckInSession(r,s.session));
+  if(!rows.length){ toast('No checklist tasks to export'); return; }
+  const byArea={}; rows.forEach(r=>{(byArea[r.area]=byArea[r.area]||[]).push(r);});
+  let done=0; rows.forEach(r=>{ if((State.chk.state[r.i]||{}).done) done++; });
+  const head=`<thead><tr><th style="width:36px;text-align:center">✓</th><th>Task</th><th style="width:120px">Evidence</th><th>Note</th></tr></thead>`;
+  let body='<tbody>';
+  Object.entries(byArea).forEach(([area,items])=>{
+    body+=`<tr><td colspan="4" style="background:#ecfdf5;font-weight:800;color:#0e9f6e">${esc(area)}</td></tr>`;
+    items.forEach(r=>{ const st=State.chk.state[r.i]||{}, ok=!!st.done;
+      const need=r.photo?(r.photo.req?r.photo.min:1):0, have=(st.photos||[]).length;
+      const ev=r.photo?`📷 ${have}/${need}`:'—';
+      body+=`<tr><td style="text-align:center"><span class="cbx ${ok?'on':'off'}">${ok?'☑':'☐'}</span></td><td>${esc(r.task)}</td><td>${esc(ev)}</td><td>${esc(st.note||'')}</td></tr>`;
+    });
+  });
+  body+='</tbody>';
+  const resp=(State.chk.resp||{})[s.dept]||{};
+  const title=`Checklist — ${s.dept} · ${s.session}`;
+  const meta=`<b>Store:</b> ${esc(expScope())} &nbsp; <b>Department:</b> ${esc(s.dept)} &nbsp; <b>Session:</b> ${esc(s.session)} &nbsp; <b>Date:</b> ${new Date().toISOString().slice(0,10)} &nbsp; <b>Done:</b> ${done}/${rows.length}${resp.p1?` &nbsp; <b>Responsible:</b> ${esc(resp.p1)}`:''}${resp.submittedBy?` &nbsp; <b>Submitted by:</b> ${esc(resp.submittedBy)}`:''}`;
+  const inner=head+body;
+  if(fmt==='excel') return expXlsBlob(title,inner,meta);
+  if(fmt==='word') return expDocBlob(title,inner,meta);
+  return expPrintReport(title,inner,meta);
 }
 
 /* ============================================================ CLEANING & MAINTENANCE SCHEDULES */
@@ -1110,13 +1175,31 @@ function renderEmail(){
         <button class="btn sm" onclick="emailToggleDD('${r.key}')">Customise ${open?'▲':'▾'}</button>
       </div>${dd}</div>`;
   }).join('');
-  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic" style="background:#e8f1fe">✉️</div><div><h2>Email Notifications</h2><p>For each person, tick which Report-Issue categories they get emailed. Violation alerts always go to everyone.</p></div></div>
+  const chkDepts=(DB.checklist&&DB.checklist.depts)||[], dm=(DB.checklist&&DB.checklist.deptMeta)||{};
+  DB.checklistEmailRoutes=DB.checklistEmailRoutes||{};
+  const chkCards=recips.map(r=>{
+    const n=chkDepts.filter(d=>(DB.checklistEmailRoutes[d]||[]).includes(r.key)).length;
+    const open=State.emailOpenChk===r.key;
+    const dd=open?`<div class="email-dd"><div class="email-cats">${chkDepts.map(d=>{const on=(DB.checklistEmailRoutes[d]||[]).includes(r.key), meta=dm[d]||{}; return `<label class="email-cat"><input type="checkbox" ${on?'checked':''} onchange="chkEmailToggle('${ckJS(d)}','${r.key}',this.checked);emailRefreshChkCount('${r.key}')"><i class="fas ${meta.icon||'fa-list-check'}" style="color:${meta.color||'#0e9f6e'}"></i> ${esc(d)}</label>`;}).join('')}</div></div>`:'';
+    return `<div class="card email-card"><div class="email-row">
+        <div class="avatar">${esc(r.name.slice(0,1))}</div>
+        <div class="email-info"><b>${esc(r.name)}</b><small>${esc(r.email)}</small></div>
+        <span class="badge ok" id="chkmail-cnt-${r.key}">${n} checklists</span>
+        <button class="btn sm" onclick="emailToggleChk('${r.key}')">Customise ${open?'▲':'▾'}</button>
+      </div>${dd}</div>`;
+  }).join('');
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic" style="background:#e8f1fe">✉️</div><div><h2>Email Notifications</h2><p>For each person, tick which Report-Issue categories and which checklists they get emailed. Violation alerts always go to everyone.</p></div></div>
     <div class="rail-tip" style="margin-bottom:16px;background:var(--bad-bg);border-color:#f3c9c9">⚠️ <b>Violation alerts</b> are sent to <b>all recipients</b> by default — no per-category opt-out.</div>
     <div class="section-title">Report Issue · who receives which category</div>
-    <div class="email-list">${cards||'<div class="empty">No recipients.</div>'}</div>`;
+    <div class="email-list">${cards||'<div class="empty">No recipients.</div>'}</div>
+    <div class="section-title" style="margin-top:24px">Checklist submissions · who receives which checklist</div>
+    <div class="email-list">${chkCards||'<div class="empty">No recipients.</div>'}</div>`;
 }
 function emailToggleDD(k){ State.emailOpen=State.emailOpen===k?null:k; renderEmail(); }
 function emailRefreshCount(k){ const cats=DB.issueCategories||{}; const n=Object.keys(cats).filter(c=>(DB.issueEmailRoutes[c]||[]).includes(k)).length; const el=document.getElementById('email-cnt-'+k); if(el) el.textContent=n+' categories'; }
+function emailToggleChk(k){ State.emailOpenChk=State.emailOpenChk===k?null:k; renderEmail(); }
+function emailRefreshChkCount(k){ const depts=(DB.checklist&&DB.checklist.depts)||[]; const n=depts.filter(d=>(DB.checklistEmailRoutes[d]||[]).includes(k)).length; const el=document.getElementById('chkmail-cnt-'+k); if(el) el.textContent=n+' checklists'; }
+function chkEmailToggle(dept,rk,on){ const a=DB.checklistEmailRoutes[dept]=DB.checklistEmailRoutes[dept]||[]; const i=a.indexOf(rk); if(on&&i<0)a.push(rk); if(!on&&i>=0)a.splice(i,1); if(window.persist) window.persist(); }
 
 /* ============================================================ DATA MANAGEMENT */
 function renderData(){
