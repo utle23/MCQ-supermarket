@@ -936,6 +936,20 @@ function exportChecklist(fmt){
   if(fmt==='word') return expDocBlob(title,inner,meta);
   return expPrintReport(title,inner,meta);
 }
+/* dropdown that calls a custom fn(fmt) — for views without a DOM table id */
+function expMenu(fnName){
+  return `<div class="exp-dd"><button class="btn sm exp-trigger" onclick="expToggle(this,event)"><i class="fas fa-file-export"></i>&nbsp; Export <i class="fas fa-caret-down"></i></button>
+    <div class="exp-menu"><button onclick="${fnName}('print')"><i class="fas fa-print"></i> Print</button><button onclick="${fnName}('pdf')"><i class="fas fa-file-pdf"></i> PDF</button><button onclick="${fnName}('excel')"><i class="fas fa-file-excel"></i> Excel</button><button onclick="${fnName}('word')"><i class="fas fa-file-word"></i> Word</button></div></div>`;
+}
+/* build a branded export from records: cols=[{label,get}] */
+function expRecords(title,cols,rows,fmt){
+  const head='<thead><tr>'+cols.map(c=>`<th>${esc(c.label)}</th>`).join('')+'</tr></thead>';
+  const body='<tbody>'+(rows.length?rows.map(r=>'<tr>'+cols.map(c=>{let v=c.get(r); if(v==null)v=''; return `<td>${esc(String(v))}</td>`;}).join('')+'</tr>').join(''):`<tr><td colspan="${cols.length}">No records.</td></tr>`)+'</tbody>';
+  const inner=head+body, meta=`<b>Scope:</b> ${esc(expScope())} &nbsp; <b>Records:</b> ${rows.length} &nbsp; <b>Date:</b> ${new Date().toISOString().slice(0,10)}`;
+  if(fmt==='excel') return expXlsBlob(title,inner,meta);
+  if(fmt==='word') return expDocBlob(title,inner,meta);
+  return expPrintReport(title,inner,meta);
+}
 
 /* ============================================================ CLEANING & MAINTENANCE SCHEDULES */
 function schedFreqDays(f){ return {'Daily':1,'2× per week':3,'Weekly':7,'Every 2 weeks':14,'Monthly':30,'Quarterly':91,'Every 6 months':182}[f]||30; }

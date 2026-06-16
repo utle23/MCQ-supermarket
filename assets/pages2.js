@@ -69,16 +69,30 @@ function vioStats(){
     const sg=groupCount(dRecs,'step'); mkChart('vd-step',{type:'doughnut',data:{labels:sg.labels,datasets:[{data:sg.data,backgroundColor:sg.labels.map(l=>STEP_COLOR[l]||'#90A4AE'),borderColor:'#fff',borderWidth:3}]},options:baseOpts({legend:true,donut:true})}); }
 }
 
+function vioDate(which,val){ State.vio=State.vio||{}; State.vio[which]=val; renderViolation(); }
+function vioFilteredRecs(){
+  const from=State.vio&&State.vio.from||'', to=State.vio&&State.vio.to||'';
+  return scopedRecords('violation').slice()
+    .filter(v=>{ const d=String(v.created||'').slice(0,10); if(from&&(!d||d<from))return false; if(to&&(!d||d>to))return false; return true; })
+    .sort((a,b)=>String(b.created||'').localeCompare(String(a.created||'')));
+}
+function vioExport(fmt){ const cols=[{label:'Ref',get:v=>v.id},{label:'Date',get:v=>(v.created||'').slice(0,16)},{label:'Staff',get:v=>v.staffName},{label:'Store',get:v=>v.store},{label:'Category',get:v=>v.category},{label:'Severity',get:v=>v.severity},{label:'Step',get:v=>v.step},{label:'Status',get:v=>v.status},{label:'Description',get:v=>v.description}]; expRecords('Violation Records',cols,vioFilteredRecs(),fmt); }
 function vioRecords(){
   setCrumb('⚠️','Violation Rules','All records');
-  const recs=scopedRecords('violation').slice().sort((a,b)=>String(b.created||'').localeCompare(String(a.created||'')));
+  const from=State.vio&&State.vio.from||'', to=State.vio&&State.vio.to||'';
+  const recs=vioFilteredRecs();
   const list=recs.map(v=>`
     <div class="card vcard" style="--rc:${sevColor(v.severity)}" onclick='openDetail("violation","${esc(v.id)}")'>
       <div class="vcard-h"><i class="fas fa-triangle-exclamation" style="color:${sevColor(v.severity)}"></i><b>${esc(v.category)}</b>
         <span class="badge ${toneOf(v.severity)}">${esc(v.severity)}</span><span class="badge ${toneOf(v.step)}">${esc(v.step||'')}</span><span class="badge ${toneOf(v.status)}">${esc(v.status)}</span>
         <span class="vcard-meta">👤 ${esc(v.staffName)} · 🏪 ${esc(v.store||'')} · ${esc((v.created||'').slice(0,16))}</span></div>
       <div class="vcard-b">${esc(v.description||'')}</div></div>`).join('');
-  $('#content').innerHTML=`${vioHead('records')}<div style="margin:0 2px 12px;color:var(--muted);font-size:12.5px;font-weight:600">${isSuper()?'All stores':esc(State.branch)} · ${recs.length} records</div>${list||'<div class="empty">No violations recorded.</div>'}`;
+  $('#content').innerHTML=`${vioHead('records')}
+    <div class="toolbar"><span class="count-chip">📋 ${recs.length} record${recs.length!==1?'s':''}</span>
+      <div class="filter f-daterange"><label>Date</label><input type="date" value="${esc(from)}" onchange="vioDate('from',this.value)"><span>→</span><input type="date" value="${esc(to)}" onchange="vioDate('to',this.value)"></div>
+      ${from||to?`<button class="btn sm" onclick="State.vio.from='';vioDate('to','')">✕ Clear</button>`:''}
+      <div class="tb-spacer"></div>${expMenu('vioExport')}</div>
+    ${list||'<div class="empty">No violations in this range.</div>'}`;
 }
 
 function vioNew(){
@@ -143,6 +157,10 @@ function vioStaffChange(){
 const TRN_RATINGS=[['Excellent','#2E7D32','#E8F5E9'],['Good','#1565C0','#E3F2FD'],['Satisfactory','#F57C00','#FFF3E0'],['Needs work','#C62828','#FDECEA']];
 /* training topics are DERIVED from the live checklist: role = department, topics grouped by area */
 function trnTopics(){ const t={}; ((DB.checklist&&DB.checklist.items)||[]).forEach(it=>{ const d=it[0],a=it[1],task=it[2]; (t[d]=t[d]||{}); (t[d][a]=t[d][a]||[]); if(!t[d][a].includes(task)) t[d][a].push(task); }); return t; }
+function trnDate(which,val){ State.trn=State.trn||{}; State.trn[which]=val; renderTraining(); }
+function trnFilteredRecs(){ const from=State.trn&&State.trn.from||'', to=State.trn&&State.trn.to||'';
+  return scopedRecords('training').filter(r=>{ const d=String(r.sessionDate||'').slice(0,10); if(from&&(!d||d<from))return false; if(to&&(!d||d>to))return false; return true; }); }
+function trnExport(fmt){ const cols=[{label:'Ref',get:r=>r.id},{label:'Trainee',get:r=>r.traineeName},{label:'Role',get:r=>r.traineeRole},{label:'Trainer',get:r=>r.trainerName},{label:'Date',get:r=>r.sessionDate},{label:'Rating',get:r=>r.overallRating},{label:'Status',get:r=>r.status}]; expRecords('Training Sessions',cols,trnFilteredRecs(),fmt); }
 function renderTraining(){
   setAccent('#c0392b'); setCrumb('🎓','Training Assessment','Score staff training by role & checklist task');
   if(!State.trn) State.trn={mode:'list',role:'',rating:'',items:[]};
@@ -154,15 +172,18 @@ function renderTraining(){
   const ratingColor=v=>(TRN_RATINGS.find(r=>r[0]===v)||['','#888','#eee']);
   $('#content').innerHTML=`
     <div class="page-head"><div class="ph-ic" style="background:#fdeaea">🎓</div><div><h2>Training Assessment</h2><p>Run and score staff training sessions; track who is achieving each skill.</p></div>
-      <div class="ph-actions"><button class="btn primary" onclick="trnNew()"><i class="fas fa-plus"></i>&nbsp; New session</button></div></div>
+      <div class="ph-actions">${expMenu('trnExport')}<button class="btn primary" onclick="trnNew()"><i class="fas fa-plus"></i>&nbsp; New session</button></div></div>
     <div class="kpi-grid">
       <div class="kpi tone-info"><div class="k-top"><div class="k-ic">🎓</div></div><div class="k-val">${recs.length}</div><div class="k-lbl">Sessions</div></div>
       <div class="kpi tone-ok"><div class="k-top"><div class="k-ic">✅</div></div><div class="k-val">${done}</div><div class="k-lbl">Completed</div></div>
       <div class="kpi tone-warn"><div class="k-top"><div class="k-ic">📅</div></div><div class="k-val">${thisMonth}</div><div class="k-lbl">This month</div></div>
       <div class="kpi tone-mute"><div class="k-top"><div class="k-ic">🧰</div></div><div class="k-val">${roles}</div><div class="k-lbl">Roles</div></div></div>
     <div class="section-title">Sessions</div>
-    <div class="card"><div class="table-wrap"><table class="grid"><thead><tr><th>Ref</th><th>Trainee</th><th>Role</th><th>Trainer</th><th>Date</th><th>Rating</th><th>Status</th></tr></thead><tbody>
-      ${recs.length?recs.map(r=>{const ri=ratingColor(r.overallRating);return `<tr onclick='openDetail("training","${esc(r.id)}")'><td class="cell-id">${esc(r.id)}</td><td><b>${esc(r.traineeName)}</b></td><td><span class="badge mute">${esc(r.traineeRole)}</span></td><td>${esc(r.trainerName||'')}</td><td>${esc(r.sessionDate||'')}</td><td>${r.overallRating?`<span class="rating-badge" style="background:${ri[2]};color:${ri[1]}">${esc(r.overallRating)}</span>`:'—'}</td><td>${badge(r.status)}</td></tr>`;}).join(''):'<tr><td colspan="7"><div class="empty">No sessions yet.</div></td></tr>'}
+    <div class="toolbar"><span class="count-chip">📋 ${trnFilteredRecs().length} session${trnFilteredRecs().length!==1?'s':''}</span>
+      <div class="filter f-daterange"><label>Date</label><input type="date" value="${esc(State.trn.from||'')}" onchange="trnDate('from',this.value)"><span>→</span><input type="date" value="${esc(State.trn.to||'')}" onchange="trnDate('to',this.value)"></div>
+      ${(State.trn.from||State.trn.to)?`<button class="btn sm" onclick="State.trn.from='';trnDate('to','')">✕ Clear</button>`:''}</div>
+    <div class="card"><div class="table-wrap"><table class="grid" id="trn-table"><thead><tr><th>Ref</th><th>Trainee</th><th>Role</th><th>Trainer</th><th>Date</th><th>Rating</th><th>Status</th></tr></thead><tbody>
+      ${(()=>{const lr=trnFilteredRecs();return lr.length?lr.map(r=>{const ri=ratingColor(r.overallRating);return `<tr onclick='openDetail("training","${esc(r.id)}")'><td class="cell-id">${esc(r.id)}</td><td><b>${esc(r.traineeName)}</b></td><td><span class="badge mute">${esc(r.traineeRole)}</span></td><td>${esc(r.trainerName||'')}</td><td>${esc(r.sessionDate||'')}</td><td>${r.overallRating?`<span class="rating-badge" style="background:${ri[2]};color:${ri[1]}">${esc(r.overallRating)}</span>`:'—'}</td><td>${badge(r.status)}</td></tr>`;}).join(''):'<tr><td colspan="7"><div class="empty">No sessions in this range.</div></td></tr>';})()}
     </tbody></table></div></div>`;
 }
 function trnNew(){ State.trn={mode:'new',role:'',rating:'',items:[]}; renderTraining(); }
@@ -228,7 +249,7 @@ function renderReward(){
   const awards=['Employee of the Month','Best Customer Service','Best Team Player','Perfect Attendance','Cleanliness Champion'];
   $('#content').innerHTML=`
     <div class="page-head"><div class="ph-ic" style="background:#e7f6ee">🏆</div><div><h2>Monthly Rewards</h2><p>Decide and track monthly staff awards and goodwill amounts.</p></div>
-      <div class="ph-actions"><select class="login-input" style="width:auto" onchange="rwdMonth(this.value)">${months.concat(months.includes(month)?[]:[month]).map(m=>`<option ${m===month?'selected':''}>${esc(m)}</option>`).join('')}</select></div></div>
+      <div class="ph-actions"><select class="login-input" style="width:auto" onchange="rwdMonth(this.value)">${months.concat(months.includes(month)?[]:[month]).map(m=>`<option ${m===month?'selected':''}>${esc(m)}</option>`).join('')}</select>${expMenu('rwdExport')}</div></div>
     ${eom?`<div class="winner"><div class="winner-medal">🏆</div><div><div class="winner-cap">Employee of the Month · ${esc(month)}</div><div class="winner-name">${esc(eom.staffName)}</div><div class="winner-sub">${esc(eom.store||'')} · $${eom.rewardAmount||0} reward · ${esc(eom.status)}</div></div></div>`:''}
     <div class="kpi-grid">
       <div class="kpi tone-ok"><div class="k-top"><div class="k-ic">🏅</div></div><div class="k-val">${mRecs.length}</div><div class="k-lbl">Awards this month</div></div>
@@ -250,6 +271,7 @@ function renderReward(){
     </div>`;
 }
 function rwdMonth(m){ State.rwdMonth=m; renderReward(); }
+function rwdExport(fmt){ const cols=[{label:'Month',get:r=>r.rewardMonth},{label:'Award',get:r=>r.awardType},{label:'Staff',get:r=>r.staffName},{label:'Store',get:r=>r.store},{label:'Amount ($)',get:r=>r.rewardAmount||0},{label:'Status',get:r=>r.status}]; expRecords('Monthly Rewards',cols,scopedRecords('reward'),fmt); }
 function rwdSubmit(){ const staff=$('#rwd-staff').value; if(staff.startsWith('—')){toast('Select a staff member');return;}
   const month=State.rwdMonth||new Date().toISOString().slice(0,7);
   DB.modules.reward.records.unshift({id:`RWD-${month.replace('-','')}-${Math.floor(10+Math.random()*89)}`,rewardMonth:month,awardType:$('#rwd-type').value,staffName:staff,store:$('#rwd-store').value,rewardAmount:+$('#rwd-amt').value||0,status:'Proposed',created:new Date().toISOString().slice(0,16).replace('T',' ')});
@@ -262,7 +284,7 @@ function renderRaise(){
   const recs=scopedRecords('raise');
   const staff=['— Select staff —',...DB.staff.map(x=>x.name)];
   $('#content').innerHTML=`
-    <div class="page-head"><div class="ph-ic" style="background:#f3e8fb">💸</div><div><h2>Raise Salary Review</h2><p>Track current vs proposed pay rates and approval decisions.</p></div></div>
+    <div class="page-head"><div class="ph-ic" style="background:#f3e8fb">💸</div><div><h2>Raise Salary Review</h2><p>Track current vs proposed pay rates and approval decisions.</p></div><div class="ph-actions">${expMenu('raiExport')}</div></div>
     <div class="kpi-grid">
       <div class="kpi tone-info"><div class="k-top"><div class="k-ic">📄</div></div><div class="k-val">${recs.length}</div><div class="k-lbl">Reviews</div></div>
       <div class="kpi tone-warn"><div class="k-top"><div class="k-ic">⏳</div></div><div class="k-val">${recs.filter(r=>r.status==='Submitted').length}</div><div class="k-lbl">Submitted</div></div>
@@ -283,12 +305,14 @@ function renderRaise(){
         </tbody></table></div></div></div>
     </div>`;
 }
+function raiExport(fmt){ const cols=[{label:'Staff',get:r=>r.staffName},{label:'Store',get:r=>r.store},{label:'Review month',get:r=>r.reviewMonth},{label:'Current ($/h)',get:r=>r.currentRate},{label:'Proposed ($/h)',get:r=>r.proposedRate},{label:'Change',get:r=>((+r.proposedRate)-(+r.currentRate)).toFixed(2)},{label:'Effective',get:r=>r.effectiveDate},{label:'Status',get:r=>r.status}]; expRecords('Raise Salary Reviews',cols,scopedRecords('raise'),fmt); }
 function raiSubmit(){ const staff=$('#rai-staff').value; if(staff.startsWith('—')){toast('Select a staff member');return;}
   DB.modules.raise.records.unshift({id:`RAI-${Math.floor(100+Math.random()*899)}`,staffName:staff,store:(DB.staff.find(x=>x.name===staff)||{}).store||State.branch,reviewMonth:$('#rai-month').value,currentRate:+$('#rai-cur').value||0,proposedRate:+$('#rai-prop').value||0,effectiveDate:$('#rai-eff').value,status:'Submitted',managerNotes:$('#rai-notes').value,created:new Date().toISOString().slice(0,16).replace('T',' ')});
   toast('📤 Raise review submitted'); buildSidebar(); renderRaise();
 }
 
 /* ============================================================ BIRTHDAY GIVEAWAYS */
+function bdExport(fmt){ const cols=[{label:'Staff',get:r=>r.staffName},{label:'Store',get:r=>r.store},{label:'Birthday',get:r=>r.birthday},{label:'Favourite gift',get:r=>r.favoriteGift},{label:'Status',get:r=>r.status}]; expRecords('Birthday Giveaways',cols,scopedRecords('birthday'),fmt); }
 function renderBirthday(){
   setAccent('#f9a825'); setCrumb('🎂','Birthday Giveaways','Never miss a team birthday');
   const recs=scopedRecords('birthday');
@@ -301,7 +325,7 @@ function renderBirthday(){
   const given=recs.filter(r=>r.status==='Given');
   const staff=['— Select staff —',...DB.staff.map(x=>x.name)];
   $('#content').innerHTML=`
-    <div class="page-head"><div class="ph-ic" style="background:#fef4e0">🎂</div><div><h2>Birthday Giveaways</h2><p>Track staff birthdays and plan their gift.</p></div></div>
+    <div class="page-head"><div class="ph-ic" style="background:#fef4e0">🎂</div><div><h2>Birthday Giveaways</h2><p>Track staff birthdays and plan their gift.</p></div><div class="ph-actions">${expMenu('bdExport')}</div></div>
     ${next?`<div class="bd-hero"><div class="bd-days"><b>${next.du}</b><span>days</span></div><div><div class="bd-cap">Next birthday</div><div class="bd-name">${esc(next.staffName)}</div>
       <div class="bd-tags"><span class="badge warn">🎂 ${esc(next.birthday)}</span><span class="badge mute">🎁 ${esc(next.favoriteGift||'Gift not set')}</span><span class="badge ${next.status==='Given'?'ok':'info'}">${esc(next.status)}</span></div></div></div>`:''}
     <div class="kpi-grid">
