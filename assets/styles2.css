@@ -593,6 +593,24 @@ input.invalid,select.invalid,textarea.invalid{border-color:var(--bad)!important;
 table.jobduty td{vertical-align:top}
 .jd-tasks{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:4px}
 .jd-tasks li{font-size:12.5px;color:var(--ink-soft);line-height:1.35}
+/* performance & scoring */
+.perf-legend{display:flex;flex-wrap:wrap;gap:14px;margin:0 2px 16px;font-size:12px;color:var(--muted);font-weight:600}
+.perf-leg{display:inline-flex;align-items:center;gap:6px}.perf-leg i{width:12px;height:12px;border-radius:4px;display:inline-block}.perf-leg small{color:var(--muted);font-weight:500}
+.perf-pill{display:inline-block;min-width:42px;text-align:center;font-weight:800;color:#fff;background:var(--pc);border-radius:20px;padding:3px 10px}
+.perf-top{display:grid;grid-template-columns:280px 1fr;gap:16px;margin-bottom:16px}
+@media(max-width:760px){.perf-top{grid-template-columns:1fr}}
+.perf-scorecard{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;padding:22px;border-top:4px solid var(--pc)}
+.perf-score{font-size:58px;font-weight:900;line-height:1;color:var(--pc)}
+.perf-of{color:var(--muted);font-size:13px;margin-top:-6px}
+.perf-raise{margin-top:6px;font-size:12.5px;font-weight:700;color:var(--ink-soft);background:var(--bg);border-radius:10px;padding:8px 12px}
+.perf-base{font-size:12.5px;color:var(--muted);font-weight:700;margin-bottom:10px}
+.perf-bd{margin-bottom:12px}
+.perf-bd-h{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--ink-soft);margin-bottom:5px}
+.perf-bd-h i{width:16px;text-align:center;color:#7c3aed}.perf-bd-h small{color:var(--muted);font-weight:500}
+.perf-bd-v{margin-left:auto;font-weight:800}.perf-bd-v.pos{color:#0a8a5f}.perf-bd-v.neg{color:#ef4444}
+.perf-bd-track{height:8px;background:var(--bg);border-radius:6px;overflow:hidden}
+.perf-bd-track i{display:block;height:100%;border-radius:6px}.perf-bd-track i.pos{background:#0e9f6e}.perf-bd-track i.neg{background:#ef4444}
+.perf-total{margin-top:6px;padding-top:12px;border-top:1px dashed var(--line);font-size:13px;font-weight:700;display:flex;justify-content:space-between}
 
 /* ---------------- checklist admin CRUD ---------------- */
 .ck-area-h{display:flex;align-items:center;gap:10px}

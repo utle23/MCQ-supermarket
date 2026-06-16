@@ -543,7 +543,7 @@ DB.modules.issue = {
 /* ---------- navigation groups (sidebar) ---------- */
 DB.navGroups = [
   { id:'ops',    label:'Operations', icon:'fa-clipboard-list', items:['checklist','schedules','delivery','people'] },
-  { id:'hr',     label:'Staff & HR', icon:'fa-users',          items:['structure','staff','schedule','training','violation','reward','raise','birthday'], admin:true },
+  { id:'hr',     label:'Staff & HR', icon:'fa-users',          items:['structure','staff','schedule','performance','training','violation','reward','raise','birthday'], admin:true },
   { id:'mgmt',   label:'Management', icon:'fa-user-shield',     items:['manager','analytics','photos','whatsapp','email','data'], admin:true },
   { id:'reports',label:'Reports & Rules', icon:'fa-flag',       items:['rules','issue'] },
   { id:'account',label:'Account', icon:'fa-user-lock',          items:['faceid'] },
@@ -623,6 +623,7 @@ DB.customPages = {
   staff:    { label:'Staff Members',   icon:'🧑‍🤝‍🧑', render:'renderStaff' },
   schedule: { label:'Job Schedule',    icon:'🗓️', render:'renderSchedule' },
   schedules:{ label:'Cleaning & Maintenance', icon:'🧽', render:'renderSchedules' },
+  performance:{ label:'Performance & Scoring', icon:'📊', render:'renderPerformance', admin:true },
   manager:  { label:'Manager Panel',   icon:'🛡️', render:'renderManager', admin:true },
   analytics:{ label:'Analytics',       icon:'📈', render:'renderAnalytics', admin:true },
   photos:   { label:'Photo Gallery',   icon:'🖼️', render:'renderPhotos', admin:true },

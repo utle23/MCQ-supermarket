@@ -292,8 +292,9 @@ function renderRaise(){
       <div class="kpi tone-bad"><div class="k-top"><div class="k-ic">🚫</div></div><div class="k-val">${recs.filter(r=>r.status==='Declined').length}</div><div class="k-lbl">Declined</div></div></div>
     <div class="vio-grid">
       <div class="card"><div class="card-head"><h3><i class="fas fa-file-signature"></i>&nbsp; Create raise review</h3></div><div class="card-pad"><div class="grid2">
-        <div class="field"><label>Staff</label><select id="rai-staff">${staff.map(n=>`<option>${esc(n)}</option>`).join('')}</select></div>
+        <div class="field"><label>Staff</label><select id="rai-staff" onchange="raiPerfHint()">${staff.map(n=>`<option>${esc(n)}</option>`).join('')}</select></div>
         <div class="field"><label>Review month</label><input type="month" id="rai-month" value="${new Date().toISOString().slice(0,7)}"></div>
+        <div class="field full" id="rai-perf-wrap" style="display:none"><div class="vio-suggest" id="rai-perf"></div></div>
         <div class="field"><label>Current rate ($/h)</label><input type="number" step="0.5" id="rai-cur" placeholder="27.50"></div>
         <div class="field"><label>Proposed rate ($/h)</label><input type="number" step="0.5" id="rai-prop" placeholder="29.00"></div>
         <div class="field"><label>Effective date</label><input type="date" id="rai-eff"></div>
@@ -304,6 +305,12 @@ function renderRaise(){
         ${recs.length?recs.map(r=>{const up=(+r.proposedRate)-(+r.currentRate);return `<tr onclick='openDetail("raise","${esc(r.id)}")'><td><b>${esc(r.staffName)}</b><div class="cell-sub">${esc(r.store||'')}</div></td><td class="num">$${r.currentRate}</td><td class="num">$${r.proposedRate}</td><td class="num" style="color:${up>=0?'#0a8a5f':'#d13030'}">${up>=0?'+':''}$${up.toFixed(2)}</td><td>${badge(r.status)}</td></tr>`;}).join(''):'<tr><td colspan="5"><div class="empty">No reviews.</div></td></tr>'}
         </tbody></table></div></div></div>
     </div>`;
+}
+function raiPerfHint(){ const name=$('#rai-staff').value, wrap=$('#rai-perf-wrap'), hint=$('#rai-perf');
+  if(!name||name.startsWith('—')){ if(wrap)wrap.style.display='none'; return; }
+  const p=perfScore(name); const tone=p.band.tone==='ok'?'info':p.band.tone;
+  if(wrap&&hint){ wrap.style.display=''; hint.className='vio-suggest tone-'+tone;
+    hint.innerHTML=`📊 <b>${esc(name)}</b> performance index: <b>${p.total}/150</b> · <b>${esc(p.band.label)}</b> → <b>${esc(p.raise)}</b>. <a href="#/performance" onclick="setTimeout(()=>perfPick('${ckJS(name)}'),50)">Open full scorecard →</a>`; }
 }
 function raiExport(fmt){ const cols=[{label:'Staff',get:r=>r.staffName},{label:'Store',get:r=>r.store},{label:'Review month',get:r=>r.reviewMonth},{label:'Current ($/h)',get:r=>r.currentRate},{label:'Proposed ($/h)',get:r=>r.proposedRate},{label:'Change',get:r=>((+r.proposedRate)-(+r.currentRate)).toFixed(2)},{label:'Effective',get:r=>r.effectiveDate},{label:'Status',get:r=>r.status}]; expRecords('Raise Salary Reviews',cols,scopedRecords('raise'),fmt); }
 function raiSubmit(){ const staff=$('#rai-staff').value; if(staff.startsWith('—')){toast('Select a staff member');return;}
@@ -351,6 +358,122 @@ function bdSubmit(){ const staff=$('#bd-staff').value, date=$('#bd-date').value;
   const rec={id:ex?ex.id:`BDY-${Math.floor(10+Math.random()*89)}`,staffName:staff,store:(DB.staff.find(x=>x.name===staff)||{}).store||State.branch,birthday:date,favoriteGift:$('#bd-gift').value,status:$('#bd-status').value,created:new Date().toISOString().slice(0,10)};
   if(ex) Object.assign(ex,rec); else DB.modules.birthday.records.unshift(rec);
   toast('🎂 Birthday saved'); buildSidebar(); renderBirthday();
+}
+
+/* ============================================================ PERFORMANCE & SCORING
+   Every staff member starts on the same BASE (100). Points are EARNED for
+   reliability (verified checklists), proactive reporting (responsibility),
+   training and recognition — and LOST for violations and complaints against
+   them. The resulting index drives a fair, transparent pay-review recommendation. */
+const PERF_BASE=100;
+function perfData(name){
+  const st=(DB.staff.find(x=>x.name===name)||{}).store;
+  const subs=mgrSubs().filter(s=>s.by===name && (!st||s.store===st));
+  const verified=subs.filter(s=>s.status==='Verified');
+  const avgProg=subs.length?Math.round(subs.reduce((a,s)=>a+(s.progress||0),0)/subs.length):0;
+  let reports=[]; ['issue','maintenance','incident','complaint'].forEach(id=>(DB.modules[id].records||[]).forEach(r=>{ if(r.reportedBy===name) reports.push({mod:id,...r}); }));
+  const complaintsAgainst=(DB.modules.complaint.records||[]).filter(r=>r.staffComplained===name);
+  const violations=(DB.modules.violation.records||[]).filter(r=>r.staffName===name);
+  const training=(DB.modules.training.records||[]).filter(r=>r.traineeName===name && r.status==='Completed');
+  const rewards=(DB.modules.reward.records||[]).filter(r=>r.staffName===name);
+  return {subs,verified,avgProg,reports,complaintsAgainst,violations,training,rewards};
+}
+function perfScore(name){
+  const d=perfData(name);
+  const C={};
+  C.base=PERF_BASE;
+  // reliability is COMPLETION-quality driven (not sheer count) so it doesn't max out for everyone
+  C.reliability=Math.min(20, Math.round((d.avgProg/100)*16) + (d.verified.length>=10?4:d.verified.length>=3?2:0));
+  C.reporting=Math.min(24,d.reports.length*3);                                  // proactive = responsibility → strongly rewarded
+  C.training=Math.min(18,d.training.length*4 + d.training.filter(t=>t.overallRating==='Excellent').length*2);
+  C.rewards=Math.min(20,d.rewards.reduce((s,r)=>s+(r.awardType==='Employee of the Month'?10:5),0));
+  const vSev={Minor:-5,Moderate:-12,Major:-25,Critical:-40}, vStep={'Verbal Discussion':-5,'Written Warning':-12,'Final Warning':-25,'Termination':-40};
+  C.violations=d.violations.reduce((s,v)=>s+(vSev[v.severity]||vStep[v.step]||-8),0);
+  C.complaints=d.complaintsAgainst.reduce((s,r)=>s+(r.severity==='Major'?-15:r.severity==='Moderate'?-8:-4),0);
+  let total=C.base+C.reliability+C.reporting+C.training+C.rewards+C.violations+C.complaints;
+  total=Math.max(0,Math.min(150,Math.round(total)));
+  const band=total>=130?{label:'Outstanding',tone:'ok'}:total>=110?{label:'Strong',tone:'ok'}:total>=95?{label:'Good',tone:'info'}:total>=80?{label:'Needs improvement',tone:'warn'}:{label:'At risk',tone:'bad'};
+  const raise=total>=130?'Recommend raise · +5–8%':total>=115?'Eligible for review · +3–5%':total>=100?'Maintain — on track':total>=80?'Coaching plan — hold raise':'Performance management';
+  return {name,d,C,total,band,raise};
+}
+function perfBands(){ return [['Outstanding','≥130','#0a8a5f'],['Strong','110–129','#0e9f6e'],['Good','95–109','#1565c0'],['Needs improvement','80–94','#f59e0b'],['At risk','<80','#ef4444']]; }
+function perfPick(v){ State.perf=State.perf||{}; State.perf.sel=v; renderPerformance(); }
+function perfExportLeaders(fmt){
+  const staff=DB.staff.filter(x=>isSuper()||x.store===State.branch);
+  const scored=staff.map(s=>({s,p:perfScore(s.name)})).sort((a,b)=>b.p.total-a.p.total);
+  const cols=[{label:'Rank',get:(r,i)=>r._rank},{label:'Staff',get:r=>r.s.name},{label:'Role',get:r=>r.s.role},{label:'Store',get:r=>r.s.store},{label:'Score',get:r=>r.p.total},{label:'Band',get:r=>r.p.band.label},{label:'Recommendation',get:r=>r.p.raise}];
+  scored.forEach((r,i)=>r._rank=i+1);
+  expRecords('Staff Performance Leaderboard',cols,scored,fmt);
+}
+function perfExportOne(fmt){
+  const name=State.perf&&State.perf.sel; if(!name) return; const p=perfScore(name);
+  const cols=[{label:'Component',get:r=>r[0]},{label:'Points',get:r=>r[1]}];
+  const rows=[['Base score',p.C.base],['Checklist reliability',(p.C.reliability>=0?'+':'')+p.C.reliability],['Proactive reporting',(p.C.reporting>=0?'+':'')+p.C.reporting],['Training',(p.C.training>=0?'+':'')+p.C.training],['Rewards & recognition',(p.C.rewards>=0?'+':'')+p.C.rewards],['Violations',p.C.violations],['Complaints against',p.C.complaints],['TOTAL SCORE',p.total],['Band',p.band.label],['Pay-review recommendation',p.raise],['Checklists submitted',p.d.subs.length+' ('+p.d.verified.length+' verified, '+p.d.avgProg+'% avg)'],['Reports filed',p.d.reports.length],['Violations',p.d.violations.length],['Complaints against',p.d.complaintsAgainst.length],['Training completed',p.d.training.length],['Awards',p.d.rewards.length]];
+  expRecords('Performance — '+name,cols,rows,fmt);
+}
+function renderPerformance(){
+  setAccent('#7c3aed'); setCrumb('📊','Performance & Scoring','Fair, transparent staff performance index');
+  if(!State.perf) State.perf={sel:''};
+  const staff=DB.staff.filter(x=>isSuper()||x.store===State.branch);
+  const sel=State.perf.sel && staff.find(x=>x.name===State.perf.sel) ? State.perf.sel : '';
+  const selector=`<select class="login-input" style="width:auto;min-width:220px" onchange="perfPick(this.value)"><option value="">— Whole team (leaderboard) —</option>${staff.map(x=>`<option ${x.name===sel?'selected':''}>${esc(x.name)}</option>`).join('')}</select>`;
+  if(sel) return perfDetail(sel,selector);
+  // ---- leaderboard ----
+  const scored=staff.map(s=>({s,p:perfScore(s.name)})).sort((a,b)=>b.p.total-a.p.total);
+  const avg=scored.length?Math.round(scored.reduce((a,r)=>a+r.p.total,0)/scored.length):0;
+  const atRisk=scored.filter(r=>r.p.total<70).length, top=scored.filter(r=>r.p.total>=120).length;
+  const bandsLegend=perfBands().map(b=>`<span class="perf-leg"><i style="background:${b[2]}"></i>${b[0]} <small>${b[1]}</small></span>`).join('');
+  $('#content').innerHTML=`
+    <div class="page-head"><div class="ph-ic" style="background:#f3e8fb">📊</div><div><h2>Performance &amp; Scoring</h2><p>Everyone starts on a level base of ${PERF_BASE}. Points are earned for reliability, proactive reporting, training &amp; recognition — and lost for violations &amp; complaints.</p></div>
+      <div class="ph-actions">${selector} ${exportBtns('perf-table','Staff Performance Leaderboard')}</div></div>
+    <div class="kpi-grid">
+      <div class="kpi tone-info"><div class="k-top"><div class="k-ic">👥</div></div><div class="k-val">${scored.length}</div><div class="k-lbl">Staff scored</div></div>
+      <div class="kpi tone-ok"><div class="k-top"><div class="k-ic">📈</div></div><div class="k-val">${avg}</div><div class="k-lbl">Average score</div></div>
+      <div class="kpi tone-ok"><div class="k-top"><div class="k-ic">⭐</div></div><div class="k-val">${top}</div><div class="k-lbl">Raise-ready (≥120)</div></div>
+      <div class="kpi tone-bad"><div class="k-top"><div class="k-ic">⚠️</div></div><div class="k-val">${atRisk}</div><div class="k-lbl">At risk (&lt;70)</div></div></div>
+    <div class="perf-legend">${bandsLegend}</div>
+    <div class="card"><div class="card-head"><h3>Leaderboard${isSuper()?' · all stores':' · '+esc(State.branch)}</h3><span class="ch-sub">Click a row to open the full scorecard</span></div>
+      <div class="table-wrap"><table class="grid" id="perf-table"><thead><tr><th>#</th><th>Staff</th><th>Role</th><th>Store</th><th>Score</th><th>Band</th><th>Pay-review recommendation</th></tr></thead><tbody>
+      ${scored.map((r,i)=>`<tr onclick="perfPick('${ckJS(r.s.name)}')"><td class="num"><b>${i+1}</b></td><td><b>${esc(r.s.name)}</b></td><td>${esc(r.s.role||'')}</td><td>${esc(r.s.store||'')}</td><td><span class="perf-pill" style="--pc:${perfColor(r.p.total)}">${r.p.total}</span></td><td><span class="badge ${r.p.band.tone}">${esc(r.p.band.label)}</span></td><td>${esc(r.p.raise)}</td></tr>`).join('')||'<tr><td colspan="7"><div class="empty">No staff to score.</div></td></tr>'}
+      </tbody></table></div></div>`;
+}
+function perfColor(t){ return t>=130?'#0a8a5f':t>=110?'#0e9f6e':t>=95?'#1565c0':t>=80?'#f59e0b':'#ef4444'; }
+function perfDetail(name,selector){
+  const p=perfScore(name), d=p.d, s=DB.staff.find(x=>x.name===name)||{};
+  const comp=[['Checklist reliability',p.C.reliability,'Verified submissions & completion','fa-clipboard-check'],
+    ['Proactive reporting',p.C.reporting,'Issues/maintenance/incidents they raised','fa-bullhorn'],
+    ['Training',p.C.training,'Completed sessions & ratings','fa-graduation-cap'],
+    ['Rewards & recognition',p.C.rewards,'Awards received','fa-trophy'],
+    ['Violations',p.C.violations,'Rule breaches logged against them','fa-triangle-exclamation'],
+    ['Complaints against',p.C.complaints,'Customer complaints naming them','fa-comment-dots']];
+  const maxAbs=Math.max(30,...comp.map(c=>Math.abs(c[1])));
+  const bar=c=>{const pos=c[1]>=0; const w=Math.round(Math.abs(c[1])/maxAbs*100);
+    return `<div class="perf-bd"><div class="perf-bd-h"><i class="fas ${c[3]}"></i> <b>${esc(c[0])}</b><small>${esc(c[2])}</small><span class="perf-bd-v ${pos?'pos':'neg'}">${pos?'+':''}${c[1]}</span></div><div class="perf-bd-track"><i class="${pos?'pos':'neg'}" style="width:${w}%"></i></div></div>`;};
+  const reportList=d.reports.slice(0,6).map(r=>`<div class="feed-row"><div class="feed-ic" style="background:#ede9fe;color:#7c3aed">${(DB.modules[r.mod]||{}).icon||'🚩'}</div><div class="feed-main"><div class="fm-t">${esc(r.id)} · ${esc((DB.modules[r.mod]||{}).short||r.mod)}</div><div class="fm-s">${esc(r.title||r.equipment||r.summary||r.shortDescription||r.category||'')}</div></div><div class="feed-time">${esc((r.created||r.date||'').slice(0,10))}</div></div>`).join('')||'<div class="empty">No reports filed.</div>';
+  const vioList=d.violations.slice(0,6).map(v=>`<div class="feed-row"><div class="feed-ic" style="background:#fdecea;color:#c62828">⚠️</div><div class="feed-main"><div class="fm-t">${esc(v.category)} · <span class="badge ${toneOf(v.severity)}">${esc(v.severity)}</span></div><div class="fm-s">${esc(v.step||'')} · ${esc((v.description||'').slice(0,60))}</div></div><div class="feed-time">${esc((v.created||'').slice(0,10))}</div></div>`).join('')||'<div class="empty">No violations — clean record. 🟢</div>';
+  $('#content').innerHTML=`
+    <div class="page-head"><div class="ph-ic" style="background:#f3e8fb">📊</div><div><h2>${esc(name)}</h2><p>${esc(s.role||'')}${s.store?' · '+esc(s.store):''} — performance scorecard</p></div>
+      <div class="ph-actions"><button class="btn sm" onclick="perfPick('')"><i class="fas fa-arrow-left"></i>&nbsp; Leaderboard</button>${selector} ${expMenu('perfExportOne')}</div></div>
+    <div class="perf-top">
+      <div class="card perf-scorecard" style="--pc:${perfColor(p.total)}">
+        <div class="perf-score">${p.total}</div><div class="perf-of">/ 150</div>
+        <div class="badge ${p.band.tone}" style="font-size:13px;padding:5px 14px">${esc(p.band.label)}</div>
+        <div class="perf-raise">💡 ${esc(p.raise)}</div>
+      </div>
+      <div class="card perf-breakdown"><div class="card-head"><h3>Score breakdown</h3><span class="ch-sub">Base ${PERF_BASE} ± activity</span></div>
+        <div class="card-pad"><div class="perf-base">Base score <b>${PERF_BASE}</b></div>${comp.map(bar).join('')}<div class="perf-total">Total performance index <b style="color:${perfColor(p.total)}">${p.total}</b></div></div></div>
+    </div>
+    <div class="kpi-grid">
+      <div class="kpi tone-info"><div class="k-top"><div class="k-ic">✅</div></div><div class="k-val">${d.subs.length}</div><div class="k-lbl">Checklists submitted</div></div>
+      <div class="kpi tone-ok"><div class="k-top"><div class="k-ic">🛡️</div></div><div class="k-val">${d.verified.length}</div><div class="k-lbl">Verified · ${d.avgProg}% avg</div></div>
+      <div class="kpi tone-info"><div class="k-top"><div class="k-ic">📣</div></div><div class="k-val">${d.reports.length}</div><div class="k-lbl">Reports filed</div></div>
+      <div class="kpi tone-ok"><div class="k-top"><div class="k-ic">🎓</div></div><div class="k-val">${d.training.length}</div><div class="k-lbl">Training done</div></div>
+      <div class="kpi tone-warn"><div class="k-top"><div class="k-ic">🏆</div></div><div class="k-val">${d.rewards.length}</div><div class="k-lbl">Awards</div></div>
+      <div class="kpi tone-bad"><div class="k-top"><div class="k-ic">⚠️</div></div><div class="k-val">${d.violations.length}</div><div class="k-lbl">Violations</div></div></div>
+    <div class="split-2">
+      <div class="card"><div class="card-head"><h3>📣 Proactive reports (responsibility)</h3><span class="ch-sub">Raising issues earns points</span></div><div class="feed">${reportList}</div></div>
+      <div class="card"><div class="card-head"><h3>⚠️ Violations &amp; complaints</h3></div><div class="feed">${vioList}</div></div>
+    </div>`;
 }
 
 /* ============================================================ STAFF STRUCTURE (restaurant-style) */
