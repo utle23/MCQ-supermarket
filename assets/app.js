@@ -318,21 +318,27 @@ function renderRecords(m){
       <div class="filter"><label>Store</label><select id="f-store" ${isAdmin()?'':'disabled'}>${opts(storeOpts)}</select></div>
       <div class="filter"><label>Status</label><select id="f-status">${opts(stat)}</select></div>
       ${sevs?`<div class="filter"><label>${m.id==='maintenance'?'Priority':'Severity'}</label><select id="f-sev">${opts(sevs)}</select></div>`:''}
+      <div class="filter f-daterange"><label>Date</label><input type="date" id="f-from" title="From"><span>→</span><input type="date" id="f-to" title="To"></div>
       <div class="filter search"><label>Search</label><input id="f-q" placeholder="Search…"></div>
       <div class="tb-spacer"></div>
+      ${exportBtns('rec-table',m.label)}
       <button class="btn primary sm" onclick="go('${m.noNew?'issue':m.id}'${m.noNew?'':",'new'"})">➕ ${m.noNew?'Report':'New'}</button></div>
     <div class="card"><div class="card-head"><h3>${isAdmin()?'Records':'My records'}</h3><span class="ch-sub">${isAdmin()?'Click a row to review & update.':'Click a row for details.'} · Newest first</span></div>
-      <div class="table-wrap"><table class="grid"><thead><tr>${m.columns.map(c=>`<th>${esc(c.label)}</th>`).join('')}</tr></thead><tbody id="rec-body"></tbody></table></div></div>`;
-  ['f-store','f-status','f-sev','f-q'].forEach(id=>{const el=$('#'+id); if(el) el.oninput=()=>drawRows(m);});
+      <div class="table-wrap"><table class="grid" id="rec-table"><thead><tr>${m.columns.map(c=>`<th>${esc(c.label)}</th>`).join('')}</tr></thead><tbody id="rec-body"></tbody></table></div></div>`;
+  ['f-store','f-status','f-sev','f-q','f-from','f-to'].forEach(id=>{const el=$('#'+id); if(el) el.oninput=()=>drawRows(m);});
   drawRows(m);
 }
 function drawRows(m){
   const fS=$('#f-store')?.value,fSt=$('#f-status')?.value,fSe=$('#f-sev')?.value,fQ=($('#f-q')?.value||'').toLowerCase();
+  const fFrom=$('#f-from')?.value||'',fTo=$('#f-to')?.value||'';
   let rows=scopedRecords(m.id).slice().sort((a,b)=>String(b.created||b.date||'').localeCompare(String(a.created||a.date||'')));
   rows=rows.filter(r=>{
     if(fS&&!fS.startsWith('All')&&r.store!==fS) return false;
     if(fSt&&fSt!=='All'&&r.status!==fSt) return false;
     if(fSe&&fSe!=='All'&&(r.severity||r.priority)!==fSe) return false;
+    const d=String(r.created||r.date||'').slice(0,10);
+    if(fFrom&&(!d||d<fFrom)) return false;
+    if(fTo&&(!d||d>fTo)) return false;
     if(fQ&&!Object.values(r).join(' ').toLowerCase().includes(fQ)) return false;
     return true;
   });

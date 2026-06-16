@@ -46,7 +46,7 @@ TONES.Normal='info'; TONES.Urgent='bad'; TONES.Active='ok';
    photo: 0 none | 'O' optional | 'O5' optional max5 | 'R1-5' required 1..5
    ============================================================ */
 DB.checklist = {
-  depts: ['MANAGER','CASHIER','FV','GROCERY','FROZEN & DAIRY','BUTCHER'],
+  depts: ['MANAGER','CASHIER','FV','GROCERY','FROZEN & DAIRY','BUTCHER','COSMETIC','OFFICE'],
   deptMeta: {
     MANAGER:{icon:'fa-user-tie', color:'#4f46e5'},
     CASHIER:{icon:'fa-cash-register', color:'#0ea5e9'},
@@ -54,6 +54,8 @@ DB.checklist = {
     GROCERY:{icon:'fa-basket-shopping', color:'#f59e0b'},
     'FROZEN & DAIRY':{icon:'fa-snowflake', color:'#0891b2'},
     BUTCHER:{icon:'fa-drumstick-bite', color:'#ef4444'},
+    COSMETIC:{icon:'fa-wand-magic-sparkles', color:'#ec4899'},
+    OFFICE: {icon:'fa-file-invoice-dollar', color:'#64748b'},
   },
   tempRanges: {
     fridge: {label:'Fridge', max:5, text:'<= 5 C'},
@@ -179,6 +181,7 @@ DB.checklist = {
     ['FROZEN & DAIRY','Frozen & Dairy','AISLES CLEAN, NO RUBBISH ON THE WAY','A','R1-5'],
     ['FROZEN & DAIRY','Frozen & Dairy','TOFU QUALITY CHECKED AND CLEAN','A',0],
     // ---- BUTCHER ----
+    ['BUTCHER','Retail','PREPARE SANITIZER AND PAPER TOWEL AT THE STATION','O',0],
     ['BUTCHER','Retail','MEAT DISPLAY CLEAN AND LABEL CORRECT','O',0],
     ['BUTCHER','Retail','PRICE TAGS UPRIGHT AND CORRECT','A','O3'],
     ['BUTCHER','Retail','MEAT TRAYS HAVING GAPS FRONT AND BACK','A',0],
@@ -190,7 +193,72 @@ DB.checklist = {
     ['BUTCHER','Retail Closing','ALL MEAT TRAYS WRAPPED AND LEFT IN GREEN CRATES','C',0],
     ['BUTCHER','Retail Closing','ALL WINDOWS WIPED','C',0],
     ['BUTCHER','Retail Closing','ALL TRAYS WASHED','C',0],
+    // ---- COSMETIC ----
+    ['COSMETIC','Cosmetics','ALL COSMETIC SHELVES FULLY STOCKED AND FACED UP','O','R1-5'],
+    ['COSMETIC','Cosmetics','GLASS DISPLAY CABINETS WIPED AND FINGERPRINT-FREE','O','R1-3'],
+    ['COSMETIC','Cosmetics','TESTER UNITS CLEAN, WORKING AND TOPPED UP','O',0],
+    ['COSMETIC','Cosmetics','PRICE LABELS CORRECT AND PROMOTIONAL TAGS IN PLACE','O',0],
+    ['COSMETIC','Cosmetics','CHECK EXPIRY DATES — REMOVE OR MARK DOWN SHORT-DATED ITEMS','A',0],
+    ['COSMETIC','Cosmetics','NEW ARRIVALS PRICED, TAGGED AND PUSHED TO SHELF','A','R1-3'],
+    ['COSMETIC','Cosmetics','HIGH-VALUE / FRAGRANCE LOCKED CABINET STOCK CHECKED','A',0],
+    ['COSMETIC','Cosmetics','SECTION LOOKS NEAT, WELL ORGANISED AND SHOPPABLE','A','R1-3'],
+    ['COSMETIC','Cosmetics','RESTOCK GAPS FROM BACK STOCK AND FACE UP ALL SHELVES','C','R1-5'],
+    ['COSMETIC','Cosmetics','TIDY AND ORGANISE COSMETIC CABINETS NEATLY','C','R1-3'],
+    ['COSMETIC','Cosmetics','CLEAN COUNTER, MIRRORS AND TESTER AREA','C',0],
+    ['COSMETIC','Cosmetics','RETURN MISPLACED PRODUCTS TO CORRECT SECTION','C',0],
+    ['COSMETIC','Cosmetics','LOCK HIGH-VALUE / FRAGRANCE CABINET','C',0],
+    // ---- OFFICE ----
+    ['OFFICE','Admin','DESKS AND TABLES CLEAN, CLEAR AND ORGANISED','O','R1-2'],
+    ['OFFICE','Admin','SORT AND FILE TODAY’S INVOICES AND DELIVERY DOCKETS','A',0],
+    ['OFFICE','Admin','CHECK INCOMING INVOICES AGAINST DELIVERIES (QTY & PRICE)','A',0],
+    ['OFFICE','Admin','UPDATE PRICE CHANGES AND PRINT NEW SHELF LABELS','A','R1-2'],
+    ['OFFICE','Admin','STOCK UP STATIONERY, RECEIPT ROLLS AND LABEL PAPER','A',0],
+    ['OFFICE','Admin','PETTY CASH COUNTED AND LOGGED','A',0],
+    ['OFFICE','Admin','ANSWER AND LOG SUPPLIER CALLS AND EMAILS','A',0],
+    ['OFFICE','Admin','SEND INVOICE BATCH TO HEAD OFFICE — MONDAY & THURSDAY','A',0],
+    ['OFFICE','Admin','FILE COMPLETED PAPERWORK AND LOCK FILING CABINET','C',0],
+    ['OFFICE','Admin','BACK UP DAILY SALES REPORT','C',0],
+    ['OFFICE','Admin','TABLES CLEARED, WIPED AND TIDY FOR NEXT DAY','C','R1-2'],
   ],
+};
+/* ============================================================
+   CLEANING & MAINTENANCE SCHEDULES — recurring (not daily) jobs,
+   each with a frequency + who is responsible. Shown on the
+   Schedules page; separate cadence from the daily checklist.
+   ============================================================ */
+DB.schedules = {
+  cleaning: { label:'Cleaning Schedule', icon:'🧽', accent:'#0e9f6e',
+    desc:'Recurring deep-cleaning jobs across the store — beyond the daily checklist.',
+    tasks:[
+      {task:'Degrease & clean fridge / freezer condenser coils and filters', area:'Refrigeration', freq:'Every 2 weeks', who:'Frozen & Dairy', last:'2026-06-05'},
+      {task:'Deep-clean coolroom floors, shelves and door seals',           area:'Coolrooms',     freq:'Weekly',        who:'FV / Butcher',  last:'2026-06-12'},
+      {task:'Sanitise all glass display cabinets and sneeze guards',         area:'Displays',      freq:'2× per week',   who:'Cosmetic / Cashier', last:'2026-06-15'},
+      {task:'Clean entrance glass doors, front windows & door tracks',       area:'Storefront',    freq:'2× per week',   who:'Cleaner',       last:'2026-06-15'},
+      {task:'Degrease & sanitise butcher band-saw, blocks and prep tables',  area:'Butcher',       freq:'Daily',         who:'Butcher',       last:'2026-06-16'},
+      {task:'Mop & sanitise all back-of-house and prep floors',             area:'Back of house', freq:'Daily',         who:'All depts',     last:'2026-06-16'},
+      {task:'Descale & clean café coffee machine and water lines',          area:'Café',          freq:'Weekly',        who:'Café',          last:'2026-06-10'},
+      {task:'Empty, wash and sanitise all bins and the bin area',           area:'Waste',         freq:'Daily',         who:'Cleaner',       last:'2026-06-16'},
+      {task:'Dust & wipe top shelves, signage and light fittings',          area:'Grocery',       freq:'Monthly',       who:'Grocery',       last:'2026-05-28'},
+      {task:'Clean & polish checkout belts, scales and EFTPOS units',       area:'Checkout',      freq:'Daily',         who:'Cashier',       last:'2026-06-16'},
+      {task:'Wash floor mats, trolleys and baskets',                        area:'Front',         freq:'Weekly',        who:'Cashier',       last:'2026-06-11'},
+      {task:'Pest-control inspection and bait-station check',               area:'Whole store',   freq:'Monthly',       who:'External',      last:'2026-05-20'},
+    ]},
+  maintenance: { label:'Maintenance Schedule', icon:'🔧', accent:'#f59e0b',
+    desc:'Planned servicing & technician visits to keep equipment safe and compliant.',
+    tasks:[
+      {task:'Refrigeration technician service — coolrooms, display fridges & freezers', area:'Refrigeration', freq:'Every 2 weeks', who:'External technician', last:'2026-06-04'},
+      {task:'Air-conditioning & ventilation filter service',               area:'HVAC',         freq:'Monthly',     who:'External technician', last:'2026-05-22'},
+      {task:'Test & tag electrical equipment, RCD / safety-switch test',    area:'Electrical',   freq:'Quarterly',   who:'Electrician',         last:'2026-04-15'},
+      {task:'Forklift & pallet-jack safety inspection and service',        area:'Warehouse',    freq:'Monthly',     who:'External technician', last:'2026-05-30'},
+      {task:'Fire extinguishers, exit lights and alarm system check',      area:'Safety',       freq:'Quarterly',   who:'Fire contractor',     last:'2026-04-02'},
+      {task:'POS / EFTPOS, scanners and printers servicing',               area:'IT',           freq:'Monthly',     who:'IT contractor',       last:'2026-05-26'},
+      {task:'Plumbing & grease-trap inspection',                           area:'Plumbing',     freq:'Every 2 weeks', who:'Plumber',           last:'2026-06-06'},
+      {task:'Roller doors, gates and door closers — lubricate & service',  area:'Building',     freq:'Monthly',     who:'Maintenance',         last:'2026-05-24'},
+      {task:'Shelving, gondola and display-fixture safety check',          area:'Fixtures',     freq:'Quarterly',   who:'Maintenance',         last:'2026-04-18'},
+      {task:'CCTV and security system health check',                       area:'Security',     freq:'Monthly',     who:'Security contractor', last:'2026-05-29'},
+      {task:'Trade-approved weighing-scale calibration',                   area:'Scales',       freq:'Every 6 months', who:'Calibration service', last:'2026-02-12'},
+      {task:'Trolley repair and wheel replacement round',                  area:'Front',        freq:'Monthly',     who:'Maintenance',         last:'2026-05-25'},
+    ]},
 };
 
 /* ============================================================
@@ -474,7 +542,7 @@ DB.modules.issue = {
 
 /* ---------- navigation groups (sidebar) ---------- */
 DB.navGroups = [
-  { id:'ops',    label:'Operations', icon:'fa-clipboard-list', items:['checklist','delivery','people'] },
+  { id:'ops',    label:'Operations', icon:'fa-clipboard-list', items:['checklist','schedules','delivery','people'] },
   { id:'hr',     label:'Staff & HR', icon:'fa-users',          items:['structure','staff','schedule','training','violation','reward','raise','birthday'], admin:true },
   { id:'mgmt',   label:'Management', icon:'fa-user-shield',     items:['manager','analytics','photos','whatsapp','email','data'], admin:true },
   { id:'reports',label:'Reports & Rules', icon:'fa-flag',       items:['rules','issue'] },
@@ -551,6 +619,7 @@ DB.customPages = {
   structure:{ label:'Staff Structure', icon:'🏢', render:'renderStructure' },
   staff:    { label:'Staff Members',   icon:'🧑‍🤝‍🧑', render:'renderStaff' },
   schedule: { label:'Job Schedule',    icon:'🗓️', render:'renderSchedule' },
+  schedules:{ label:'Cleaning & Maintenance', icon:'🧽', render:'renderSchedules' },
   manager:  { label:'Manager Panel',   icon:'🛡️', render:'renderManager', admin:true },
   analytics:{ label:'Analytics',       icon:'📈', render:'renderAnalytics', admin:true },
   photos:   { label:'Photo Gallery',   icon:'🖼️', render:'renderPhotos', admin:true },

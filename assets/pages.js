@@ -137,7 +137,7 @@ function ckDraw(){
     html+=`</div>`;
   });
   $('#chk-body').innerHTML=html||'<div class="empty">No tasks for this filter.</div>';
-  const report=$('#ck-temp-report'); if(report) report.innerHTML=ckTempReportHTML();
+  const report=$('#ck-temp-report'); if(report) report.innerHTML=(State.chk.dept==='MANAGER')?ckTempReportHTML():'';
   ckProgress();
 }
 function ckRespId(dept,field){ return 'ck-resp-'+field+'-'+String(dept).toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,''); }
@@ -168,8 +168,9 @@ function ckProgress(){
     if(r.meta.temp&&st.aiStatus==='scanning') tscan++;
   });
   const pct=total?Math.round(done/total*100):0;
+  const hasTemp=rows.some(r=>r.meta&&r.meta.temp);
   const el=$('#chk-prog'); if(el) el.innerHTML=`<span class="count-chip">✅ ${done}/${total} done</span><span class="count-chip">📷 ${pdone}/${preq} photo tasks</span>
-    <span class="count-chip temp-ok">🌡️ ${tok} in range</span><span class="count-chip temp-bad">⚠️ ${tbad} out</span><span class="count-chip temp-scan">AI ${tscan} scanning</span>
+    ${hasTemp?`<span class="count-chip temp-ok">🌡️ ${tok} in range</span><span class="count-chip temp-bad">⚠️ ${tbad} out</span><span class="count-chip temp-scan">AI ${tscan} scanning</span>`:''}
     <span class="pwrap" style="flex:1;min-width:160px"><span class="pbar" style="flex:1"><i style="width:${pct}%"></i></span><b>${pct}%</b></span>`;
 }
 function ckTick(i){
@@ -655,17 +656,25 @@ function issGroupOf(r){
 function issTab(t){ if(!State.iss)State.iss={cat:'',photo:null,prio:'Normal'}; State.iss.tab=t; renderIssue(); }
 function issDrill(cat){ if(!State.iss)State.iss={}; State.iss.drillCat = State.iss.drillCat===cat?null:cat; renderIssueAnalytics(); }
 function issSeg(active){ return `<div class="seg seg-light"><button class="seg-btn ${active==='report'?'active':''}" onclick="issTab('report')">➕ New</button><button class="seg-btn ${active==='records'?'active':''}" onclick="issTab('records')">📋 Records</button><button class="seg-btn ${active==='analytics'?'active':''}" onclick="issTab('analytics')">📊 Analytics</button></div>`; }
+function issRecDate(which,val){ State.iss=State.iss||{}; State.iss[which]=val; renderIssueRecords(); }
 function renderIssueRecords(){
   setAccent('#e53935'); setCrumb('🚩','Report an Issue · Records','All reports across registers');
+  if(!State.iss) State.iss={tab:'records'};
   const regMods=['issue','maintenance','incident','complaint'];
   let all=[]; regMods.forEach(id=>DB.modules[id].records.forEach(r=>all.push({mod:id,icon:DB.modules[id].icon,short:DB.modules[id].short,...r})));
   if(!isSuper()) all=all.filter(r=>r.store===State.branch);
+  const from=State.iss.recFrom||'', to=State.iss.recTo||'';
+  all=all.filter(r=>{ const d=String(r.created||r.date||'').slice(0,10); if(from&&(!d||d<from)) return false; if(to&&(!d||d>to)) return false; return true; });
   all.sort((a,b)=>String(b.created||b.date||'').localeCompare(String(a.created||a.date||'')));
   $('#content').innerHTML=`
     <div class="page-head"><div class="ph-ic" style="background:#fdeaea">🚩</div><div><h2>Report an Issue · Records</h2><p>Every report — Issue / Maintenance / Incident / Complaint, newest first.</p></div>
       <div class="ph-actions">${issSeg('records')}</div></div>
-    <div class="card"><div class="card-head"><h3>${isSuper()?'All stores':esc(State.branch)} · ${all.length} reports</h3></div><div class="table-wrap"><table class="grid"><thead><tr><th>Ref</th><th>Register</th><th>Title</th><th>Store</th><th>Priority</th><th>Status</th><th>Date</th></tr></thead><tbody>
-    ${all.length?all.map(r=>`<tr onclick='openDetail("${r.mod}","${esc(r.id)}")'><td class="cell-id">${esc(r.id)}</td><td><span class="reg-tag">${r.icon} ${esc(r.short)}</span></td><td><div class="wrap">${esc(r.title||r.equipment||r.summary||r.shortDescription||r.category||'')}</div></td><td>${esc(r.store||'')}</td><td>${(r.priority||r.severity)?badge(r.priority||r.severity):''}</td><td>${r.status?badge(r.status):''}</td><td>${esc((r.created||r.date||'').slice(0,16))}</td></tr>`).join(''):'<tr><td colspan="7"><div class="empty">No reports yet.</div></td></tr>'}
+    <div class="toolbar"><span class="count-chip">📋 ${all.length} report${all.length!==1?'s':''}</span>
+      <div class="filter f-daterange"><label>Date</label><input type="date" value="${esc(from)}" onchange="issRecDate('recFrom',this.value)"><span>→</span><input type="date" value="${esc(to)}" onchange="issRecDate('recTo',this.value)"></div>
+      ${from||to?`<button class="btn sm" onclick="issRecDate('recFrom','');State.iss.recTo='';renderIssueRecords()">✕ Clear</button>`:''}
+      <div class="tb-spacer"></div>${exportBtns('iss-rec-table','Report Issue Records')}</div>
+    <div class="card"><div class="card-head"><h3>${isSuper()?'All stores':esc(State.branch)} · ${all.length} reports</h3></div><div class="table-wrap"><table class="grid" id="iss-rec-table"><thead><tr><th>Ref</th><th>Register</th><th>Title</th><th>Store</th><th>Priority</th><th>Status</th><th>Date</th></tr></thead><tbody>
+    ${all.length?all.map(r=>`<tr onclick='openDetail("${r.mod}","${esc(r.id)}")'><td class="cell-id">${esc(r.id)}</td><td><span class="reg-tag">${r.icon} ${esc(r.short)}</span></td><td><div class="wrap">${esc(r.title||r.equipment||r.summary||r.shortDescription||r.category||'')}</div></td><td>${esc(r.store||'')}</td><td>${(r.priority||r.severity)?badge(r.priority||r.severity):''}</td><td>${r.status?badge(r.status):''}</td><td>${esc((r.created||r.date||'').slice(0,16))}</td></tr>`).join(''):'<tr><td colspan="7"><div class="empty">No reports in this range.</div></td></tr>'}
     </tbody></table></div></div>`;
 }
 function renderIssueEmail(){
@@ -805,6 +814,79 @@ function renderSchedule(){
     </tbody></table></div></div>
     <div class="section-title">Coverage by department</div><div class="card"><div class="card-pad"><div class="chart-box"><canvas id="sched-chart"></canvas></div></div></div>`;
   mkChart('sched-chart',{type:'bar',data:{labels:depts,datasets:[{label:'Shifts',data:depts.map(()=>5+Math.floor(Math.random()*9)),backgroundColor:PALETTE,borderRadius:8,maxBarThickness:40}]},options:baseOpts({legend:false})});
+}
+
+/* ============================================================ EXPORT (PDF / Excel) — branded, reusable */
+function exportBtns(tableId,title){ return `<button class="btn sm exp-x" onclick="exportTableExcel('${tableId}','${ckJS(title||'')}')"><i class="fas fa-file-excel"></i>&nbsp; Excel</button><button class="btn sm exp-p" onclick="exportTablePDF('${tableId}','${ckJS(title||'')}')"><i class="fas fa-file-pdf"></i>&nbsp; PDF</button>`; }
+function expFileName(title,ext){ return 'MCQ_'+String(title||'report').replace(/[^a-z0-9]+/gi,'_').replace(/^_|_$/g,'')+'_'+new Date().toISOString().slice(0,10)+'.'+ext; }
+function expDownload(blob,name){ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},600); }
+function expScope(){ return isSuper()?'All stores':State.branch; }
+function exportTableExcel(tableId,title){
+  const tbl=document.getElementById(tableId); if(!tbl){ toast('Nothing to export'); return; }
+  const when=new Date().toLocaleString(), cols=tbl.querySelectorAll('thead th').length||12;
+  const style='<style>table{border-collapse:collapse;font-family:Calibri,Arial,sans-serif}th{background:#0e9f6e;color:#fff;border:1px solid #cbd5e1;padding:7px 10px;text-align:left;font-size:12px}td{border:1px solid #e2e8f0;padding:6px 10px;font-size:12px}</style>';
+  const head=`<tr><td colspan="${cols}" style="font-size:17px;font-weight:bold;color:#0e9f6e;padding:8px 10px">MCQ Supermarket — ${esc(title)}</td></tr><tr><td colspan="${cols}" style="color:#64748b;padding:0 10px 10px">${esc(expScope())} · Generated ${esc(when)}</td></tr>`;
+  const html='<html><head><meta charset="utf-8">'+style+'</head><body><table>'+head+tbl.innerHTML+'</table></body></html>';
+  expDownload(new Blob(['﻿'+html],{type:'application/vnd.ms-excel'}), expFileName(title,'xls'));
+  toast('⬇️ Excel exported');
+}
+function exportTablePDF(tableId,title){
+  const tbl=document.getElementById(tableId); if(!tbl){ toast('Nothing to export'); return; }
+  const when=new Date().toLocaleString(), role=isSuper()?'Super Admin':isAdmin()?'Admin':'Staff';
+  const w=window.open('','_blank'); if(!w){ toast('Allow pop-ups to export PDF'); return; }
+  w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
+    <style>*{box-sizing:border-box}body{font-family:'Segoe UI',Arial,sans-serif;color:#1f2937;margin:0;padding:26px}
+    .rpt-head{display:flex;align-items:center;gap:14px;border-bottom:3px solid #0e9f6e;padding-bottom:14px}
+    .rpt-logo{width:44px;height:44px;border-radius:11px;background:linear-gradient(135deg,#0e9f6e,#0891b2);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:16px;letter-spacing:.5px}
+    .rpt-title{font-size:21px;font-weight:800}.rpt-sub{color:#6b7280;font-size:12px;margin-top:3px}
+    .rpt-meta{margin:14px 0 16px;color:#374151;font-size:12px}
+    table{border-collapse:collapse;width:100%;font-size:11px}thead{display:table-header-group}
+    th{background:#0e9f6e;color:#fff;text-align:left;padding:8px 9px;font-weight:700}
+    td{border-bottom:1px solid #e5e7eb;padding:6px 9px;vertical-align:top}
+    tr:nth-child(even) td{background:#f8fafc}
+    .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#eef2f7;color:#475569}
+    .rpt-foot{margin-top:20px;color:#9ca3af;font-size:10px;text-align:center;border-top:1px solid #e5e7eb;padding-top:10px}
+    @page{margin:13mm}</style></head><body>
+    <div class="rpt-head"><div class="rpt-logo">MCQ</div><div><div class="rpt-title">${esc(title)}</div><div class="rpt-sub">MCQ Supermarket · ${esc(expScope())}</div></div></div>
+    <div class="rpt-meta">Generated ${esc(when)} · ${esc(role)} view</div>
+    <table>${tbl.innerHTML}</table>
+    <div class="rpt-foot">MCQ Supermarket — Operations report · Confidential</div>
+    <script>window.onload=function(){setTimeout(function(){window.print();},300);};<\/script></body></html>`);
+  w.document.close();
+}
+
+/* ============================================================ CLEANING & MAINTENANCE SCHEDULES */
+function schedFreqDays(f){ return {'Daily':1,'2× per week':3,'Weekly':7,'Every 2 weeks':14,'Monthly':30,'Quarterly':91,'Every 6 months':182}[f]||30; }
+function schedFreqColor(f){ return {'Daily':'#0e9f6e','2× per week':'#0891b2','Weekly':'#3b82f6','Every 2 weeks':'#8b5cf6','Monthly':'#f59e0b','Quarterly':'#ef4444','Every 6 months':'#b91c1c'}[f]||'#64748b'; }
+function schedRows(kind){ const sc=DB.schedules[kind], today=new Date();
+  return sc.tasks.map(t=>{ const last=t.last?new Date(t.last):null;
+    const due=last?new Date(last.getTime()+schedFreqDays(t.freq)*864e5):today;
+    const diff=Math.round((due-today)/864e5);
+    const tone=diff<0?'bad':diff<=2?'warn':'ok', status=diff<0?`Overdue ${-diff}d`:diff<=2?'Due soon':'On track';
+    return {...t, due:due.toISOString().slice(0,10), tone, status};
+  });
+}
+function schedTab(t){ State.sched=State.sched||{}; State.sched.tab=t; renderSchedules(); }
+function renderSchedules(){
+  if(!State.sched) State.sched={tab:'cleaning'};
+  const kind=State.sched.tab, sc=DB.schedules[kind], rows=schedRows(kind);
+  setAccent(sc.accent); setCrumb(sc.icon,'Cleaning & Maintenance',sc.label);
+  const overdue=rows.filter(r=>r.tone==='bad').length, soon=rows.filter(r=>r.tone==='warn').length;
+  const seg=`<div class="seg seg-light"><button class="seg-btn ${kind==='cleaning'?'active':''}" onclick="schedTab('cleaning')">🧽 Cleaning</button><button class="seg-btn ${kind==='maintenance'?'active':''}" onclick="schedTab('maintenance')">🔧 Maintenance</button></div>`;
+  $('#content').innerHTML=`
+    <div class="page-head"><div class="ph-ic" style="background:${sc.accent}1f">${sc.icon}</div><div><h2>${esc(sc.label)}</h2><p>${esc(sc.desc)}</p></div>
+      <div class="ph-actions">${seg} ${exportBtns('sched-table',sc.label)}</div></div>
+    <div class="kpi-grid">
+      <div class="kpi tone-info"><div class="k-top"><div class="k-ic">🗂️</div></div><div class="k-val">${rows.length}</div><div class="k-lbl">Scheduled jobs</div></div>
+      <div class="kpi tone-bad"><div class="k-top"><div class="k-ic">⏰</div></div><div class="k-val">${overdue}</div><div class="k-lbl">Overdue</div></div>
+      <div class="kpi tone-warn"><div class="k-top"><div class="k-ic">🔔</div></div><div class="k-val">${soon}</div><div class="k-lbl">Due soon</div></div>
+      <div class="kpi tone-ok"><div class="k-top"><div class="k-ic">✅</div></div><div class="k-val">${rows.length-overdue-soon}</div><div class="k-lbl">On track</div></div>
+    </div>
+    <div class="card"><div class="card-head"><h3>${esc(sc.label)}</h3><span class="ch-sub">${esc(expScope())} · sorted by next due</span></div>
+      <div class="table-wrap"><table class="grid" id="sched-table"><thead><tr><th>Task</th><th>Area</th><th>Frequency</th><th>Responsible</th><th>Last done</th><th>Next due</th><th>Status</th></tr></thead><tbody>
+      ${rows.slice().sort((a,b)=>a.due.localeCompare(b.due)).map(r=>{const c=schedFreqColor(r.freq);
+        return `<tr><td><div class="wrap"><b>${esc(r.task)}</b></div></td><td>${esc(r.area)}</td><td><span class="freq-pill" style="background:${c}1a;color:${c};border-color:${c}55">${esc(r.freq)}</span></td><td>${esc(r.who)}</td><td>${esc(r.last||'—')}</td><td>${esc(r.due)}</td><td><span class="badge ${r.tone}">${esc(r.status)}</span></td></tr>`;}).join('')}
+      </tbody></table></div></div>`;
 }
 
 /* ============================================================ MANAGER PANEL */
