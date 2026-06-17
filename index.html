@@ -12,6 +12,14 @@
   <link rel="stylesheet" href="assets/styles.css">
   <link rel="stylesheet" href="assets/styles2.css">
   <link rel="icon" type="image/png" href="assets/mcq-logo-exact.png">
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#0e9f6e">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="MCQ Ops">
+  <link rel="apple-touch-icon" href="assets/mcq-logo-exact.png">
 </head>
 <body class="role-ho">
   <!-- Boot splash (removed once login/app renders) -->
@@ -57,5 +65,16 @@
   <script src="assets/ai.js"></script>
   <script src="assets/firebase.js"></script>
   <script src="assets/app.js"></script>
+  <!-- PWA: install + offline -->
+  <button id="pwa-install" style="display:none;position:fixed;right:16px;bottom:16px;z-index:150;border:0;border-radius:24px;padding:11px 18px;font-weight:800;font-family:inherit;font-size:13px;color:#fff;background:linear-gradient(135deg,#0e9f6e,#0891b2);box-shadow:0 10px 24px rgba(14,159,110,.4);cursor:pointer">⬇️ Install app</button>
+  <script>
+    (function(){
+      if('serviceWorker' in navigator){ window.addEventListener('load',function(){ navigator.serviceWorker.register('sw.js').catch(function(){}); }); }
+      var deferred=null, btn=document.getElementById('pwa-install');
+      window.addEventListener('beforeinstallprompt',function(e){ e.preventDefault(); deferred=e; if(btn) btn.style.display='block'; });
+      if(btn) btn.addEventListener('click',function(){ if(!deferred) return; deferred.prompt(); deferred.userChoice.finally(function(){ deferred=null; btn.style.display='none'; }); });
+      window.addEventListener('appinstalled',function(){ if(btn) btn.style.display='none'; });
+    })();
+  </script>
 </body>
 </html>
