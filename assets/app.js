@@ -66,6 +66,8 @@ function showLogin(notice){
       <button class="faceid-btn" onclick="faceIdLogin()">
         <span class="fid-ic">🪪</span> Sign in with Face ID
       </button>
+      <button class="faceid-enroll" onclick="faceEnroll()">＋ Set up Face ID for this branch</button>
+      <div class="fid-list" id="fid-list"></div>
       <div class="login-hint" id="login-hint"></div>
       <div class="login-feats">
         <span>✅ Checklists</span><span>📷 Photo proof</span><span>📊 Analytics</span><span>🪪 Face ID</span>
@@ -85,6 +87,7 @@ function showLogin(notice){
   $('#login-branch').addEventListener('change',updateLoginHint);
   $('#login-pw').addEventListener('keydown',e=>{ if(e.key==='Enter') doLogin(); });
   updateLoginHint();
+  if(window.faceRefreshList) faceRefreshList();
 }
 function loginMode(){ return $('#login-mode .seg-btn.active').dataset.mode; }
 function togglePw(){ const p=$('#login-pw'); p.type=p.type==='password'?'text':'password'; }
@@ -133,20 +136,19 @@ function logout(reason){
   showLogin(reason);
 }
 
-/* FaceID — uses camera if available (localhost/https), else simulates */
+/* Face ID — REAL device biometric via WebAuthn (Face ID / Touch ID / Windows Hello) */
 async function faceIdLogin(){
-  const modal=$('#fid-modal'); modal.classList.add('open');
-  const sub=$('#fid-sub'); const vid=$('#fid-video');
-  let stream=null;
+  const modal=$('#fid-modal'), sub=$('#fid-sub'), title=$('.fid-title');
+  if(!window.MCQFace){ loginFail('Face ID module not loaded'); return; }
+  modal.classList.add('open'); if(title) title.textContent='Face ID / Touch ID';
+  if(!MCQFace.list().length){ if(sub) sub.textContent='No Face ID set up on this device yet'; setTimeout(closeFid,1900);
+    toast('Set up Face ID first: pick your branch, enter its password, then “Set up Face ID”.'); return; }
+  if(sub) sub.textContent='Follow the Face ID / Touch ID prompt on your device…';
   try{
-    if(navigator.mediaDevices && navigator.mediaDevices.getUserMedia){
-      stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:'user'}});
-      vid.srcObject=stream; sub.textContent='Hold still…';
-    } else { sub.textContent='Camera not available — simulating scan'; }
-  }catch(e){ sub.textContent='Camera blocked — simulating scan (open via localhost for live camera)'; }
-  State._fidStream=stream;
-  setTimeout(()=>{ sub.innerHTML='✅ Face recognised'; }, 1900);
-  setTimeout(()=>{ closeFid(); loginAs(loginMode(), $('#login-branch').value); }, 2600);
+    const m=await MCQFace.login();
+    if(sub) sub.innerHTML='✅ Verified — '+esc(m.label||m.branch);
+    setTimeout(()=>{ closeFid(); loginAs(m.role, m.branch); }, 650);
+  }catch(e){ if(sub) sub.textContent='❌ '+((e&&e.message)||'Face ID failed'); setTimeout(closeFid,2200); }
 }
 function closeFid(){ const m=$('#fid-modal'); if(m) m.classList.remove('open');
   if(State._fidStream){ State._fidStream.getTracks().forEach(t=>t.stop()); State._fidStream=null; } }

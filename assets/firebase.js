@@ -67,7 +67,7 @@
       // checklist items are tuples (arrays) — Firestore forbids nested arrays, so store as JSON string
       checklistItems: JSON.stringify((DB.checklist&&DB.checklist.items)||[]),
       checklistSubs: JSON.stringify(DB.checklistSubs||[]),
-      issueEmailRoutes:DB.issueEmailRoutes||{}, checklistEmailRoutes:DB.checklistEmailRoutes||{}, emailConfig:DB.emailConfig||null, updatedAt:Date.now() };
+      issueEmailRoutes:DB.issueEmailRoutes||{}, checklistEmailRoutes:DB.checklistEmailRoutes||{}, emailConfig:DB.emailConfig||null, faceCreds:DB.faceCreds||[], updatedAt:Date.now() };
   }
   function applyState(d){
     if(!d) return;
@@ -77,6 +77,7 @@
     if(d.checklistItems && DB.checklist){ let ci=d.checklistItems; if(typeof ci==='string'){ try{ ci=JSON.parse(ci); }catch(e){ ci=null; } } if(Array.isArray(ci)&&ci.length) DB.checklist.items=ci; }
     if(d.checklistSubs!=null){ let cs=d.checklistSubs; if(typeof cs==='string'){ try{ cs=JSON.parse(cs); }catch(e){ cs=null; } } if(Array.isArray(cs)) DB.checklistSubs=cs; }
     if(d.emailConfig) DB.emailConfig=d.emailConfig;
+    if(Array.isArray(d.faceCreds)) DB.faceCreds=d.faceCreds;
     if(d.issueEmailRoutes) DB.issueEmailRoutes=d.issueEmailRoutes;
     if(d.checklistEmailRoutes) DB.checklistEmailRoutes=d.checklistEmailRoutes;
   }
