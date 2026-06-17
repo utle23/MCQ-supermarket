@@ -67,6 +67,7 @@
       // checklist items are tuples (arrays) — Firestore forbids nested arrays, so store as JSON string
       checklistItems: JSON.stringify((DB.checklist&&DB.checklist.items)||[]),
       checklistSubs: JSON.stringify(DB.checklistSubs||[]),
+      scheduleTasks: JSON.stringify(DB.scheduleTasks||[]), scheduleTicks: DB.scheduleTicks||{},
       issueEmailRoutes:DB.issueEmailRoutes||{}, checklistEmailRoutes:DB.checklistEmailRoutes||{}, emailConfig:DB.emailConfig||null, faceCreds:DB.faceCreds||[], updatedAt:Date.now() };
   }
   function applyState(d){
@@ -76,6 +77,8 @@
     if(Array.isArray(d.structure)) DB.structure=d.structure;
     if(d.checklistItems && DB.checklist){ let ci=d.checklistItems; if(typeof ci==='string'){ try{ ci=JSON.parse(ci); }catch(e){ ci=null; } } if(Array.isArray(ci)&&ci.length) DB.checklist.items=ci; }
     if(d.checklistSubs!=null){ let cs=d.checklistSubs; if(typeof cs==='string'){ try{ cs=JSON.parse(cs); }catch(e){ cs=null; } } if(Array.isArray(cs)) DB.checklistSubs=cs; }
+    if(d.scheduleTasks!=null){ let st=d.scheduleTasks; if(typeof st==='string'){ try{ st=JSON.parse(st); }catch(e){ st=null; } } if(Array.isArray(st)&&st.length) DB.scheduleTasks=st; }
+    if(d.scheduleTicks && typeof d.scheduleTicks==='object') DB.scheduleTicks=d.scheduleTicks;
     if(d.emailConfig) DB.emailConfig=d.emailConfig;
     if(Array.isArray(d.faceCreds)) DB.faceCreds=d.faceCreds;
     if(d.issueEmailRoutes) DB.issueEmailRoutes=d.issueEmailRoutes;

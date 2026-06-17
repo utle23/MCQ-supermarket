@@ -281,44 +281,37 @@ DB.checklist = {
   ],
 };
 /* ============================================================
-   CLEANING & MAINTENANCE SCHEDULES — recurring (not daily) jobs,
-   each with a frequency + who is responsible. Shown on the
-   Schedules page; separate cadence from the daily checklist.
+   CLEANING & MAINTENANCE — editable WEEKLY schedule (per department).
+   Each task is scheduled on weekdays (days[]); scheduled day cells show
+   yellow and the manager ticks them off (DB.scheduleTicks, per week).
+   Admin / Super Admin can add, edit days, reassign or delete tasks.
    ============================================================ */
-DB.schedules = {
-  cleaning: { label:'Cleaning Schedule', icon:'🧽', accent:'#0e9f6e',
-    desc:'Recurring deep-cleaning jobs across the store — beyond the daily checklist.',
-    tasks:[
-      {task:'Degrease & clean fridge / freezer condenser coils and filters', area:'Refrigeration', freq:'Every 2 weeks', who:'Frozen & Dairy', last:'2026-06-05'},
-      {task:'Deep-clean coolroom floors, shelves and door seals',           area:'Coolrooms',     freq:'Weekly',        who:'FV / Butcher',  last:'2026-06-12'},
-      {task:'Sanitise all glass display cabinets and sneeze guards',         area:'Displays',      freq:'2× per week',   who:'Cosmetic / Cashier', last:'2026-06-15'},
-      {task:'Clean entrance glass doors, front windows & door tracks',       area:'Storefront',    freq:'2× per week',   who:'Cleaner',       last:'2026-06-15'},
-      {task:'Degrease & sanitise butcher band-saw, blocks and prep tables',  area:'Butcher',       freq:'Daily',         who:'Butcher',       last:'2026-06-16'},
-      {task:'Mop & sanitise all back-of-house and prep floors',             area:'Back of house', freq:'Daily',         who:'All depts',     last:'2026-06-16'},
-      {task:'Descale & clean café coffee machine and water lines',          area:'Café',          freq:'Weekly',        who:'Café',          last:'2026-06-10'},
-      {task:'Empty, wash and sanitise all bins and the bin area',           area:'Waste',         freq:'Daily',         who:'Cleaner',       last:'2026-06-16'},
-      {task:'Dust & wipe top shelves, signage and light fittings',          area:'Grocery',       freq:'Monthly',       who:'Grocery',       last:'2026-05-28'},
-      {task:'Clean & polish checkout belts, scales and EFTPOS units',       area:'Checkout',      freq:'Daily',         who:'Cashier',       last:'2026-06-16'},
-      {task:'Wash floor mats, trolleys and baskets',                        area:'Front',         freq:'Weekly',        who:'Cashier',       last:'2026-06-11'},
-      {task:'Pest-control inspection and bait-station check',               area:'Whole store',   freq:'Monthly',       who:'External',      last:'2026-05-20'},
-    ]},
-  maintenance: { label:'Maintenance Schedule', icon:'🔧', accent:'#f59e0b',
-    desc:'Planned servicing & technician visits to keep equipment safe and compliant.',
-    tasks:[
-      {task:'Refrigeration technician service — coolrooms, display fridges & freezers', area:'Refrigeration', freq:'Every 2 weeks', who:'External technician', last:'2026-06-04'},
-      {task:'Air-conditioning & ventilation filter service',               area:'HVAC',         freq:'Monthly',     who:'External technician', last:'2026-05-22'},
-      {task:'Test & tag electrical equipment, RCD / safety-switch test',    area:'Electrical',   freq:'Quarterly',   who:'Electrician',         last:'2026-04-15'},
-      {task:'Forklift & pallet-jack safety inspection and service',        area:'Warehouse',    freq:'Monthly',     who:'External technician', last:'2026-05-30'},
-      {task:'Fire extinguishers, exit lights and alarm system check',      area:'Safety',       freq:'Quarterly',   who:'Fire contractor',     last:'2026-04-02'},
-      {task:'POS / EFTPOS, scanners and printers servicing',               area:'IT',           freq:'Monthly',     who:'IT contractor',       last:'2026-05-26'},
-      {task:'Plumbing & grease-trap inspection',                           area:'Plumbing',     freq:'Every 2 weeks', who:'Plumber',           last:'2026-06-06'},
-      {task:'Roller doors, gates and door closers — lubricate & service',  area:'Building',     freq:'Monthly',     who:'Maintenance',         last:'2026-05-24'},
-      {task:'Shelving, gondola and display-fixture safety check',          area:'Fixtures',     freq:'Quarterly',   who:'Maintenance',         last:'2026-04-18'},
-      {task:'CCTV and security system health check',                       area:'Security',     freq:'Monthly',     who:'Security contractor', last:'2026-05-29'},
-      {task:'Trade-approved weighing-scale calibration',                   area:'Scales',       freq:'Every 6 months', who:'Calibration service', last:'2026-02-12'},
-      {task:'Trolley repair and wheel replacement round',                  area:'Front',        freq:'Monthly',     who:'Maintenance',         last:'2026-05-25'},
-    ]},
-};
+DB.scheduleTasks = [
+  // ---- CLEANING ----
+  {type:'cleaning', dept:'Whole store', task:'Pest control — cockroach & rodent treatment + bait-station check', days:['Tue'], who:'External / Manager', freq:'Weekly'},
+  {type:'cleaning', dept:'Cashier', task:'Deep-clean tills, weighing scales & EFTPOS units', days:['Mon','Thu'], who:'Cashier', freq:'2× / week'},
+  {type:'cleaning', dept:'Cashier', task:'Clean & sanitise checkout belts, bag stands & counters', days:['Wed','Sat'], who:'Cashier', freq:'2× / week'},
+  {type:'cleaning', dept:'FV', task:'Deep-clean cutting area, knives, boards & coolroom', days:['Mon','Thu'], who:'FV Team', freq:'2× / week'},
+  {type:'cleaning', dept:'Butcher', task:'Deep-clean band-saw, blocks, mincer & coldroom', days:['Mon','Wed','Fri'], who:'Butcher', freq:'3× / week'},
+  {type:'cleaning', dept:'Frozen & Dairy', task:'Defrost, wipe & sanitise freezers / fridges', days:['Wed'], who:'Grocery Team', freq:'Weekly'},
+  {type:'cleaning', dept:'Grocery', task:'Dust top shelves, signage & light fittings', days:['Sun'], who:'Grocery Team', freq:'Weekly'},
+  {type:'cleaning', dept:'Café', task:'Descale coffee machine & deep-clean equipment', days:['Mon'], who:'Café', freq:'Weekly'},
+  {type:'cleaning', dept:'Storefront', task:'Clean entrance glass doors, windows & door tracks', days:['Tue','Fri'], who:'Cleaner', freq:'2× / week'},
+  {type:'cleaning', dept:'Whole store', task:'Machine-scrub & mop the shop floor', days:['Sun'], who:'Cleaner', freq:'Weekly'},
+  {type:'cleaning', dept:'Whole store', task:'Wash & sanitise all bins and the bin area', days:['Mon','Wed','Fri','Sun'], who:'Cleaner', freq:'4× / week'},
+  {type:'cleaning', dept:'Amenities', task:'Deep-clean staff & customer toilets', days:['Mon','Thu','Sat'], who:'Cleaner', freq:'3× / week'},
+  // ---- MAINTENANCE ----
+  {type:'maintenance', dept:'Refrigeration', task:'Refrigeration technician service — coolrooms, fridges & freezers', days:['Wed'], who:'External technician', freq:'Fortnightly'},
+  {type:'maintenance', dept:'Refrigeration', task:'Clean condenser coils & replace fridge filters', days:['Mon'], who:'Frozen & Dairy', freq:'Weekly'},
+  {type:'maintenance', dept:'Forklift', task:'Forklift & pallet-jack inspection / service', days:['Mon'], who:'External technician', freq:'Monthly'},
+  {type:'maintenance', dept:'Electrical', task:'Test & tag, RCD / safety-switch test', days:['Fri'], who:'Electrician', freq:'As scheduled'},
+  {type:'maintenance', dept:'Safety', task:'Fire extinguishers, exit lights & alarm test', days:['Fri'], who:'Fire contractor', freq:'As scheduled'},
+  {type:'maintenance', dept:'IT', task:'POS / EFTPOS / scanner & printer service', days:['Tue'], who:'IT contractor', freq:'Monthly'},
+  {type:'maintenance', dept:'Plumbing', task:'Grease-trap & drains inspection', days:['Thu'], who:'Plumber', freq:'Fortnightly'},
+  {type:'maintenance', dept:'Building', task:'Roller doors, gates & trolley repairs', days:['Wed'], who:'Maintenance', freq:'Monthly'},
+];
+DB.scheduleTasks.forEach(function(t,i){ t.id='sch'+(i+1); });
+DB.scheduleTicks = {};   // key: `${weekStart}|${taskId}|${day}` -> true (manager ticked)
 
 /* ============================================================
    STAFF MEMBERS  (sample supermarket roster)

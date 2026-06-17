@@ -968,38 +968,69 @@ function expRecords(title,cols,rows,fmt){
   return expPrintReport(title,inner,meta);
 }
 
-/* ============================================================ CLEANING & MAINTENANCE SCHEDULES */
-function schedFreqDays(f){ return {'Daily':1,'2× per week':3,'Weekly':7,'Every 2 weeks':14,'Monthly':30,'Quarterly':91,'Every 6 months':182}[f]||30; }
-function schedFreqColor(f){ return {'Daily':'#0e9f6e','2× per week':'#0891b2','Weekly':'#3b82f6','Every 2 weeks':'#8b5cf6','Monthly':'#f59e0b','Quarterly':'#ef4444','Every 6 months':'#b91c1c'}[f]||'#64748b'; }
-function schedRows(kind){ const sc=DB.schedules[kind], today=new Date();
-  return sc.tasks.map(t=>{ const last=t.last?new Date(t.last):null;
-    const due=last?new Date(last.getTime()+schedFreqDays(t.freq)*864e5):today;
-    const diff=Math.round((due-today)/864e5);
-    const tone=diff<0?'bad':diff<=2?'warn':'ok', status=diff<0?`Overdue ${-diff}d`:diff<=2?'Due soon':'On track';
-    return {...t, due:due.toISOString().slice(0,10), tone, status};
-  });
-}
+/* ============================================================ CLEANING & MAINTENANCE — editable weekly schedule */
+const SCHED_DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
+function schedWeekStart(off){ const d=new Date(); d.setHours(0,0,0,0); const wd=(d.getDay()+6)%7; d.setDate(d.getDate()-wd+(off||0)*7); return d; }
+function schedWeekKey(off){ return schedWeekStart(off).toISOString().slice(0,10); }
+function schedTickKey(id,day,off){ return schedWeekKey(off)+'|'+id+'|'+day; }
 function schedTab(t){ State.sched=State.sched||{}; State.sched.tab=t; renderSchedules(); }
+function schedWeek(delta){ State.sched=State.sched||{}; State.sched.week=(State.sched.week||0)+delta; renderSchedules(); }
+function schedEditToggle(){ State.sched=State.sched||{}; State.sched.edit=!State.sched.edit; renderSchedules(); }
+function schedTick(id,day){ const k=schedTickKey(id,day,(State.sched||{}).week||0); DB.scheduleTicks=DB.scheduleTicks||{};
+  if(DB.scheduleTicks[k]) delete DB.scheduleTicks[k]; else DB.scheduleTicks[k]=true; if(window.persist)window.persist(); renderSchedules(); }
+function schedDay(id,day){ const t=(DB.scheduleTasks||[]).find(x=>x.id===id); if(!t)return; t.days=t.days||[];
+  const i=t.days.indexOf(day); if(i>=0)t.days.splice(i,1); else t.days.push(day); if(window.persist)window.persist(); renderSchedules(); }
+function schedAddTask(type,dept){ const name=prompt('New task description:'); if(!name)return; const who=prompt('Responsible (person / team):','')||'';
+  if(!dept) dept=prompt('Department / area:','Whole store')||'Whole store';
+  DB.scheduleTasks=DB.scheduleTasks||[]; DB.scheduleTasks.push({id:'sch'+Date.now(),type:type,dept:dept,task:name,days:[],who:who,freq:''}); if(window.persist)window.persist(); renderSchedules(); }
+function schedEditTask(id){ const t=(DB.scheduleTasks||[]).find(x=>x.id===id); if(!t)return; const n=prompt('Edit task:',t.task); if(n!=null&&n.trim())t.task=n.trim(); const w=prompt('Responsible:',t.who||''); if(w!=null)t.who=w; if(window.persist)window.persist(); renderSchedules(); }
+function schedDelTask(id){ if(!confirm('Delete this scheduled task?'))return; DB.scheduleTasks=(DB.scheduleTasks||[]).filter(x=>x.id!==id);
+  Object.keys(DB.scheduleTicks||{}).forEach(k=>{ if(k.indexOf('|'+id+'|')>=0) delete DB.scheduleTicks[k]; }); if(window.persist)window.persist(); renderSchedules(); }
+function schedExport(fmt){ const type=(State.sched||{}).tab||'cleaning';
+  const rows=(DB.scheduleTasks||[]).filter(t=>t.type===type);
+  const cols=[{label:'Department',get:t=>t.dept},{label:'Task',get:t=>t.task},{label:'Responsible',get:t=>t.who},{label:'Frequency',get:t=>t.freq||''},{label:'Scheduled days',get:t=>(t.days||[]).join(', ')}];
+  expRecords((type==='cleaning'?'Cleaning':'Maintenance')+' Weekly Schedule',cols,rows,fmt);
+}
 function renderSchedules(){
-  if(!State.sched) State.sched={tab:'cleaning'};
-  const kind=State.sched.tab, sc=DB.schedules[kind], rows=schedRows(kind);
-  setAccent(sc.accent); setCrumb(sc.icon,'Cleaning & Maintenance',sc.label);
-  const overdue=rows.filter(r=>r.tone==='bad').length, soon=rows.filter(r=>r.tone==='warn').length;
-  const seg=`<div class="seg seg-light"><button class="seg-btn ${kind==='cleaning'?'active':''}" onclick="schedTab('cleaning')">🧽 Cleaning</button><button class="seg-btn ${kind==='maintenance'?'active':''}" onclick="schedTab('maintenance')">🔧 Maintenance</button></div>`;
+  if(!State.sched) State.sched={tab:'cleaning',week:0,edit:false};
+  const type=State.sched.tab||'cleaning', off=State.sched.week||0, edit=isAdmin()&&State.sched.edit;
+  const accent=type==='cleaning'?'#0e9f6e':'#f59e0b', icon=type==='cleaning'?'🧽':'🔧';
+  setAccent(accent); setCrumb(icon,'Cleaning & Maintenance', (type==='cleaning'?'Cleaning':'Maintenance')+' weekly schedule');
+  const tasks=(DB.scheduleTasks||[]).filter(t=>t.type===type);
+  const ws=schedWeekStart(off), wkLabel=ws.toLocaleDateString(undefined,{day:'numeric',month:'short'})+' – '+new Date(ws.getTime()+6*864e5).toLocaleDateString(undefined,{day:'numeric',month:'short'});
+  // KPIs: scheduled cells this week vs ticked
+  let sched=0,doneN=0; tasks.forEach(t=>(t.days||[]).forEach(d=>{ sched++; if((DB.scheduleTicks||{})[schedTickKey(t.id,d,off)]) doneN++; }));
+  const depts=[...new Set(tasks.map(t=>t.dept))];
+  const seg=`<div class="seg seg-light"><button class="seg-btn ${type==='cleaning'?'active':''}" onclick="schedTab('cleaning')">🧽 Cleaning</button><button class="seg-btn ${type==='maintenance'?'active':''}" onclick="schedTab('maintenance')">🔧 Maintenance</button></div>`;
+  const todayIdx=(new Date().getDay()+6)%7;
+  const grids=depts.map(dep=>{ const dt=tasks.filter(t=>t.dept===dep); const meta=(DB.checklist.deptMeta||{})[String(dep).toUpperCase()]||{color:accent};
+    const rows=dt.map(t=>{
+      const cells=SCHED_DAYS.map((d,di)=>{ const on=(t.days||[]).includes(d); const ticked=!!(DB.scheduleTicks||{})[schedTickKey(t.id,d,off)];
+        if(edit){ return `<td class="sc-cell ${on?'sch-on':'sch-off'}" onclick="schedDay('${t.id}','${d}')" title="Click to ${on?'unschedule':'schedule'}">${on?'●':'+'}</td>`; }
+        if(on) return `<td class="sc-cell sch-on ${ticked?'sch-done':''} ${di===todayIdx&&off===0?'sch-today':''}" onclick="schedTick('${t.id}','${d}')">${ticked?'✓':''}</td>`;
+        return `<td class="sc-cell sch-off">·</td>`;
+      }).join('');
+      const nameCell = edit
+        ? `<td class="sc-task"><b>${esc(t.task)}</b><div class="sc-who">${esc(t.who||'')}</div><div class="sc-actions"><button onclick="schedEditTask('${t.id}')">✎</button><button onclick="schedDelTask('${t.id}')">🗑</button></div></td>`
+        : `<td class="sc-task"><b>${esc(t.task)}</b><div class="sc-who">👤 ${esc(t.who||'—')}${t.freq?' · '+esc(t.freq):''}</div></td>`;
+      return `<tr>${nameCell}${cells}</tr>`;
+    }).join('');
+    return `<div class="card sc-card"><div class="card-head" style="--dc:${meta.color}"><h3><span class="chk-dot" style="background:${meta.color}"></span>${esc(dep)}</h3>${edit?`<button class="btn sm" style="margin-left:auto" onclick="schedAddTask('${type}','${ckJS(dep)}')">＋ Add task</button>`:''}</div>
+      <div class="table-wrap"><table class="grid sc-grid"><thead><tr><th>Task</th>${SCHED_DAYS.map((d,di)=>`<th class="ctr ${di===todayIdx&&off===0?'sch-today-h':''}">${d}</th>`).join('')}</tr></thead><tbody>${rows||`<tr><td colspan="8"><div class="empty">No tasks.</div></td></tr>`}</tbody></table></div></div>`;
+  }).join('');
   $('#content').innerHTML=`
-    <div class="page-head"><div class="ph-ic" style="background:${sc.accent}1f">${sc.icon}</div><div><h2>${esc(sc.label)}</h2><p>${esc(sc.desc)}</p></div>
-      <div class="ph-actions">${seg} ${exportBtns('sched-table',sc.label)}</div></div>
+    <div class="page-head"><div class="ph-ic" style="background:${accent}1f">${icon}</div><div><h2>Cleaning &amp; Maintenance</h2><p>Weekly schedule by department — managers tick off each scheduled day.${edit?' <b>Edit mode:</b> click a day to schedule/unschedule.':''}</p></div>
+      <div class="ph-actions">${seg} ${expMenu('schedExport')}${isAdmin()?`<button class="btn sm ${edit?'primary':''}" onclick="schedEditToggle()"><i class="fas fa-pen"></i>&nbsp; ${edit?'Done':'Edit'}</button>`:''}</div></div>
+    <div class="sc-weekbar"><button class="btn sm" onclick="schedWeek(-1)">‹ Prev</button><div class="sc-week"><b>Week of ${esc(wkLabel)}</b>${off===0?'<span class="badge ok">This week</span>':`<button class="btn sm" onclick="schedWeek(${-off})">This week</button>`}</div><button class="btn sm" onclick="schedWeek(1)">Next ›</button></div>
     <div class="kpi-grid">
-      <div class="kpi tone-info"><div class="k-top"><div class="k-ic">🗂️</div></div><div class="k-val">${rows.length}</div><div class="k-lbl">Scheduled jobs</div></div>
-      <div class="kpi tone-bad"><div class="k-top"><div class="k-ic">⏰</div></div><div class="k-val">${overdue}</div><div class="k-lbl">Overdue</div></div>
-      <div class="kpi tone-warn"><div class="k-top"><div class="k-ic">🔔</div></div><div class="k-val">${soon}</div><div class="k-lbl">Due soon</div></div>
-      <div class="kpi tone-ok"><div class="k-top"><div class="k-ic">✅</div></div><div class="k-val">${rows.length-overdue-soon}</div><div class="k-lbl">On track</div></div>
+      <div class="kpi tone-info"><div class="k-top"><div class="k-ic">🗓️</div></div><div class="k-val">${tasks.length}</div><div class="k-lbl">Tasks</div></div>
+      <div class="kpi tone-warn"><div class="k-top"><div class="k-ic">🟡</div></div><div class="k-val">${sched}</div><div class="k-lbl">Scheduled this week</div></div>
+      <div class="kpi tone-ok"><div class="k-top"><div class="k-ic">✅</div></div><div class="k-val">${doneN}</div><div class="k-lbl">Ticked done</div></div>
+      <div class="kpi tone-bad"><div class="k-top"><div class="k-ic">⏳</div></div><div class="k-val">${sched-doneN}</div><div class="k-lbl">Outstanding</div></div>
     </div>
-    <div class="card"><div class="card-head"><h3>${esc(sc.label)}</h3><span class="ch-sub">${esc(expScope())} · sorted by next due</span></div>
-      <div class="table-wrap"><table class="grid" id="sched-table"><thead><tr><th>Task</th><th>Area</th><th>Frequency</th><th>Responsible</th><th>Last done</th><th>Next due</th><th>Status</th></tr></thead><tbody>
-      ${rows.slice().sort((a,b)=>a.due.localeCompare(b.due)).map(r=>{const c=schedFreqColor(r.freq);
-        return `<tr><td><div class="wrap"><b>${esc(r.task)}</b></div></td><td>${esc(r.area)}</td><td><span class="freq-pill" style="background:${c}1a;color:${c};border-color:${c}55">${esc(r.freq)}</span></td><td>${esc(r.who)}</td><td>${esc(r.last||'—')}</td><td>${esc(r.due)}</td><td><span class="badge ${r.tone}">${esc(r.status)}</span></td></tr>`;}).join('')}
-      </tbody></table></div></div>`;
+    <div class="sc-prog"><span class="pbar" style="flex:1"><i style="width:${sched?Math.round(doneN/sched*100):0}%;background:${accent}"></i></span><b>${sched?Math.round(doneN/sched*100):0}%</b></div>
+    ${grids||'<div class="empty">No scheduled tasks. '+(isAdmin()?'Use Edit → Add task.':'')+'</div>'}
+    ${edit?`<button class="btn block" style="margin-top:14px" onclick="schedAddTask('${type}','')">＋ Add task / department</button>`:''}`;
 }
 
 /* ============================================================ MANAGER PANEL */
