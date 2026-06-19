@@ -20,12 +20,23 @@
   const STORE_COLL = 'mcq_store_states';
   const FB = window.MCQDB = { enabled:false, lastSync:{status:'loading',message:'Starting sync...'} };
   const clone = v => JSON.parse(JSON.stringify(v==null?null:v));
+  const CACHE_NS = 'mcq_store_state_cache_v3';
   let baseState=null, activeUnsub=null, activeMode='none', activeStore='';
 
   function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=()=>rej(new Error('load '+src)); document.head.appendChild(s); }); }
   function storeId(store){ return String(store||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'unknown-store'; }
   function storeRef(store){ return FB._db.collection(STORE_COLL).doc(storeId(store)); }
   function legacyRef(){ return FB._db.collection('mcq').doc('state'); }
+  function cacheKey(store){ return CACHE_NS+':'+storeId(store); }
+  function cacheLabel(store){ return isAllStore(store)?'all stores':store; }
+  function readCache(store){
+    try{ const raw=localStorage.getItem(cacheKey(store)); if(!raw) return null; const box=JSON.parse(raw); return box&&box.data?box:null; }catch(e){ return null; }
+  }
+  function writeCache(store,data){
+    if(!data) return;
+    try{ localStorage.setItem(cacheKey(store), JSON.stringify({store:store||'All stores',savedAt:Date.now(),data})); }
+    catch(e){ console.warn('[FB] local cache skipped', e&&e.message); }
+  }
   function captureBase(){ if(!baseState) baseState=buildState('',{full:true}); }
   function resetToBase(){ captureBase(); applyState(clone(baseState)); }
   function parseJSON(v,fallback){ if(v==null) return fallback; if(typeof v==='string'){ try{return JSON.parse(v);}catch(e){return fallback;} } return v; }
@@ -45,6 +56,25 @@
     const acct=window.State&&State.account?State.account:null;
     return !store || !acct || acct.role==='super' || store===acct.branch;
   }
+  FB.hydrateFromCache = function(account){
+    captureBase();
+    const store=(account&&account.role==='super')?'All stores':(account&&account.branch)||'Morley';
+    const cached=readCache(store);
+    if(cached){
+      resetToBase();
+      if(isAllStore(store) && cached.data && Array.isArray(cached.data.rows)) aggregateStates(cached.data.rows);
+      else applyState(cached.data);
+      activeMode=isAllStore(store)?'cache-super':'cache-store';
+      activeStore=store;
+      FB.lastSync={status:'cached',message:`Cached ${cacheLabel(store)} · syncing...`};
+      return FB.lastSync;
+    }
+    resetToBase();
+    if(account&&account.role!=='super') applyState(buildState(account.branch));
+    activeMode='local'; activeStore=store;
+    FB.lastSync={status:'local',message:`Local ${cacheLabel(store)} data · syncing...`};
+    return FB.lastSync;
+  };
 
   /* ---------- Photo storage ----------
      Photos are compressed on capture and each saved as its own doc in the
@@ -96,26 +126,36 @@
     RECORD_MODS.forEach(m=>{ if(DB.modules[m]) modules[m]=(DB.modules[m].records||[]).filter(r=>inStore(r,store)).map(r=>Object.assign({store:store||r.store},clone(r))); });
     return modules;
   }
+  function buildBinAdmin(store){
+    const b=DB.binAdmin||{};
+    return {
+      activeDays:Array.isArray(b.activeDays)?clone(b.activeDays):['Tue','Thu','Fri'],
+      checklist:Array.isArray(b.checklist)?clone(b.checklist):[],
+      records:(Array.isArray(b.records)?b.records:[]).filter(r=>inStore(r,store)).map(r=>Object.assign({store:store||r.store},clone(r)))
+    };
+  }
   function buildState(store,opts){
     const full=opts&&opts.full, scoped=!full&&!isAllStore(store);
     const modules=buildModules(scoped?store:'');
     const staff=(DB.staff||[]).filter(s=>!scoped||s.store===store).map(clone);
     const subs=(DB.checklistSubs||[]).filter(s=>!scoped||s.store===store).map(clone);
+    const scheduleHistory=(DB.scheduleHistory||[]).filter(r=>!scoped||r.store===store).map(clone);
     const audits=(DB.auditLogs||[]).filter(a=>!scoped||a.store===store).map(clone);
-    return { schemaVersion:2, store:scoped?store:'All stores', modules, staff, structure:clone(DB.structure||[]),
+    return { schemaVersion:2, store:scoped?store:'All stores', modules, staff, staffSeedVersion:(DB.staffSeedVersion||0), structure:clone(DB.structure||[]),
       // checklist items are tuples (arrays) — Firestore forbids nested arrays, so store as JSON string
       checklistItems: JSON.stringify((DB.checklist&&DB.checklist.items)||[]),
       checklistTemplateVersion: (DB.checklist&&DB.checklist.templateVersion)||0,
       checklistDeadlines: clone((DB.checklist&&DB.checklist.deadlines)||{}),
       checklistSubs: JSON.stringify(subs),
+      binAdmin: JSON.stringify(buildBinAdmin(scoped?store:'')),
       jobDuties: JSON.stringify(DB.jobDuties||null), jobRoster: JSON.stringify(DB.jobRoster||null),
-      scheduleTasks: JSON.stringify(DB.scheduleTasks||[]), scheduleTicks: clone(DB.scheduleTicks||{}), auditLogs:audits,
+      scheduleTasks: JSON.stringify(DB.scheduleTasks||[]), scheduleTicks: clone(DB.scheduleTicks||{}), scheduleHistory:JSON.stringify(scheduleHistory), auditLogs:audits,
       issueEmailRoutes:clone(DB.issueEmailRoutes||{}), checklistEmailRoutes:clone(DB.checklistEmailRoutes||{}), emailConfig:clone(DB.emailConfig||null), faceCreds:clone(DB.faceCreds||[]), updatedAt:Date.now() };
   }
   function applyState(d){
     if(!d) return;
     if(d.modules) RECORD_MODS.forEach(m=>{ if(DB.modules[m]) DB.modules[m].records=Array.isArray(d.modules[m])?clone(d.modules[m]):[]; });
-    if(Array.isArray(d.staff)) DB.staff=clone(d.staff);
+    if(Array.isArray(d.staff)){ const cv=+d.staffSeedVersion||0, sv=+(DB.staffSeedVersion||0); if(cv>=sv) DB.staff=clone(d.staff); }  // else keep newer seed (real employees) → next save imports it to this store
     if(Array.isArray(d.structure)){ DB.structure=clone(d.structure); if(window.normalizeStaffStructure) window.normalizeStaffStructure(); }
     if(d.checklistItems && DB.checklist){
       const cloudVer=+d.checklistTemplateVersion||0, seedVer=+((DB.checklist&&DB.checklist.templateVersion)||0);
@@ -127,10 +167,12 @@
       if(window.normalizeChecklistTemplate) window.normalizeChecklistTemplate();
     }
     if(d.checklistSubs!=null){ let cs=parseJSON(d.checklistSubs,null); if(Array.isArray(cs)) DB.checklistSubs=clone(cs); }
+    if(d.binAdmin!=null){ const ba=parseJSON(d.binAdmin,null); if(ba&&typeof ba==='object') DB.binAdmin=Object.assign({activeDays:['Tue','Thu','Fri'],checklist:[],records:[]},clone(ba)); }
     if(d.jobDuties!=null){ let jd=d.jobDuties; if(typeof jd==='string'){ try{ jd=JSON.parse(jd); }catch(e){ jd=null; } } if(jd&&typeof jd==='object') DB.jobDuties=jd; }
     if(d.jobRoster!=null){ let jr=d.jobRoster; if(typeof jr==='string'){ try{ jr=JSON.parse(jr); }catch(e){ jr=null; } } if(jr&&typeof jr==='object') DB.jobRoster=jr; }
     if(d.scheduleTasks!=null){ let st=d.scheduleTasks; if(typeof st==='string'){ try{ st=JSON.parse(st); }catch(e){ st=null; } } if(Array.isArray(st)&&st.length) DB.scheduleTasks=st; }
     if(d.scheduleTicks && typeof d.scheduleTicks==='object') DB.scheduleTicks=clone(d.scheduleTicks);
+    if(d.scheduleHistory!=null){ const sh=parseJSON(d.scheduleHistory,null); if(Array.isArray(sh)) DB.scheduleHistory=clone(sh); }
     if(Array.isArray(d.auditLogs)) DB.auditLogs=clone(d.auditLogs);
     if(d.emailConfig) DB.emailConfig=clone(d.emailConfig);
     if(Array.isArray(d.faceCreds)) DB.faceCreds=clone(d.faceCreds);
@@ -152,20 +194,34 @@
     resetToBase();
     const snap=await storeRef(store).get();
     const data=snap.exists?snap.data():await seedStoreState(store);
+    writeCache(store,data);
     resetToBase();
     applyState(data);
     activeMode='store'; activeStore=store;
     subscribeStore(store);
   }
+  async function readStoreSnapshot(store){
+    const snap=await storeRef(store).get();
+    if(snap.exists){ const data=snap.data(); writeCache(store,data); return {store,data}; }
+    return {store,data:null};
+  }
   async function readOrSeedStore(store){
     const snap=await storeRef(store).get();
-    return {store,data:snap.exists?snap.data():await seedStoreState(store)};
+    const data=snap.exists?snap.data():await seedStoreState(store);
+    writeCache(store,data);
+    return {store,data};
+  }
+  function localStoreFallback(store,error){
+    const cached=readCache(store);
+    if(cached&&cached.data) return {store,data:cached.data,cached:true,error};
+    captureBase();
+    return {store,data:buildState(store),local:true,error};
   }
   function aggregateStates(rows){
     resetToBase();
     RECORD_MODS.forEach(m=>{ if(DB.modules[m]) DB.modules[m].records=[]; });
-    DB.staff=[]; DB.checklistSubs=[]; DB.auditLogs=[];
-    const seenStaff=new Set(), seenSubs=new Set(), seenAudit=new Set(), seenRec={};
+    DB.staff=[]; DB.checklistSubs=[]; DB.auditLogs=[]; DB.scheduleHistory=[]; DB.binAdmin=DB.binAdmin||{activeDays:['Tue','Thu','Fri'],checklist:[],records:[]}; DB.binAdmin.records=[];
+    const seenStaff=new Set(), seenSubs=new Set(), seenAudit=new Set(), seenBin=new Set(), seenSched=new Set(), seenRec={};
     rows.forEach(row=>{
       const d=row.data||{}, store=row.store;
       const mods=d.modules||{};
@@ -194,13 +250,40 @@
         const key=rec.store+'|'+(rec.id||rec.created+'|'+rec.entityId+'|'+rec.action);
         if(!seenAudit.has(key)){ seenAudit.add(key); DB.auditLogs.push(rec); }
       });
+      const ba=parseJSON(d.binAdmin,null);
+      if(ba&&Array.isArray(ba.records)){
+        if(!DB.binAdmin.checklist.length && Array.isArray(ba.checklist)) DB.binAdmin.checklist=clone(ba.checklist);
+        if((!DB.binAdmin.activeDays||!DB.binAdmin.activeDays.length) && Array.isArray(ba.activeDays)) DB.binAdmin.activeDays=clone(ba.activeDays);
+        ba.records.forEach(r=>{
+          const rec=Object.assign({store},clone(r));
+          const key=rec.store+'|'+(rec.id||rec.created+'|'+rec.day);
+          if(!seenBin.has(key)){ seenBin.add(key); DB.binAdmin.records.push(rec); }
+        });
+      }
+      const sh=parseJSON(d.scheduleHistory,[]);
+      (Array.isArray(sh)?sh:[]).forEach(r=>{
+        const rec=Object.assign({store},clone(r));
+        const key=rec.store+'|'+(rec.id||rec.date+'|'+rec.taskId+'|'+rec.day);
+        if(!seenSched.has(key)){ seenSched.add(key); DB.scheduleHistory.push(rec); }
+      });
     });
     activeMode='super'; activeStore='All stores';
   }
   async function loadAllStores(){
+    const stores=DB.branches||DB.stores||[];
+    const reads=await Promise.all(stores.map(store=>readStoreSnapshot(store).catch(e=>{
+      const cached=readCache(store);
+      return cached?{store,data:cached.data,cached:true,error:e}:null;
+    })));
     const rows=[];
-    for(const store of (DB.branches||DB.stores||[])) rows.push(await readOrSeedStore(store));
+    for(let i=0;i<stores.length;i++){
+      const row=reads[i];
+      if(row&&row.data){ rows.push(row); continue; }
+      try{ rows.push(await readOrSeedStore(stores[i])); }
+      catch(e){ rows.push(localStoreFallback(stores[i],e)); }
+    }
     aggregateStates(rows);
+    writeCache('All stores',{rows});
     subscribeAllStores();
   }
   function rerenderApp(){
@@ -212,7 +295,8 @@
     activeUnsub=storeRef(store).onSnapshot(snap=>{
       if(first){ first=false; return; }
       if(!snap.exists || snap.metadata.hasPendingWrites) return;
-      resetToBase(); applyState(snap.data()); rerenderApp();
+      const data=snap.data(); writeCache(store,data);
+      resetToBase(); applyState(data); rerenderApp();
     });
   }
   function subscribeAllStores(){
@@ -224,14 +308,17 @@
       const rows=[];
       qs.forEach(doc=>{
         const d=doc.data(), store=d.store&&d.store!=='All stores'?d.store:(DB.branches||[]).find(s=>storeId(s)===doc.id)||doc.id;
+        writeCache(store,d);
         rows.push({store,data:d});
       });
-      if(rows.length){ aggregateStates(rows); rerenderApp(); }
+      if(rows.length){ aggregateStates(rows); writeCache('All stores',{rows}); rerenderApp(); }
     });
   }
   async function saveStore(store){
     if(isAllStore(store)) return saveAllStoresFromAggregate();
-    await storeRef(store).set(buildState(store));
+    const state=buildState(store);
+    await storeRef(store).set(state);
+    writeCache(store,state);
     FB.lastSync={status:'synced',message:`Saved ${store}`};
   }
   async function saveAllStoresFromAggregate(){
@@ -243,10 +330,13 @@
         schemaVersion:2, store, modules:buildModules(store),
         staff:(DB.staff||[]).filter(s=>s.store===store).map(clone),
         checklistSubs:JSON.stringify((DB.checklistSubs||[]).filter(s=>s.store===store).map(clone)),
+        binAdmin:JSON.stringify(buildBinAdmin(store)),
+        scheduleHistory:JSON.stringify((DB.scheduleHistory||[]).filter(r=>r.store===store).map(clone)),
         auditLogs:(DB.auditLogs||[]).filter(a=>a.store===store).map(clone),
         updatedAt:Date.now()
       };
       await storeRef(store).set(Object.assign({},current,patch),{merge:true});
+      writeCache(store,Object.assign({},current,patch));
     }));
     FB.lastSync={status:'synced',message:'Saved all stores'};
   }
@@ -283,7 +373,7 @@
   // resolves to true(connected) / false(offline) — never rejects, so boot never hangs
   FB.ready = (async ()=>{
     try{
-      const TIMEOUT=new Promise((_,rej)=>setTimeout(()=>rej(new Error('fb-timeout')),6000));
+      const TIMEOUT=new Promise((_,rej)=>setTimeout(()=>rej(new Error('fb-timeout')),3800));
       await Promise.race([(async()=>{
         await loadScript('https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js');
         await loadScript('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore-compat.js');
@@ -297,7 +387,7 @@
       FB.loadForAccount = async function(account){
         try{
           const store=(account&&account.role==='super')?'All stores':(account&&account.branch)||'Morley';
-          await withTimeout(loadStoreState(store), 12000, 'load-'+storeId(store));
+          await withTimeout(loadStoreState(store), 4500, 'load-'+storeId(store));
           FB._loaded = true;
           FB.lastSync={status:'synced',message:`Loaded ${store==='All stores'?'all stores':store}`};
           return FB.lastSync;
@@ -315,14 +405,14 @@
       FB.saveStoreConfig = function(store,cfg){ return withTimeout(saveStoreConfig(store,cfg), 12000, 'save-config-'+storeId(store)); };
       FB.subcollectionPlan = {
         root:'stores/{storeId}',
-        collections:['staff/{staffId}','records/{recordId}','checklistSubmissions/{submissionId}','scheduleTasks/{taskId}','auditLogs/{logId}','photos/{photoId}'],
+        collections:['staff/{staffId}','records/{recordId}','checklistSubmissions/{submissionId}','scheduleTasks/{taskId}','scheduleHistory/{recordId}','binRecords/{recordId}','auditLogs/{logId}','photos/{photoId}'],
         status:'planned-safe-migration'
       };
       console.log('[FB] connected · per-store realtime sync on');
     }catch(e){
       FB.enabled=false; console.warn('[FB] unavailable — running offline with sample data', e&&e.message);
       captureBase();
-      FB.loadForAccount = async function(account){ resetToBase(); if(account&&account.role!=='super') applyState(buildState(account.branch)); FB.lastSync={status:'local',message:'Offline · local sample data'}; return FB.lastSync; };
+      FB.loadForAccount = async function(account){ const hit=FB.hydrateFromCache(account); FB.lastSync={status:hit.status||'local',message:hit.status==='cached'?hit.message:'Offline · local sample data'}; return FB.lastSync; };
       FB.loadAll = function(){ return FB.loadForAccount(window.State&&State.account?State.account:{role:'super'}); };
       FB.saveAll = async function(){};
       FB.fetchStoreConfig = async function(store){ return parseStoreConfigData(buildState(store)); };

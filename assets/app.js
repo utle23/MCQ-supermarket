@@ -175,25 +175,118 @@ function doLogin(){
   if(pw===DB.auth.adminPassword) return loginFail('That is the admin password — switch to the Admin tab.');
   loginFail(`Wrong password for MCQ ${branch}.`);
 }
+let dataSyncRun = 0;
+function syncStillCurrent(run,account){ return run===dataSyncRun && State.account===account; }
+function finishAccountSync(run,account,scope,last){
+  if(!syncStillCurrent(run,account)) return false;
+  last=last||{};
+  const status=last.status||'synced';
+  State.dataSync={status,message:last.message||`${titleWords(scope)} data loaded`};
+  if(account.role==='super'&&status==='error'){
+    State.superFullSyncStarted=false;
+    State.superFullSyncFailedAt=Date.now();
+  }else if(account.role==='super'){
+    State.superFullSyncFailedAt=0;
+  }
+  if(account.role==='super') State.superRouteSyncMark=0;
+  if(State.account){ buildTopbar(); buildSidebar(); render(); }
+  refreshSyncUi();
+  return true;
+}
+function failAccountSync(run,account,scope,e){
+  if(!syncStillCurrent(run,account)) return false;
+  State.dataSync={status:'error',message:`Cloud load failed · local ${scope}`};
+  if(account&&account.role==='super'){
+    State.superFullSyncStarted=false;
+    State.superFullSyncFailedAt=Date.now();
+    State.superRouteSyncMark=0;
+  }
+  console.warn('[APP] data load failed', e&&e.message);
+  refreshSyncUi();
+  return true;
+}
 async function syncAccountData(){
-  const scope=syncScopeLabel(State.account);
-  State.dataSync={status:'loading',message:`Loading ${scope} data...`};
-  setBootMessage(`Loading ${scope} data...`,'Connecting to the store workspace');
+  const account=State.account;
+  if(!account) return;
+  const run=++dataSyncRun;
+  const scope=syncScopeLabel(account);
+  const alreadyContinuing=State.dataSync&&State.dataSync.status==='local'&&/cloud sync continuing/.test(State.dataSync.message||'');
+  if(!alreadyContinuing) State.dataSync={status:'loading',message:`Syncing ${scope} data...`};
+  setBootMessage(`Syncing ${scope} data...`,'Refreshing the store workspace in the background');
   refreshSyncUi();
   try{
     if(window.MCQDB && MCQDB.ready){
-      await MCQDB.ready;
-      const res=MCQDB.loadForAccount?await MCQDB.loadForAccount(State.account):null;
-      const last=MCQDB.lastSync||res||{};
-      State.dataSync={status:last.status||'synced',message:last.message||`${titleWords(scope)} data loaded`};
+      const loadPromise=(async()=>{
+        await MCQDB.ready;
+        if(!syncStillCurrent(run,account)) return null;
+        const res=MCQDB.loadForAccount?await MCQDB.loadForAccount(account):null;
+        return MCQDB.lastSync||res||{};
+      })();
+      const settled=loadPromise.then(last=>({last}),error=>({error}));
+      const first=await Promise.race([settled,new Promise(res=>setTimeout(()=>res({softTimeout:true}), account.role==='super'?4000:3000))]);
+      if(first.softTimeout){
+        if(!syncStillCurrent(run,account)) return;
+        State.dataSync={status:'local',message:`Local ${scope} data · cloud sync continuing`};
+        refreshSyncUi();
+        settled.then(done=>{
+          if(done.error) failAccountSync(run,account,scope,done.error);
+          else if(done.last) finishAccountSync(run,account,scope,done.last);
+        });
+        return;
+      }
+      if(first.error) throw first.error;
+      if(first.last) finishAccountSync(run,account,scope,first.last);
     }else{
-      State.dataSync={status:'local',message:'Local sample data'};
+      State.dataSync={status:'local',message:`Local ${scope} data`};
     }
   }catch(e){
-    State.dataSync={status:'error',message:`Cloud load failed · local ${scope}`};
-    console.warn('[APP] data load failed', e&&e.message);
+    failAccountSync(run,account,scope,e);
+    return;
   }
   refreshSyncUi();
+}
+function hydrateAccountData(){
+  const scope=syncScopeLabel(State.account);
+  try{
+    if(window.MCQDB && MCQDB.hydrateFromCache){
+      const res=MCQDB.hydrateFromCache(State.account)||{};
+      State.dataSync={status:res.status||'local',message:res.message||`Local ${scope} data · syncing...`};
+    }else{
+      State.dataSync={status:'local',message:`Local ${scope} data · syncing...`};
+    }
+  }catch(e){
+    State.dataSync={status:'local',message:`Local ${scope} data · syncing...`};
+  }
+  refreshSyncUi();
+}
+function startAccountSync(force){
+  if(State.account&&State.account.role==='super'&&!force){
+    const cached=State.dataSync&&State.dataSync.status==='cached';
+    State.dataSync={status:cached?'cached':'local',message:(cached?'Cached all stores':'Super Admin ready')+' · open a data page to sync all stores'};
+    refreshSyncUi();
+    return;
+  }
+  setTimeout(()=>syncAccountData(), State.account&&State.account.role==='super'?250:0);
+}
+function maybeStartRouteSync(){
+  if(!State.account || State.account.role!=='super' || State.superFullSyncStarted) return;
+  if(State.superFullSyncFailedAt && Date.now()-State.superFullSyncFailedAt<30000) return;
+  const heavy=['manager','history','analytics','photos','data','storeconfig','checklist','binadmin','schedules','issue','complaint','maintenance','incident','delivery','violation','reward','training','raise','birthday'];
+  if(heavy.includes(State.route.mod)){
+    State.superFullSyncStarted=true;
+    State.superFullSyncFailedAt=0;
+    const mark=Date.now();
+    State.superRouteSyncMark=mark;
+    State.dataSync={status:'loading',message:'Syncing all stores data...'};
+    refreshSyncUi();
+    setTimeout(()=>{
+      if(State.account&&State.account.role==='super'&&State.superFullSyncStarted&&State.superRouteSyncMark===mark&&State.dataSync&&State.dataSync.status==='loading'){
+        State.dataSync={status:'local',message:'Local all stores data · cloud sync continuing'};
+        refreshSyncUi();
+      }
+    },4000);
+    startAccountSync(true);
+  }
 }
 async function loginAs(role, branch){
   const name = role==='super' ? 'Head Office' : role==='admin' ? (branch+' Admin') : (branch+' Staff');
@@ -201,9 +294,10 @@ async function loginAs(role, branch){
   State.account={ name, role, branch, initials };
   State.branch=branch; State.role=role==='staff'?'store':'ho';
   try{ sessionStorage.setItem('mcq_acct', JSON.stringify(State.account)); }catch(e){}
-  const btn=$('.login-btn'); if(btn){ btn.disabled=true; btn.textContent=`Loading ${syncScopeLabel(State.account)} data...`; }
-  await syncAccountData();
+  const btn=$('.login-btn'); if(btn){ btn.disabled=true; btn.textContent='Opening workspace...'; }
+  hydrateAccountData();
   enterApp();
+  startAccountSync();
 }
 function enterApp(){
   document.getElementById('boot-splash')?.remove();
@@ -216,6 +310,10 @@ function enterApp(){
   startIdleWatch();
 }
 function logout(reason){
+  dataSyncRun++;
+  State.superFullSyncStarted=false;
+  State.superFullSyncFailedAt=0;
+  State.superRouteSyncMark=0;
   State.account=null; try{ sessionStorage.removeItem('mcq_acct'); }catch(e){}
   stopIdleWatch();
   showLogin(reason);
@@ -325,6 +423,7 @@ function parseHash(){ const p=(location.hash.replace(/^#\/?/,'')||'home').split(
 function render(){
   if(!State.account){ showLogin(); return; }
   State.route=parseHash();
+  maybeStartRouteSync();
   destroyCharts(); closeDrawer();
   const mod=State.route.mod;
   buildSidebar();
@@ -677,7 +776,11 @@ function closeSidebarM(){ $('#sidebar')?.classList.remove('show'); $('#sb-backdr
 Object.assign(window,{go,openDetail,closeDrawer,submitForm,reviewSave,recSaveAll,recDelete,logout,doLogin,togglePw,updateLoginHint,faceIdLogin,closeFid,toggleGroup,toggleSidebar,closeSidebarM});
 async function boot(){
   try{ const saved=sessionStorage.getItem('mcq_acct'); if(saved){ State.account=JSON.parse(saved); State.branch=State.account.branch; State.role=State.account.role==='staff'?'store':'ho'; } }catch(e){}
-  if(State.account){ setBootMessage(`Restoring ${syncScopeLabel(State.account)} data...`,'Preparing your workspace'); await syncAccountData(); }
-  if(State.account) enterApp(); else showLogin();
+  if(State.account){
+    setBootMessage(`Opening ${syncScopeLabel(State.account)} workspace...`,'Using cached data while cloud sync starts');
+    hydrateAccountData();
+    enterApp();
+    startAccountSync();
+  } else showLogin();
 }
 document.addEventListener('DOMContentLoaded',boot);

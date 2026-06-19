@@ -22,6 +22,7 @@ function renderStaffHome(){
   const openItems=DB.order.reduce((n,id)=>n+openCount(id),0);
   const actions=[
     ['✅','Store Checklist','Opening & closing checks','#10b981',"go('checklist')"],
+    ['🗑️','Bin Checklist','Tue, Thu & Fri evidence','#64748b',"go('binadmin')"],
     ['🚩','Report an Issue','Maintenance, safety, stock…','#e53935',"go('issue')"],
     ['🚚','Log Delivery','Truck & crate return','#3b82f6',"go('delivery','new')"],
     ['📖','Store Rules','Handbook & standards','#8b5cf6',"go('rules')"],
@@ -65,7 +66,10 @@ function staffDeptNeedles(dept){
   return hit?hit[1]:[d];
 }
 function staffForDept(dept,opts){
-  const all=staffScopeList(), needles=staffDeptNeedles(dept);
+  const all=staffScopeList(), dn=staffNorm(dept);
+  const byDept = dn ? all.filter(s=>staffNorm(s.dept)===dn) : [];   // explicit department link (from staff record)
+  if(byDept.length) return byDept;
+  const needles=staffDeptNeedles(dept);
   if(!needles.length) return all;
   const rows=all.filter(s=>{ const role=staffNorm(s.role), name=staffNorm(s.name); return needles.some(n=>role.includes(n)||name.includes(n)); });
   return rows.length?rows:((opts&&opts.fallbackAll)?all:[]);
@@ -105,6 +109,11 @@ function staffDisplayForDept(dept,current){
   return names.length?names.join(', '):(cur||'—');
 }
 function ckItem(it,i){ return {i,dept:it[0],area:it[1],task:it[2],when:it[3],photo:photoSpec(it[4]),meta:it[5]||{}}; }
+function ckStoreOk(r,store){
+  const allowed=r&&r.meta&&Array.isArray(r.meta.stores)?r.meta.stores:null;
+  if(!allowed||!allowed.length) return true;
+  return allowed.includes(store||State.branch);
+}
 function ckInSession(r,session){
   if(session==='Opening') return r.when==='O'||r.when==='A';
   if(session==='Closing') return r.when==='C'||r.when==='A';
@@ -124,6 +133,7 @@ function renderChecklist(){
   setCrumb('✅','Store Operation Checklist',`${isSuper()?'All stores':State.branch} · ${s.session}`);
   const chips=C.depts.map(d=>`<button class="dept-chip ${d===s.dept?'active':''}" onclick="ckDept('${ckJS(d)}')">${esc(d)}</button>`).join('');
   const areaChips=ckAreaChips();
+  const adminTools=isAdmin()?ckAdminTools():'';
   $('#content').innerHTML=`
    <div class="page-head"><div class="ph-ic">✅</div>
      <div><h2>Store Operation Checklist</h2><p>Every photo task needs evidence before submit. Temperature checks must be read by AI Vision or marked defrosting.</p></div>
@@ -140,6 +150,7 @@ function renderChecklist(){
    </div>
    <div class="ck-toolbar"><div class="dept-chips">${chips}</div></div>
    ${areaChips}
+   ${adminTools}
    <div id="chk-prog" class="ck-progbar"></div>
    <div id="ck-temp-report"></div>
    <div id="chk-body"></div>
@@ -149,7 +160,7 @@ function renderChecklist(){
 function ckRows(ignoreArea){
   const s=State.chk;
   return DB.checklist.items.map(ckItem)
-    .filter(r=>(s.dept==='ALL'||r.dept===s.dept) && ckInSession(r,s.session) && (ignoreArea||s.area==='ALL'||r.area===s.area));
+    .filter(r=>ckStoreOk(r) && (s.dept==='ALL'||r.dept===s.dept) && ckInSession(r,s.session) && (ignoreArea||s.area==='ALL'||r.area===s.area));
 }
 function ckList(){
   return ckRows(false);
@@ -162,16 +173,31 @@ function ckAreaChips(){
   const chips=areas.map(a=>`<button class="area-chip ${a===s.area?'active':''}" onclick="ckArea('${ckJS(a)}')">${esc(a)}</button>`).join('');
   return `<div class="ck-subtoolbar"><span>Sections</span><div class="area-chips">${chips}</div></div>`;
 }
+function ckCurrentArea(){
+  const areas=[...new Set(ckRows(true).map(r=>r.area))];
+  if(State.chk.area&&State.chk.area!=='ALL') return State.chk.area;
+  return areas[0]||'General';
+}
+function ckAdminTools(){
+  const dept=State.chk.dept, area=ckCurrentArea();
+  return `<div class="ck-adminbar card">
+    <div class="ck-admin-copy"><b>Checklist Builder</b><span>Edit this department template. Changes are saved into the current store workspace.</span></div>
+    <button class="btn sm" onclick="ckRenameDept('${ckJS(dept)}')"><i class="fas fa-tag"></i> Rename department</button>
+    <button class="btn sm" onclick="ckAddSection('${ckJS(dept)}')"><i class="fas fa-layer-group"></i> Add section</button>
+    <button class="btn sm" onclick="ckRenameSection('${ckJS(dept)}','${ckJS(area)}')"><i class="fas fa-pen"></i> Rename section</button>
+    <button class="btn sm primary" onclick="ckAddTask('${ckJS(dept)}','${ckJS(area)}')"><i class="fas fa-plus"></i> Add task</button>
+  </div>`;
+}
 function ckDraw(){
   const rows=ckList(),C=DB.checklist,groups={};
   rows.forEach(r=>{(groups[r.dept]=groups[r.dept]||{})[r.area]=(groups[r.dept][r.area]||[]);groups[r.dept][r.area].push(r);});
   let html='';
   Object.entries(groups).forEach(([dept,areas])=>{
     const dm=C.deptMeta[dept]||{};
-    html+=`<div class="ck-dept"><div class="ck-dept-h" style="--dc:${dm.color}"><span class="chk-dot" style="background:${dm.color}"></span>${esc(dept)}<span class="ck-dept-n">${Object.values(areas).flat().length} tasks</span>${isAdmin()?`<button class="ck-add-task" onclick="ckAddSection('${ckJS(dept)}')">＋ Add section</button>`:''}</div>`;
+    html+=`<div class="ck-dept"><div class="ck-dept-h" style="--dc:${dm.color}"><span class="chk-dot" style="background:${dm.color}"></span>${esc(dept)}<span class="ck-dept-n">${Object.values(areas).flat().length} tasks</span></div>`;
     html+=ckRespHTML(dept);
     Object.entries(areas).forEach(([area,items])=>{
-      html+=`<div class="ck-area-h">${esc(area)}${isAdmin()?`<button class="ck-add-task" onclick="ckRenameSection('${ckJS(dept)}','${ckJS(area)}')">Rename section</button><button class="ck-add-task" onclick="ckAddTask('${ckJS(dept)}','${ckJS(area)}')">＋ Add task</button>`:''}</div>`;
+      html+=`<div class="ck-area-h">${esc(area)}${isAdmin()?`<button class="ck-icon-action" onclick="ckAddTask('${ckJS(dept)}','${ckJS(area)}')" title="Add task"><i class="fas fa-plus"></i><span>Add task</span></button>`:''}</div>`;
       items.forEach(r=>{ const st=State.chk.state[r.i]||{}; const done=st.done;
         if(isAdmin() && State.chk.editing===r.i){
           const pm = r.photo ? (r.photo.req ? {mode:'R',min:r.photo.min,max:r.photo.max} : {mode:'O',min:0,max:(r.photo.max||5)}) : {mode:'0',min:1,max:5};
@@ -325,6 +351,24 @@ function ckAddSection(dept){
   ckPersistTemplate();
   renderChecklist();
   toast('✓ Section added');
+}
+function ckRenameDept(dept){
+  const name=(prompt('Rename department:',dept)||'').trim();
+  if(!name||name===dept) return;
+  DB.checklist.items.forEach(it=>{ if(it[0]===dept) it[0]=name; });
+  DB.checklist.depts=(DB.checklist.depts||[]).map(d=>d===dept?name:d);
+  if(DB.checklist.deptMeta&&DB.checklist.deptMeta[dept]&&!DB.checklist.deptMeta[name]){
+    DB.checklist.deptMeta[name]=DB.checklist.deptMeta[dept];
+    delete DB.checklist.deptMeta[dept];
+  }
+  if(DB.checklistEmailRoutes&&DB.checklistEmailRoutes[dept]&&!DB.checklistEmailRoutes[name]){
+    DB.checklistEmailRoutes[name]=DB.checklistEmailRoutes[dept];
+    delete DB.checklistEmailRoutes[dept];
+  }
+  if(State.chk.dept===dept) State.chk.dept=name;
+  ckPersistTemplate();
+  renderChecklist();
+  toast('✓ Department renamed');
 }
 function ckRenameSection(dept,area){
   const name=(prompt('Rename section:',area)||'').trim();
@@ -771,7 +815,7 @@ function chkSubmit(){
   if(!done){ toast('Tick at least one task before submitting'); return; }
   const out=rows.filter(r=>r.meta.temp&&(State.chk.state[r.i]||{}).temp&&!((State.chk.state[r.i]||{}).temp.inRange)).length;
   // ---- persist a REAL submission (Manager verify / Performance / records all read this) ----
-  const allRows=DB.checklist.items.map(ckItem).filter(r=>r.dept===State.chk.dept && ckInSession(r,State.chk.session));
+  const allRows=DB.checklist.items.map(ckItem).filter(r=>ckStoreOk(r) && r.dept===State.chk.dept && ckInSession(r,State.chk.session));
   const items=allRows.map(r=>{ const st=State.chk.state[r.i]||{};
     return {task:r.task, area:r.area, done:!!st.done, note:st.note||'', photos:(st.photos||[]).slice(), temp: st.temp?{value:st.temp.value,inRange:!!st.temp.inRange,defrosting:!!st.defrosting,source:st.temp.source||'',manual:!!st.temp.manual,confirmedBy:st.temp.confirmedBy||'',suggestedValue:st.temp.suggestedValue??null,rawReading:st.temp.rawReading||''}:null }; });
   const doneN=items.filter(i=>i.done).length, totalN=items.length;
@@ -1112,18 +1156,31 @@ function renderStaff(){
   const active=rows.filter(s=>s.active).length;
   const ed=State.staffEdit, roles=DB.staffRoles||['Staff'];
   let editForm='';
-  if(ed){ const s = ed==='new'?{id:'',name:'',role:roles[4]||roles[0],store:State.branch,phone:'',dob:'',start:new Date().toISOString().slice(0,10),active:1} : (DB.staff.find(x=>x.id===ed)||{});
+  const cdepts=(DB.checklist&&DB.checklist.depts)||[];
+  if(ed){ const s = ed==='new'?{id:'',name:'',dept:'',role:'',store:State.branch,phone:'',email:'',gender:'',dob:'',start:new Date().toISOString().slice(0,10),cardId:'',tfn:'',address:'',suburb:'',country:'Australia',basis:'Individual',category:'',estatus:'',active:1} : (DB.staff.find(x=>x.id===ed)||{});
     const storeField=isSuper()
       ? `<select id="st-store">${DB.stores.map(x=>`<option ${x===s.store?'selected':''}>${esc(x)}</option>`).join('')}</select>`
       : `<input type="hidden" id="st-store" value="${esc(State.branch)}"><input value="${esc(State.branch)}" disabled>`;
+    const sel=(cur,opts)=>opts.map(o=>`<option ${String(o)===String(cur||'')?'selected':''}>${esc(o)}</option>`).join('');
     editForm=`<div class="card" style="margin-bottom:16px;border:2px solid var(--accent-soft)"><div class="card-head"><h3>${ed==='new'?'➕ Add staff member':'✎ Edit '+esc(s.name)}</h3><button class="btn sm" style="margin-left:auto" onclick="staffCancel()">✕ Cancel</button></div>
       <div class="card-pad"><div class="grid2">
         <div class="field"><label>Full name <span class="req">*</span></label><input id="st-name" value="${esc(s.name||'')}"></div>
-        <div class="field"><label>Role</label><select id="st-role">${roles.map(r=>`<option ${r===s.role?'selected':''}>${esc(r)}</option>`).join('')}</select></div>
+        <div class="field"><label>Department (checklist)</label><select id="st-dept"><option value="">— Unassigned —</option>${cdepts.map(d=>`<option ${d===s.dept?'selected':''}>${esc(d)}</option>`).join('')}</select></div>
+        <div class="field"><label>Role / Classification</label><input id="st-role" value="${esc(s.role||s.classification||'')}" placeholder="e.g. CASHIER, FRUIT & VEGGIES"></div>
         <div class="field"><label>Store</label>${storeField}</div>
         <div class="field"><label>Phone</label><input id="st-phone" value="${esc(s.phone||'')}" placeholder="0400 000 000"></div>
+        <div class="field"><label>Email</label><input id="st-email" value="${esc(s.email||'')}"></div>
+        <div class="field"><label>Gender</label><select id="st-gender"><option value=""></option>${sel(s.gender,['Male','Female','Other'])}</select></div>
         <div class="field"><label>Date of birth</label><input type="date" id="st-dob" value="${esc(s.dob||'')}"></div>
         <div class="field"><label>Start date</label><input type="date" id="st-start" value="${esc(s.start||'')}"></div>
+        <div class="field"><label>Card ID</label><input id="st-cardid" value="${esc(s.cardId||'')}"></div>
+        <div class="field"><label>Tax File Number</label><input id="st-tfn" value="${esc(s.tfn||'')}"></div>
+        <div class="field"><label>Street address</label><input id="st-address" value="${esc(s.address||'')}"></div>
+        <div class="field"><label>Suburb / City</label><input id="st-suburb" value="${esc(s.suburb||'')}"></div>
+        <div class="field"><label>Country</label><input id="st-country" value="${esc(s.country||'')}"></div>
+        <div class="field"><label>Employment basis</label><input id="st-basis" value="${esc(s.basis||'')}" placeholder="Individual"></div>
+        <div class="field"><label>Employment category</label><select id="st-cat"><option value=""></option>${sel(s.category,['Permanent','Temporary'])}</select></div>
+        <div class="field"><label>Employment type</label><select id="st-estatus"><option value=""></option>${sel(s.estatus,['FullTime','PartTime','Casual'])}</select></div>
         <div class="field"><label>Status</label><select id="st-active"><option value="1" ${s.active?'selected':''}>Active</option><option value="0" ${!s.active?'selected':''}>Inactive</option></select></div>
       </div>
       <div style="display:flex;gap:10px;margin-top:14px"><button class="btn primary" onclick="staffSave('${ed}')">💾 Save</button>${ed!=='new'?`<button class="btn" style="color:var(--bad);border-color:#f3c9c9" onclick="staffDelete('${esc(ed)}')"><i class="fas fa-trash"></i>&nbsp; Delete</button>`:''}</div>
@@ -1136,8 +1193,8 @@ function renderStaff(){
       <div class="kpi tone-warn"><div class="k-top"><div class="k-ic">🏪</div></div><div class="k-val">${new Set(rows.map(s=>s.store)).size}</div><div class="k-lbl">Stores</div></div>
       <div class="kpi tone-mute"><div class="k-top"><div class="k-ic">🧰</div></div><div class="k-val">${new Set(rows.map(s=>s.role)).size}</div><div class="k-lbl">Roles</div></div></div>
     ${editForm}
-    <div class="card" style="margin-top:16px"><div class="card-head"><h3>Directory · ${rows.length}</h3></div><div class="table-wrap"><table class="grid"><thead><tr><th>ID</th><th>Name</th><th>Role</th><th>Store</th><th>Phone</th><th>DOB</th><th>Started</th><th>Status</th><th></th></tr></thead><tbody>
-      ${rows.map(s=>`<tr><td class="cell-id">#${esc(s.id)}</td><td><b>${esc(s.name)}</b></td><td>${esc(s.role||'')}</td><td>${esc(s.store)}</td><td>${esc(s.phone||'')}</td><td>${esc(s.dob||'—')}</td><td>${esc(s.start||'')}</td><td>${s.active?'<span class="badge ok"><span class="bdot"></span>Active</span>':'<span class="badge mute"><span class="bdot"></span>Inactive</span>'}</td><td><span class="ck-task-admin"><button onclick="staffEditOpen('${esc(s.id)}')" title="Edit">✎</button><button onclick="staffDelete('${esc(s.id)}')" title="Delete">🗑</button></span></td></tr>`).join('')}
+    <div class="card" style="margin-top:16px"><div class="card-head"><h3>Directory · ${rows.length}</h3><span class="ch-sub">${exportBtns('staff-table','Staff Directory — '+(isSuper()?'All stores':State.branch))}</span></div><div class="table-wrap"><table class="grid" id="staff-table"><thead><tr><th>Name</th><th>Dept</th><th>Role</th><th>Store</th><th>Phone</th><th>Email</th><th>DOB</th><th>Started</th><th>Type</th><th>Status</th><th></th></tr></thead><tbody>
+      ${rows.map(s=>`<tr><td><b>${esc(s.name)}</b></td><td>${s.dept?`<span class="badge mute">${esc(s.dept)}</span>`:'—'}</td><td>${esc(s.role||s.classification||'')}</td><td>${esc(s.store)}</td><td>${esc(s.phone||'')}</td><td>${esc(s.email||'')}</td><td>${esc(s.dob||'—')}</td><td>${esc(s.start||'')}</td><td>${esc(s.estatus||s.category||'')}</td><td>${s.active?'<span class="badge ok"><span class="bdot"></span>Active</span>':'<span class="badge mute"><span class="bdot"></span>Inactive</span>'}</td><td><span class="ck-task-admin"><button onclick="staffEditOpen('${esc(s.id)}')" title="Edit">✎</button><button onclick="staffDelete('${esc(s.id)}')" title="Delete">🗑</button></span></td></tr>`).join('')}
       </tbody></table></div></div>`;
 }
 function staffNew(){ State.staffEdit='new'; renderStaff(); window.scrollTo({top:0,behavior:'smooth'}); }
@@ -1147,7 +1204,10 @@ function staffSave(ed){
   const g=id=>(document.getElementById(id)?.value||'');
   const name=g('st-name').trim(); if(!name){ toast('Enter a name'); return; }
   const store=isSuper()?g('st-store'):State.branch;
-  const rec={name,role:g('st-role'),store,phone:g('st-phone'),dob:g('st-dob'),start:g('st-start'),active:g('st-active')==='1'?1:0};
+  const role=g('st-role');
+  const rec={name,dept:g('st-dept'),role,classification:role,store,phone:g('st-phone'),email:g('st-email'),gender:g('st-gender'),
+    dob:g('st-dob'),start:g('st-start'),cardId:g('st-cardid'),tfn:g('st-tfn'),address:g('st-address'),suburb:g('st-suburb'),
+    country:g('st-country'),basis:g('st-basis'),category:g('st-cat'),estatus:g('st-estatus'),active:g('st-active')==='1'?1:0};
   if(ed==='new'){ rec.id=storeCode(store)+'-'+String(20000+Math.floor(Math.random()*9000)); auditLog('create','staff',rec.id,rec.store,null,rec); DB.staff.unshift(rec); }
   else { const s=DB.staff.find(x=>x.id===ed); if(!recordInScope(s)){ toast('This staff member belongs to another store'); return; } if(s){ const before=JSON.parse(JSON.stringify(s)); Object.assign(s,rec); auditLog('update','staff',s.id,s.store,before,s); } }
   if(window.persist) window.persist();
@@ -1312,7 +1372,7 @@ function checklistExportMenu(){
 }
 function exportChecklist(fmt){
   const C=DB.checklist, s=State.chk;
-  const rows=C.items.map(ckItem).filter(r=>r.dept===s.dept && ckInSession(r,s.session));
+  const rows=C.items.map(ckItem).filter(r=>ckStoreOk(r) && r.dept===s.dept && ckInSession(r,s.session));
   if(!rows.length){ toast('No checklist tasks to export'); return; }
   const byArea={}; rows.forEach(r=>{(byArea[r.area]=byArea[r.area]||[]).push(r);});
   let done=0; rows.forEach(r=>{ if((State.chk.state[r.i]||{}).done) done++; });
@@ -1358,10 +1418,77 @@ function schedTickKey(id,day,off){ return schedWeekKey(off)+'|'+id+'|'+day; }
 function schedTab(t){ State.sched=State.sched||{}; State.sched.tab=t; renderSchedules(); }
 function schedWeek(delta){ State.sched=State.sched||{}; State.sched.week=(State.sched.week||0)+delta; renderSchedules(); }
 function schedEditToggle(){ State.sched=State.sched||{}; State.sched.edit=!State.sched.edit; renderSchedules(); }
-function schedTick(id,day){ const k=schedTickKey(id,day,(State.sched||{}).week||0); DB.scheduleTicks=DB.scheduleTicks||{};
-  if(DB.scheduleTicks[k]) delete DB.scheduleTicks[k]; else DB.scheduleTicks[k]=true; if(window.persist)window.persist(); renderSchedules(); }
+function schedStore(){ return isSuper()?((State.sched&&State.sched.store)||DB.stores[0]):State.branch; }
+function schedSetStore(store){ State.sched=State.sched||{}; State.sched.store=store; renderSchedules(); }
+function schedRecordForKey(k){ return (DB.scheduleHistory||[]).find(r=>r.tickKey===k); }
+function schedTick(id,day){
+  const off=(State.sched||{}).week||0, k=schedTickKey(id,day,off);
+  DB.scheduleTicks=DB.scheduleTicks||{};
+  if(DB.scheduleTicks[k]){
+    const rec=schedRecordForKey(k);
+    if(rec) return histOpenSchedule(rec.id);
+    if(confirm('Remove this completed tick?')){ delete DB.scheduleTicks[k]; if(window.persist)window.persist(); renderSchedules(); }
+    return;
+  }
+  schedCompleteOpen(id,day,off);
+}
 function schedDay(id,day){ const t=(DB.scheduleTasks||[]).find(x=>x.id===id); if(!t)return; t.days=t.days||[];
   const i=t.days.indexOf(day); if(i>=0)t.days.splice(i,1); else t.days.push(day); if(window.persist)window.persist(); renderSchedules(); }
+function schedCompleteOpen(id,day,off){
+  const t=(DB.scheduleTasks||[]).find(x=>x.id===id); if(!t)return;
+  const store=schedStore(), date=schedWeekStart(off); date.setDate(date.getDate()+SCHED_DAYS.indexOf(day));
+  State.schedComplete={taskId:id,day,week:off||0,store,date:date.toISOString().slice(0,10),staffName:(t.who||'').split(',')[0].trim(),note:'',photo:null};
+  schedCompleteDrawer();
+}
+function schedCompleteSet(field,value){ State.schedComplete=State.schedComplete||{}; State.schedComplete[field]=value; }
+async function schedCompletePhoto(input){
+  const f=input.files&&input.files[0]; if(!f) return;
+  const c=State.schedComplete||{}, t=(DB.scheduleTasks||[]).find(x=>x.id===c.taskId)||{};
+  let ref; try{ const d=await compressImage(f,1200,.62); ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d,{module:'scheduleHistory',store:c.store,taskId:c.taskId,day:c.day,date:c.date,type:t.type}):d; }catch(e){ ref=URL.createObjectURL(f); }
+  c.photo=ref; schedCompleteDrawer(); toast('Photo evidence attached');
+}
+function schedCompleteDrawer(){
+  const c=State.schedComplete||{}, t=(DB.scheduleTasks||[]).find(x=>x.id===c.taskId);
+  if(!t)return;
+  const listId='sched-complete-staff';
+  $('#drawer').innerHTML=`<div class="drawer-head"><div class="dh-ic">✅</div><div><div style="font-weight:840;font-size:16px">Complete ${esc(t.type==='maintenance'?'maintenance':'cleaning')} task</div><div style="color:var(--muted);font-size:12.5px">${esc(c.store)} · ${esc(c.date)} · ${esc(c.day)}</div></div><button class="x-btn" onclick="closeDrawer()">✕</button></div>
+    <div class="drawer-body sched-complete">
+      ${staffDataList(listId,t.dept,c.staffName)}
+      <div class="hist-record-title"><b>${esc(t.task)}</b><span>${esc(t.dept||'')} · ${esc(t.freq||'')}</span></div>
+      <div class="field"><label>Completed by <span class="req">*</span></label><input list="${listId}" value="${esc(c.staffName||'')}" oninput="schedCompleteSet('staffName',this.value)" placeholder="Select or enter staff name"></div>
+      <div class="field"><label>Note</label><textarea oninput="schedCompleteSet('note',this.value)" placeholder="Condition, issue found, follow-up needed">${esc(c.note||'')}</textarea></div>
+      <label class="bin-photo hist-photo ${c.photo?'has':''}"><input type="file" accept="image/*" capture="environment" onchange="schedCompletePhoto(this)">${c.photo?`<img src="${imgSrc(c.photo)}" alt="Evidence">`:'<span><i class="fas fa-camera"></i><b>Photo required</b><small>Capture the completed task / area</small></span>'}</label>
+      <button class="btn primary block lg" onclick="schedCompleteSubmit()"><i class="fas fa-check"></i> Save completion record</button>
+    </div>`;
+  $('#drawer').classList.add('open'); $('#drawer-mask').classList.add('open');
+}
+function schedCompleteSubmit(){
+  const c=State.schedComplete||{}, t=(DB.scheduleTasks||[]).find(x=>x.id===c.taskId);
+  if(!t)return;
+  const staff=String(c.staffName||'').trim();
+  if(!staff){ toast('Enter completed by staff name'); return; }
+  if(!c.photo){ toast('Photo evidence is required'); return; }
+  const k=schedTickKey(c.taskId,c.day,c.week||0), store=c.store||schedStore();
+  const rec={id:makeRecordId(t.type==='maintenance'?'MNT':'CLN',store,c.date),tickKey:k,store,date:c.date,day:c.day,type:t.type,dept:t.dept||'',taskId:t.id,task:t.task||'',frequency:t.freq||'',assigned:t.who||'',staffName:staff,note:c.note||'',photo:c.photo,created:new Date().toISOString(),createdBy:(State.account&&State.account.name)||staff};
+  DB.scheduleHistory=DB.scheduleHistory||[]; DB.scheduleHistory.unshift(rec);
+  DB.scheduleTicks=DB.scheduleTicks||{}; DB.scheduleTicks[k]=true;
+  auditLog('create','scheduleHistory',rec.id,store,null,rec);
+  State.schedComplete=null;
+  closeDrawer();
+  if(window.persist)window.persist();
+  renderSchedules();
+  toast('✓ Completion record saved with photo');
+}
+function schedDeleteHistory(id){
+  const rec=(DB.scheduleHistory||[]).find(r=>r.id===id);
+  if(!rec||!confirm('Delete this completion record?')) return;
+  auditLog('delete','scheduleHistory',id,rec.store,rec,null);
+  DB.scheduleHistory=(DB.scheduleHistory||[]).filter(r=>r.id!==id);
+  if(rec.tickKey&&DB.scheduleTicks) delete DB.scheduleTicks[rec.tickKey];
+  if(window.persist)window.persist();
+  closeDrawer();
+  render();
+}
 function schedAddTask(type,dept){
   if(!dept) dept=prompt('Department / area:','Whole store')||'Whole store';
   const task={id:'sch'+Date.now(),type:type,dept:dept,task:'New task',days:[],who:'',staffIds:[],freq:''};
@@ -1444,6 +1571,7 @@ function renderSchedules(){
   setAccent(accent); setCrumb(icon,'Cleaning & Maintenance', (type==='cleaning'?'Cleaning':'Maintenance')+' weekly schedule');
   const tasks=(DB.scheduleTasks||[]).filter(t=>t.type===type);
   const ws=schedWeekStart(off), wkLabel=ws.toLocaleDateString(undefined,{day:'numeric',month:'short'})+' – '+new Date(ws.getTime()+6*864e5).toLocaleDateString(undefined,{day:'numeric',month:'short'});
+  const storePick=isSuper()?`<select class="login-input" style="width:auto" onchange="schedSetStore(this.value)">${DB.stores.map(st=>`<option ${st===schedStore()?'selected':''}>${esc(st)}</option>`).join('')}</select>`:'';
   // KPIs: scheduled cells this week vs ticked
   let sched=0,doneN=0; tasks.forEach(t=>(t.days||[]).forEach(d=>{ sched++; if((DB.scheduleTicks||{})[schedTickKey(t.id,d,off)]) doneN++; }));
   const depts=[...new Set(tasks.map(t=>t.dept))];
@@ -1482,7 +1610,7 @@ function renderSchedules(){
   }).join('');
   $('#content').innerHTML=`
     <div class="page-head"><div class="ph-ic" style="background:${accent}1f">${icon}</div><div><h2>Cleaning &amp; Maintenance</h2><p>Weekly schedule by department — managers tick off each scheduled day.${edit?' <b>Edit mode:</b> click a day to schedule/unschedule.':''}</p></div>
-      <div class="ph-actions">${seg} ${expMenu('schedExport')}<button class="btn sm primary" onclick="schedSave()"><i class="fas fa-save"></i>&nbsp; Save</button>${isAdmin()?`<button class="btn sm ${edit?'primary':''}" onclick="schedEditToggle()"><i class="fas fa-pen"></i>&nbsp; ${edit?'Done':'Edit'}</button>`:''}</div></div>
+      <div class="ph-actions">${storePick}${seg} ${expMenu('schedExport')}<button class="btn sm primary" onclick="schedSave()"><i class="fas fa-save"></i>&nbsp; Save</button>${isAdmin()?`<button class="btn sm ${edit?'primary':''}" onclick="schedEditToggle()"><i class="fas fa-pen"></i>&nbsp; ${edit?'Done':'Edit'}</button>`:''}</div></div>
     <div class="sc-weekbar"><button class="btn sm" onclick="schedWeek(-1)">‹ Prev</button><div class="sc-week"><b>Week of ${esc(wkLabel)}</b>${off===0?'<span class="badge ok">This week</span>':`<button class="btn sm" onclick="schedWeek(${-off})">This week</button>`}</div><button class="btn sm" onclick="schedWeek(1)">Next ›</button></div>
     <div class="kpi-grid">
       <div class="kpi tone-info"><div class="k-top"><div class="k-ic">🗓️</div></div><div class="k-val">${tasks.length}</div><div class="k-lbl">Tasks</div></div>
@@ -1493,6 +1621,169 @@ function renderSchedules(){
     <div class="sc-prog"><span class="pbar" style="flex:1"><i style="width:${sched?Math.round(doneN/sched*100):0}%;background:${accent}"></i></span><b>${sched?Math.round(doneN/sched*100):0}%</b></div>
     ${grids||'<div class="empty">No scheduled tasks. '+(isAdmin()?'Use Edit → Add task.':'')+'</div>'}
     ${edit?`<button class="btn block" style="margin-top:14px" onclick="schedAddTask('${type}','')">＋ Add task / department</button>`:''}`;
+}
+
+/* ============================================================ BIN ADMIN */
+function binCfg(){ DB.binAdmin=DB.binAdmin||{activeDays:['Tue','Thu','Fri'],checklist:[],records:[]}; return DB.binAdmin; }
+function binState(){
+  const b=binCfg(), active=(b.activeDays&&b.activeDays[0])||'Tue';
+  State.bin=State.bin||{week:0,day:active,edit:false,store:isSuper()?DB.stores[0]:State.branch,checks:{},name:'',qty:'',photo:null};
+  if(!State.bin.day) State.bin.day=active;
+  if(isSuper()&&!State.bin.store) State.bin.store=DB.stores[0];
+  return State.bin;
+}
+function binStore(){ const s=binState(); return isSuper()?(s.store||DB.stores[0]):State.branch; }
+function binWeek(delta){ const s=binState(); s.week=(s.week||0)+delta; renderBinAdmin(); }
+function binSelect(day){ const b=binCfg(); if(!(b.activeDays||[]).includes(day)){ toast('No bin checklist scheduled for '+day); return; } const s=binState(); s.day=day; s.checks={}; s.name=''; s.qty=''; s.photo=null; renderBinAdmin(); }
+function binSetStore(store){ const s=binState(); s.store=store; s.checks={}; s.name=''; s.qty=''; s.photo=null; renderBinAdmin(); }
+function binSet(field,value){ const s=binState(); s[field]=value; }
+function binToggleTask(id,on){ const s=binState(); s.checks=s.checks||{}; s.checks[id]=!!on; }
+function binDayDate(day,off){ const start=schedWeekStart(off||0), idx=SCHED_DAYS.indexOf(day), d=new Date(start); d.setDate(start.getDate()+Math.max(0,idx)); return d; }
+function binDayKey(day,off){ return binDayDate(day,off).toISOString().slice(0,10); }
+function binRecordsForWeek(){
+  const s=binState(), store=binStore(), start=schedWeekStart(s.week||0), end=new Date(start); end.setDate(start.getDate()+7);
+  return (binCfg().records||[]).filter(r=>(isSuper()?r.store===store:r.store===State.branch) && new Date(r.date)>=start && new Date(r.date)<end);
+}
+async function binPhoto(input){
+  const f=input.files&&input.files[0]; if(!f) return;
+  const s=binState();
+  let ref; try{ const d=await compressImage(f,1200,.62); ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d,{module:'binAdmin',store:binStore(),day:s.day,date:binDayKey(s.day,s.week||0)}):d; }catch(e){ ref=URL.createObjectURL(f); }
+  s.photo=ref; renderBinAdmin(); toast('Photo evidence attached');
+}
+function binSubmit(){
+  const cfg=binCfg(), s=binState(), store=binStore(), active=cfg.activeDays||[], tasks=cfg.checklist||[];
+  if(!active.includes(s.day)){ toast('This day is not scheduled for bin collection'); return; }
+  const name=String(s.name||'').trim(), qty=Number(s.qty);
+  if(!name){ toast('Enter staff name'); return; }
+  if(!Number.isFinite(qty)||qty<=0){ toast('Enter bin quantity'); return; }
+  if(!s.photo){ toast('Photo evidence is required'); return; }
+  const missing=tasks.filter(t=>!s.checks||!s.checks[t.id]);
+  if(missing.length){ toast('Complete every bin checklist item before submit'); return; }
+  const rec={id:makeRecordId('BIN',store,binDayDate(s.day,s.week||0)),store,date:binDayKey(s.day,s.week||0),day:s.day,staffName:name,binQty:qty,photo:s.photo,
+    checklist:tasks.map(t=>({id:t.id,task:t.task,done:true})),created:new Date().toISOString(),createdBy:(State.account&&State.account.name)||name};
+  cfg.records=cfg.records||[]; cfg.records.unshift(rec);
+  auditLog('create','binAdmin',rec.id,store,null,rec);
+  s.checks={}; s.name=''; s.qty=''; s.photo=null;
+  if(window.persist) window.persist();
+  renderBinAdmin();
+  toast('✓ Bin checklist saved with photo and timestamp');
+}
+function binEditToggle(){ const s=binState(); s.edit=!s.edit; renderBinAdmin(); }
+function binSetActive(day,on){ const cfg=binCfg(); cfg.activeDays=cfg.activeDays||[]; const i=cfg.activeDays.indexOf(day); if(on&&i<0) cfg.activeDays.push(day); if(!on&&i>=0) cfg.activeDays.splice(i,1); cfg.activeDays.sort((a,b)=>SCHED_DAYS.indexOf(a)-SCHED_DAYS.indexOf(b)); if(window.persist) window.persist(); renderBinAdmin(); }
+function binTaskSet(id,value){ const t=(binCfg().checklist||[]).find(x=>x.id===id); if(!t) return; t.task=String(value||'').trim(); if(window.persist) window.persist(); }
+function binTaskAdd(){ const cfg=binCfg(); cfg.checklist=cfg.checklist||[]; cfg.checklist.push({id:'bin-'+Date.now(),task:'NEW BIN CHECKLIST ITEM'}); if(window.persist) window.persist(); renderBinAdmin(); }
+function binTaskDel(id){ const cfg=binCfg(); if(!confirm('Delete this bin checklist item?')) return; cfg.checklist=(cfg.checklist||[]).filter(t=>t.id!==id); if(window.persist) window.persist(); renderBinAdmin(); }
+function binDeleteRecord(id){ const cfg=binCfg(); const rec=(cfg.records||[]).find(r=>r.id===id); if(!rec||!confirm('Delete this bin record?')) return; auditLog('delete','binAdmin',id,rec.store,rec,null); cfg.records=(cfg.records||[]).filter(r=>r.id!==id); if(window.persist) window.persist(); renderBinAdmin(); }
+function renderBinAdmin(){
+  const cfg=binCfg(), s=binState(), store=binStore(), active=cfg.activeDays||[], tasks=cfg.checklist||[], edit=isAdmin()&&s.edit;
+  setAccent('#64748b'); setCrumb('🗑️','Bin Admin',`${store} · weekly bin collection checklist`);
+  const today=(new Date().getDay()+6)%7, records=binRecordsForWeek();
+  const storePick=isSuper()?`<select class="login-input" style="width:auto" onchange="binSetStore(this.value)">${DB.stores.map(st=>`<option ${st===store?'selected':''}>${esc(st)}</option>`).join('')}</select>`:'';
+  const dayCards=SCHED_DAYS.map((d,idx)=>{ const on=active.includes(d), selected=s.day===d, recs=records.filter(r=>r.day===d);
+    return `<button class="bin-day ${on?'on':'off'} ${selected?'selected':''} ${idx===today&&s.week===0?'today':''}" onclick="binSelect('${d}')" ${on?'':'disabled'}>
+      <b>${d}</b><span>${binDayDate(d,s.week||0).toLocaleDateString(undefined,{day:'numeric',month:'short'})}</span>
+      <small>${on?(recs.length?recs.length+' submitted':'Checklist open'):'No bin pickup'}</small>
+    </button>`;
+  }).join('');
+  const checklist=tasks.map(t=>`<label class="bin-check"><input type="checkbox" ${s.checks&&s.checks[t.id]?'checked':''} onchange="binToggleTask('${ckJS(t.id)}',this.checked)"><span>${esc(t.task)}</span></label>`).join('');
+  const form=active.includes(s.day)?`<div class="card bin-form">
+    <div class="card-head"><h3>${esc(s.day)} bin checklist</h3><span class="ch-sub">${esc(binDayKey(s.day,s.week||0))}</span></div>
+    <div class="card-pad">
+      <div class="grid2">
+        <div class="field"><label>Staff name <span class="req">*</span></label><input value="${esc(s.name||'')}" oninput="binSet('name',this.value)" placeholder="Enter staff name"></div>
+        <div class="field"><label>Bin quantity taken <span class="req">*</span></label><input type="number" min="1" step="1" value="${esc(s.qty||'')}" oninput="binSet('qty',this.value)" placeholder="e.g. 6"></div>
+      </div>
+      <div class="bin-checklist">${checklist||'<div class="empty compact">No bin checklist items configured.</div>'}</div>
+      <div class="bin-photo-row">
+        <label class="bin-photo ${s.photo?'has':''}"><input type="file" accept="image/*" capture="environment" onchange="binPhoto(this)">${s.photo?`<img src="${imgSrc(s.photo)}" alt="Bin evidence">`:'<span><i class="fas fa-camera"></i><b>Photo required</b><small>Take photo of bins / collection area</small></span>'}</label>
+        <button class="btn primary" onclick="binSubmit()"><i class="fas fa-check"></i> Submit bin checklist</button>
+      </div>
+    </div></div>`:`<div class="card card-pad bin-closed"><b>${esc(s.day)} is not scheduled for bin collection.</b><span>Only ${active.map(esc).join(', ')} can be checked. Admin can change this in Edit mode.</span></div>`;
+  const editPanel=edit?`<div class="card bin-edit"><div class="card-head"><h3>Admin edit</h3><button class="btn sm" style="margin-left:auto" onclick="binTaskAdd()"><i class="fas fa-plus"></i> Add task</button></div><div class="card-pad">
+    <div class="bin-edit-days">${SCHED_DAYS.map(d=>`<label><input type="checkbox" ${active.includes(d)?'checked':''} onchange="binSetActive('${d}',this.checked)"> ${d}</label>`).join('')}</div>
+    <div class="bin-edit-list">${tasks.map(t=>`<div><input value="${esc(t.task)}" onchange="binTaskSet('${ckJS(t.id)}',this.value)"><button class="btn sm" onclick="binTaskDel('${ckJS(t.id)}')"><i class="fas fa-trash"></i></button></div>`).join('')}</div>
+  </div></div>`:'';
+  const recRows=records.map(r=>`<tr><td><b>${esc(r.id)}</b><div class="cell-sub">${esc(r.date)} · ${esc(r.day)}</div></td><td>${esc(r.staffName)}</td><td class="num">${esc(r.binQty)}</td><td>${r.photo?`<img class="bin-thumb" src="${imgSrc(r.photo)}" alt="">`:'—'}</td><td>${esc((r.created||'').slice(0,16).replace('T',' '))}</td><td>${isAdmin()?`<button class="btn sm" onclick="binDeleteRecord('${ckJS(r.id)}')"><i class="fas fa-trash"></i></button>`:''}</td></tr>`).join('');
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🗑️</div><div><h2>Bin Admin</h2><p>Weekly bin checklist with required staff name, bin quantity and photo evidence.</p></div>
+    <div class="ph-actions">${storePick}<button class="btn sm" onclick="binWeek(-1)">‹ Prev</button><button class="btn sm" onclick="binWeek(${-(s.week||0)})">This week</button><button class="btn sm" onclick="binWeek(1)">Next ›</button>${isAdmin()?`<button class="btn sm ${edit?'primary':''}" onclick="binEditToggle()"><i class="fas fa-pen"></i> ${edit?'Done':'Edit'}</button>`:''}</div></div>
+    <div class="bin-days">${dayCards}</div>
+    ${editPanel}
+    ${form}
+    <div class="card" style="margin-top:16px"><div class="card-head"><h3>Submitted bin records</h3><span class="ch-sub">${records.length} this week</span></div><div class="table-wrap"><table class="grid"><thead><tr><th>Record</th><th>Staff</th><th>Qty</th><th>Photo</th><th>Created</th><th></th></tr></thead><tbody>${recRows||'<tr><td colspan="6"><div class="empty compact">No bin records for this week.</div></td></tr>'}</tbody></table></div></div>`;
+}
+
+/* ============================================================ CHECKLIST HISTORY */
+function histState(){
+  State.hist=State.hist||{tab:'checklist',store:isSuper()?'All stores':State.branch,dept:'All departments',q:''};
+  if(!isSuper()) State.hist.store=State.branch;
+  return State.hist;
+}
+function histTab(tab){ const h=histState(); h.tab=tab; h.dept='All departments'; renderHistory(); }
+function histSet(k,v){ const h=histState(); h[k]=v; renderHistory(); }
+function histStoreOk(r){ const h=histState(); return h.store==='All stores'||r.store===h.store; }
+function histTextOk(r){ const q=staffNorm(histState().q||''); return !q||staffNorm(JSON.stringify(r)).includes(q); }
+function histPhotos(list){ return (list||[]).filter(Boolean); }
+function histStrip(photos){
+  photos=histPhotos(photos).slice(0,5);
+  return photos.length?`<div class="hist-photos">${photos.map(p=>`<img src="${imgSrc(p)}" alt="">`).join('')}</div>`:'<div class="hist-no-photo">No photo evidence</div>';
+}
+function histChecklistRows(){
+  const h=histState();
+  return (DB.checklistSubs||[]).filter(r=>histStoreOk(r)&&histTextOk(r)&&(h.dept==='All departments'||r.dept===h.dept))
+    .sort((a,b)=>String(b.created||b.date||'').localeCompare(String(a.created||a.date||'')));
+}
+function histBinRows(){
+  return ((DB.binAdmin&&DB.binAdmin.records)||[]).filter(r=>histStoreOk(r)&&histTextOk(r))
+    .sort((a,b)=>String(b.created||b.date||'').localeCompare(String(a.created||a.date||'')));
+}
+function histScheduleRows(){
+  const h=histState();
+  return (DB.scheduleHistory||[]).filter(r=>histStoreOk(r)&&histTextOk(r)&&(h.dept==='All departments'||r.dept===h.dept))
+    .sort((a,b)=>String(b.created||b.date||'').localeCompare(String(a.created||a.date||'')));
+}
+function histOpenChecklist(id){
+  const sub=(DB.checklistSubs||[]).find(r=>r.id===id); if(!sub) return;
+  const photos=[]; (sub.items||[]).forEach(it=>(it.photos||[]).forEach(p=>photos.push({src:p,task:it.task,area:it.area})));
+  const rows=(sub.items||[]).map(it=>`<div class="hist-line ${it.done?'done':'todo'}">
+    <div><b>${it.done?'✓':'○'} ${esc(it.task)}</b><span>${esc(it.area||'General')}${it.note?' · '+esc(it.note):''}</span></div>
+    ${it.temp?`<em class="${it.temp.inRange?'ok':'bad'}">${it.temp.defrosting?'Defrosting':Number(it.temp.value).toFixed(1)+' C'}</em>`:''}
+    ${(it.photos||[]).length?histStrip(it.photos):''}
+  </div>`).join('');
+  $('#drawer').innerHTML=`<div class="drawer-head"><div class="dh-ic">✅</div><div><div style="font-weight:840;font-size:16px">${esc(sub.dept)} · ${esc(sub.session)}</div><div style="color:var(--muted);font-size:12.5px">${esc(sub.store)} · ${esc(sub.date)} · ${esc(sub.id)}</div></div><button class="x-btn" onclick="closeDrawer()">✕</button></div>
+    <div class="drawer-body hist-drawer"><div class="hist-summary"><span><b>${esc(sub.progress||0)}%</b> Progress</span><span><b>${esc(sub.done||0)}/${esc(sub.total||0)}</b> Done</span><span><b>${photos.length}</b> Photos</span><span><b>${esc(sub.by||'—')}</b> Submitted by</span></div>${rows||'<div class="empty">No checklist items stored.</div>'}</div>`;
+  $('#drawer').classList.add('open'); $('#drawer-mask').classList.add('open');
+}
+function histOpenBin(id){
+  const r=((DB.binAdmin&&DB.binAdmin.records)||[]).find(x=>x.id===id); if(!r) return;
+  const checks=(r.checklist||[]).map(c=>`<div class="hist-line done"><div><b>✓ ${esc(c.task)}</b><span>Completed</span></div></div>`).join('');
+  $('#drawer').innerHTML=`<div class="drawer-head"><div class="dh-ic">🗑️</div><div><div style="font-weight:840;font-size:16px">Bin record · ${esc(r.day)}</div><div style="color:var(--muted);font-size:12.5px">${esc(r.store)} · ${esc(r.date)} · ${esc(r.id)}</div></div><button class="x-btn" onclick="closeDrawer()">✕</button></div>
+    <div class="drawer-body hist-drawer"><div class="hist-summary"><span><b>${esc(r.staffName)}</b> Staff</span><span><b>${esc(r.binQty)}</b> Bins</span><span><b>${esc((r.created||'').slice(0,16).replace('T',' '))}</b> Time</span></div>${r.photo?`<a href="${imgSrc(r.photo)}" target="_blank" rel="noopener"><img class="hist-hero-photo" src="${imgSrc(r.photo)}" alt=""></a>`:''}${checks}</div>`;
+  $('#drawer').classList.add('open'); $('#drawer-mask').classList.add('open');
+}
+function histOpenSchedule(id){
+  const r=(DB.scheduleHistory||[]).find(x=>x.id===id); if(!r) return;
+  $('#drawer').innerHTML=`<div class="drawer-head"><div class="dh-ic">${r.type==='maintenance'?'🔧':'🧽'}</div><div><div style="font-weight:840;font-size:16px">${esc(r.task)}</div><div style="color:var(--muted);font-size:12.5px">${esc(r.store)} · ${esc(r.date)} · ${esc(r.id)}</div></div><button class="x-btn" onclick="closeDrawer()">✕</button></div>
+    <div class="drawer-body hist-drawer"><div class="hist-summary"><span><b>${esc(r.staffName)}</b> Completed by</span><span><b>${esc(r.dept||'')}</b> Department</span><span><b>${esc(r.day)}</b> Day</span><span><b>${esc((r.created||'').slice(0,16).replace('T',' '))}</b> Time</span></div>${r.photo?`<a href="${imgSrc(r.photo)}" target="_blank" rel="noopener"><img class="hist-hero-photo" src="${imgSrc(r.photo)}" alt=""></a>`:''}${r.note?`<div class="hist-note">${esc(r.note)}</div>`:''}${isAdmin()?`<button class="btn sm" onclick="schedDeleteHistory('${ckJS(r.id)}')"><i class="fas fa-trash"></i> Delete record</button>`:''}</div>`;
+  $('#drawer').classList.add('open'); $('#drawer-mask').classList.add('open');
+}
+function renderHistory(){
+  const h=histState(); setAccent('#0f766e'); setCrumb('🧾','Checklist History','Checklist, bin and cleaning evidence records');
+  const tabs=[['checklist','Checklist'],['bin','Bin'],['schedule','Cleaning & Maintenance']].map(t=>`<button class="seg-btn ${h.tab===t[0]?'active':''}" onclick="histTab('${t[0]}')">${t[1]}</button>`).join('');
+  const storePick=isSuper()?`<select class="login-input" style="width:auto" onchange="histSet('store',this.value)">${['All stores',...DB.stores].map(s=>`<option ${s===h.store?'selected':''}>${esc(s)}</option>`).join('')}</select>`:'';
+  const rows=h.tab==='checklist'?histChecklistRows():h.tab==='bin'?histBinRows():histScheduleRows();
+  const deptList=h.tab==='checklist'?[...new Set((DB.checklistSubs||[]).filter(histStoreOk).map(r=>r.dept).filter(Boolean))]:h.tab==='schedule'?[...new Set((DB.scheduleHistory||[]).filter(histStoreOk).map(r=>r.dept).filter(Boolean))]:[];
+  const deptPick=deptList.length?`<select class="login-input" style="width:auto" onchange="histSet('dept',this.value)">${['All departments',...deptList.sort()].map(d=>`<option ${d===h.dept?'selected':''}>${esc(d)}</option>`).join('')}</select>`:'';
+  const cards=rows.map(r=>{
+    if(h.tab==='checklist'){
+      const photos=[]; (r.items||[]).forEach(it=>(it.photos||[]).forEach(p=>photos.push(p)));
+      return `<button class="hist-card" onclick="histOpenChecklist('${ckJS(r.id)}')"><div class="hist-top"><b>${esc(r.dept)} · ${esc(r.session)}</b><span>${esc(r.progress||0)}%</span></div><p>${esc(r.store)} · ${esc(r.date)} · by ${esc(r.by||'—')}</p>${histStrip(photos)}<small>${esc(r.done||0)}/${esc(r.total||0)} tasks · ${photos.length} photos</small></button>`;
+    }
+    if(h.tab==='bin') return `<button class="hist-card" onclick="histOpenBin('${ckJS(r.id)}')"><div class="hist-top"><b>Bin · ${esc(r.day)}</b><span>${esc(r.binQty)} bins</span></div><p>${esc(r.store)} · ${esc(r.date)} · ${esc(r.staffName||'—')}</p>${histStrip([r.photo])}<small>${esc(r.id)}</small></button>`;
+    return `<button class="hist-card" onclick="histOpenSchedule('${ckJS(r.id)}')"><div class="hist-top"><b>${esc(r.type==='maintenance'?'Maintenance':'Cleaning')}</b><span>${esc(r.day)}</span></div><p>${esc(r.store)} · ${esc(r.date)} · ${esc(r.dept||'')}</p><strong>${esc(r.task)}</strong>${histStrip([r.photo])}<small>Completed by ${esc(r.staffName||'—')}</small></button>`;
+  }).join('');
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🧾</div><div><h2>Checklist History</h2><p>Review submitted checklist records, bin evidence, and completed cleaning/maintenance tasks with photos.</p></div><div class="ph-actions">${storePick}${deptPick}<div class="seg seg-light">${tabs}</div></div></div>
+    <div class="toolbar"><span class="count-chip">${rows.length} record${rows.length!==1?'s':''}</span><div class="search"><input value="${esc(h.q||'')}" oninput="State.hist.q=this.value;renderHistory()" placeholder="Search staff, task, area, ID..."></div></div>
+    <div class="hist-grid">${cards||'<div class="card card-pad empty compact">No history records yet.</div>'}</div>`;
 }
 
 /* ============================================================ MANAGER PANEL */
@@ -1572,7 +1863,7 @@ function mgrSubTasks(s){
     return s.items.map(it=>({task:it.task, area:it.area, done:!!it.done, photoReq:(it.photos||[]).length>0||false,
       photos:(it.photos||[]).slice(), note:it.note||'', temp: it.temp?{ok:it.temp.inRange, label: it.temp.defrosting?'Defrosting':(it.temp.value!=null?it.temp.value+'°C':'—')}:null }));
   }
-  const items=((DB.checklist&&DB.checklist.items)||[]).map(ckItem).filter(r=>r.dept===s.department && ckInSession(r,s.session));
+  const items=((DB.checklist&&DB.checklist.items)||[]).map(ckItem).filter(r=>ckStoreOk(r,s.store||State.branch) && r.dept===s.department && ckInSession(r,s.session));
   const doneN=Math.max(0,Math.min(items.length, Math.round(items.length*((s.progress||0)/100))));
   const col=(((DB.checklist&&DB.checklist.deptMeta)||{})[s.department]||{}).color||'#0f766e';
   return items.map((r,idx)=>{
@@ -1713,7 +2004,7 @@ function pgPhotos(){
     })));
   });
   if(State.chk&&State.chk.state){
-    (DB.checklist.items||[]).map(ckItem).forEach(r=>{
+    (DB.checklist.items||[]).map(ckItem).filter(r=>ckStoreOk(r)).forEach(r=>{
       const st=State.chk.state[r.i]||{};
       (st.photos||[]).forEach((src,idx)=>rows.push({
         src, store:State.branch, dept:r.dept, area:r.area||'General', task:r.task, session:State.chk.session||'', date:today, by:'Draft checklist', source:'Draft', idx
@@ -1726,6 +2017,14 @@ function pgPhotos(){
       if(!r.photo||(!isSuper()&&r.store!==State.branch)) return;
       rows.push({src:r.photo,store:r.store||State.branch,dept:r.department||r.category||m.short,area:r.location||r.category||m.short,task:r.title||r.equipment||r.summary||r.shortDescription||r.issue||r.description||m.label,session:'',date:String(r.created||r.date||'').slice(0,10),by:r.reportedBy||'',source:m.short,idx:0});
     });
+  });
+  ((DB.binAdmin&&DB.binAdmin.records)||[]).forEach(r=>{
+    if(!r.photo||(!isSuper()&&r.store!==State.branch)) return;
+    rows.push({src:r.photo,store:r.store||State.branch,dept:'Bin Admin',area:r.day||'Bin collection',task:`${r.binQty||''} bins taken out`,session:'',date:r.date||String(r.created||'').slice(0,10),by:r.staffName||'',source:'Bin Admin',idx:0});
+  });
+  (DB.scheduleHistory||[]).forEach(r=>{
+    if(!r.photo||(!isSuper()&&r.store!==State.branch)) return;
+    rows.push({src:r.photo,store:r.store||State.branch,dept:r.type==='maintenance'?'Maintenance':'Cleaning',area:r.dept||'Schedule',task:r.task||'Completed task',session:r.day||'',date:r.date||String(r.created||'').slice(0,10),by:r.staffName||'',source:'Cleaning & Maintenance',idx:0});
   });
   return rows.sort((a,b)=>String(b.date).localeCompare(String(a.date)));
 }
@@ -1765,7 +2064,7 @@ function renderWhatsapp(){
   if(!State.wa) State.wa={period:'Opening'};
   const period=State.wa.period, C=DB.checklist;
   const byDept={};
-  C.items.forEach((it,i)=>{ const when=it[3], inP=period==='Opening'?(when==='O'||when==='A'):(when==='C'||when==='A'); if(!inP) return;
+  C.items.forEach((it,i)=>{ const r=ckItem(it,i); if(!ckStoreOk(r)) return; const when=it[3], inP=period==='Opening'?(when==='O'||when==='A'):(when==='C'||when==='A'); if(!inP) return;
     const dept=it[0], ps=photoSpec(it[4]), st=(State.chk&&State.chk.state[i])||{};
     const d=byDept[dept]=byDept[dept]||{total:0,done:0,photos:[],reqMissing:0,meta:C.deptMeta[dept]||{}};
     d.total++; if(st.done)d.done++; (st.photos||[]).forEach(u=>d.photos.push(u)); if(ps&&ps.req&&!(st.photos||[]).length)d.reqMissing++; });
@@ -1936,6 +2235,8 @@ function renderData(){
     ['stores/{storeId}/records','Operational records with prefixed IDs'],
     ['stores/{storeId}/photos','Photo evidence metadata by checklist section and area'],
     ['stores/{storeId}/schedules','Cleaning, maintenance and job schedule tasks'],
+    ['stores/{storeId}/scheduleHistory','Cleaning and maintenance completion records with photo evidence'],
+    ['stores/{storeId}/binRecords','Bin checklist submissions with quantity, staff and photo evidence'],
     ['stores/{storeId}/auditLogs','Immutable audit events for create/update/delete/verify']
   ];
   const isolationRows=[
