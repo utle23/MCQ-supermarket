@@ -2222,8 +2222,42 @@ function renderStoreConfig(){ if(!isSuper()){ $('#content').innerHTML='<div clas
 
 /* ============================================================ DATA MANAGEMENT */
 function dataStoreId(store){ return String(store||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'unknown-store'; }
+function dataBytes(obj){ try{ return new Blob([JSON.stringify(obj)]).size; }catch(e){ return JSON.stringify(obj||'').length; } }
+function dataFmtSize(b){ return b>1048576?(b/1048576).toFixed(1)+' MB':b>1024?(b/1024).toFixed(1)+' KB':b+' B'; }
+function dataScopeRecs(m){ return isSuper()?(m.records||[]):(m.records||[]).filter(r=>r.store===State.branch); }
+function dataExportModule(id,fmt){ const m=DB.modules[id]; if(!m) return; const rows=dataScopeRecs(m);
+  const keys=[...new Set(rows.flatMap(r=>Object.keys(r)))].filter(k=>!['icon','short','mod'].includes(k));
+  expRecords(m.label+' records', keys.map(k=>({label:prettyKey(k),get:r=>r[k]})), rows, fmt||'excel'); }
+function dataDeleteModule(id){ const m=DB.modules[id]; if(!m) return; const n=dataScopeRecs(m).length;
+  if(!n){ toast('Nothing to delete'); return; }
+  if(!confirm('Delete '+n+' '+m.label+' record(s)'+(isSuper()?' across ALL stores':' for '+State.branch)+'?\nThis frees space and cannot be undone.')) return;
+  m.records = isSuper()? [] : (m.records||[]).filter(r=>r.store!==State.branch);
+  if(window.auditLog) auditLog('delete','records',m.id,State.branch,{count:n},null);
+  if(window.persist) window.persist(); toast('🗑 Deleted '+n+' '+m.label); renderData();
+}
+function dataClearSubs(){ const n=(DB.checklistSubs||[]).filter(s=>isSuper()||s.store===State.branch).length;
+  if(!n){ toast('No submitted checklists'); return; }
+  if(!confirm('Delete '+n+' submitted checklist(s)'+(isSuper()?' across ALL stores':' for '+State.branch)+'? Photos stay in storage until purged. Cannot be undone.')) return;
+  DB.checklistSubs = isSuper()? [] : (DB.checklistSubs||[]).filter(s=>s.store!==State.branch);
+  if(window.persist) window.persist(); toast('🗑 Cleared '+n+' submissions'); renderData();
+}
+function dataClearAll(){
+  if(!confirm('Delete ALL operational records + submitted checklists'+(isSuper()?' across ALL stores':' for '+State.branch)+'?\nStaff, templates & schedules are KEPT. Cannot be undone.')) return;
+  Object.values(DB.modules).forEach(m=>{ m.records = isSuper()?[]:(m.records||[]).filter(r=>r.store!==State.branch); });
+  DB.checklistSubs = isSuper()? [] : (DB.checklistSubs||[]).filter(s=>s.store!==State.branch);
+  if(window.auditLog) auditLog('delete','records','ALL',State.branch,null,null);
+  if(window.persist) window.persist(); toast('🗑 All records cleared'); renderData();
+}
+function dataResetStore(store){ if(!isSuper()) return;
+  if(!confirm('RESET all data for '+store+' (records, submitted checklists, schedule history)?\nStaff & templates kept. Cannot be undone.')) return;
+  Object.values(DB.modules).forEach(m=>{ m.records=(m.records||[]).filter(r=>r.store!==store); });
+  if(Array.isArray(DB.checklistSubs)) DB.checklistSubs=DB.checklistSubs.filter(s=>s.store!==store);
+  if(Array.isArray(DB.scheduleHistory)) DB.scheduleHistory=DB.scheduleHistory.filter(r=>r.store!==store);
+  if(window.auditLog) auditLog('delete','store',store,store,null,null);
+  if(window.persist) window.persist(); toast('🗑 Reset '+store); renderData();
+}
 function renderData(){
-  setAccent('#b45309'); setCrumb('🗄️','Data Management','Export, back up & maintain records');
+  setAccent('#b45309'); setCrumb('🗄️','Data Management','Export, delete & free up space');
   const counts=Object.values(DB.modules).map(m=>({l:m.label,n:isSuper()?(m.records||[]).length:(m.records||[]).filter(r=>r.store===State.branch).length,i:m.icon}));
   const scope=isSuper()?'Super Admin · aggregate view':'Store workspace · '+State.branch;
   const doc=isSuper()?'mcq_store_states/{each-store}':'mcq_store_states/'+dataStoreId(State.branch);
@@ -2277,11 +2311,23 @@ function renderData(){
         </div>
       </div>
     </div>
-    <div class="card"><div class="card-head"><h3>Record counts</h3></div><div class="table-wrap"><table class="grid"><thead><tr><th>Module</th><th>Records</th><th>Export</th></tr></thead><tbody>
-      ${counts.map(c=>`<tr><td>${c.i} <b>${esc(c.l)}</b></td><td class="num">${c.n}</td><td><button class="btn sm" onclick="toast('Exported ${esc(c.l)} (demo CSV)')">⬇ CSV</button></td></tr>`).join('')}
-    </tbody></table></div></div>
-    <div class="split-2" style="margin-top:16px"><div class="card card-pad"><h4>Backup</h4><p style="color:var(--muted);font-size:12.5px">Last backup: today 02:00 · automatic nightly.</p><button class="btn primary" onclick="toast('Backup started (demo)')">⟳ Run backup now</button></div>
-      <div class="card card-pad"><h4>Maintenance</h4><p style="color:var(--muted);font-size:12.5px">Archive records older than 12 months to keep the app fast.</p><button class="btn" onclick="toast('Archive scheduled (demo)')">🗃️ Archive old records</button></div></div>`;
+    ${(()=>{ const mods=Object.entries(DB.modules).map(([id,m])=>{const rs=dataScopeRecs(m);return {id,l:m.label,i:m.icon,n:rs.length,b:dataBytes(rs)};});
+      const subs=(DB.checklistSubs||[]).filter(s=>isSuper()||s.store===State.branch);
+      const totalB=mods.reduce((s,m)=>s+m.b,0)+dataBytes(subs);
+      return `<div class="card"><div class="card-head"><h3>Records &amp; storage</h3><span class="ch-sub">${esc(scope)} · ~${dataFmtSize(totalB)} of record data</span></div><div class="table-wrap"><table class="grid"><thead><tr><th>Module</th><th>Records</th><th>~Size</th><th>Export</th><th>Delete</th></tr></thead><tbody>
+      ${mods.map(c=>`<tr><td>${c.i} <b>${esc(c.l)}</b></td><td class="num">${c.n}</td><td class="num">${dataFmtSize(c.b)}</td><td>${c.n?`<button class="btn sm" onclick="dataExportModule('${c.id}','excel')">⬇ Excel</button>`:'—'}</td><td>${c.n?`<button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="dataDeleteModule('${c.id}')">🗑</button>`:'—'}</td></tr>`).join('')}
+      <tr><td>📋 <b>Submitted checklists</b></td><td class="num">${subs.length}</td><td class="num">${dataFmtSize(dataBytes(subs))}</td><td>—</td><td>${subs.length?`<button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="dataClearSubs()">🗑</button>`:'—'}</td></tr>
+    </tbody></table></div></div>`; })()}
+    <div class="card danger-zone" style="margin-top:16px;border:1.5px solid #f3c9c9"><div class="card-head"><h3 style="color:var(--bad)">⚠️ Cleanup &amp; free space</h3><span class="ch-sub">PythonAnywhere databases have size limits — delete old data to stay within them</span></div>
+      <div class="card-pad">
+        <p style="color:var(--muted);font-size:12.5px;margin:0 0 12px">Deleting clears the data from ${isSuper()?'every store document':'this store’s document'} and frees space. Staff, checklist templates and schedules are kept. <b>Export first if you need a copy.</b></p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <button class="btn" style="color:var(--bad);border-color:#f3c9c9" onclick="dataClearSubs()">🗑 Delete submitted checklists</button>
+          <button class="btn" style="color:var(--bad);border-color:#f3c9c9" onclick="dataClearAll()">🗑 Delete all records + submissions</button>
+        </div>
+        ${isSuper()?`<div class="section-title" style="margin-top:18px">Reset a single store</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">${DB.stores.map(s=>`<button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="dataResetStore('${ckJS(s)}')">Reset ${esc(s)}</button>`).join('')}</div>`:''}
+      </div></div>`;
 }
 
 /* ============================================================ RULES */
