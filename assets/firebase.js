@@ -105,6 +105,8 @@
     return { schemaVersion:2, store:scoped?store:'All stores', modules, staff, structure:clone(DB.structure||[]),
       // checklist items are tuples (arrays) — Firestore forbids nested arrays, so store as JSON string
       checklistItems: JSON.stringify((DB.checklist&&DB.checklist.items)||[]),
+      checklistTemplateVersion: (DB.checklist&&DB.checklist.templateVersion)||0,
+      checklistDeadlines: clone((DB.checklist&&DB.checklist.deadlines)||{}),
       checklistSubs: JSON.stringify(subs),
       jobDuties: JSON.stringify(DB.jobDuties||null), jobRoster: JSON.stringify(DB.jobRoster||null),
       scheduleTasks: JSON.stringify(DB.scheduleTasks||[]), scheduleTicks: clone(DB.scheduleTicks||{}), auditLogs:audits,
@@ -115,7 +117,15 @@
     if(d.modules) RECORD_MODS.forEach(m=>{ if(DB.modules[m]) DB.modules[m].records=Array.isArray(d.modules[m])?clone(d.modules[m]):[]; });
     if(Array.isArray(d.staff)) DB.staff=clone(d.staff);
     if(Array.isArray(d.structure)){ DB.structure=clone(d.structure); if(window.normalizeStaffStructure) window.normalizeStaffStructure(); }
-    if(d.checklistItems && DB.checklist){ let ci=d.checklistItems; if(typeof ci==='string'){ try{ ci=JSON.parse(ci); }catch(e){ ci=null; } } if(Array.isArray(ci)&&ci.length) DB.checklist.items=ci; if(window.normalizeChecklistTemplate) window.normalizeChecklistTemplate(); }
+    if(d.checklistItems && DB.checklist){
+      const cloudVer=+d.checklistTemplateVersion||0, seedVer=+((DB.checklist&&DB.checklist.templateVersion)||0);
+      if(cloudVer>=seedVer){   // cloud template is same/newer → use it; else keep the newer seed and let next save push it to every store
+        let ci=d.checklistItems; if(typeof ci==='string'){ try{ ci=JSON.parse(ci); }catch(e){ ci=null; } } if(Array.isArray(ci)&&ci.length) DB.checklist.items=ci;
+        if(d.checklistDeadlines && typeof d.checklistDeadlines==='object') DB.checklist.deadlines=Object.assign({},DB.checklist.deadlines,d.checklistDeadlines);
+        if(d.checklistTemplateVersion!=null) DB.checklist.templateVersion=cloudVer;
+      }
+      if(window.normalizeChecklistTemplate) window.normalizeChecklistTemplate();
+    }
     if(d.checklistSubs!=null){ let cs=parseJSON(d.checklistSubs,null); if(Array.isArray(cs)) DB.checklistSubs=clone(cs); }
     if(d.jobDuties!=null){ let jd=d.jobDuties; if(typeof jd==='string'){ try{ jd=JSON.parse(jd); }catch(e){ jd=null; } } if(jd&&typeof jd==='object') DB.jobDuties=jd; }
     if(d.jobRoster!=null){ let jr=d.jobRoster; if(typeof jr==='string'){ try{ jr=JSON.parse(jr); }catch(e){ jr=null; } } if(jr&&typeof jr==='object') DB.jobRoster=jr; }

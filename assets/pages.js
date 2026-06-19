@@ -105,7 +105,15 @@ function staffDisplayForDept(dept,current){
   return names.length?names.join(', '):(cur||'—');
 }
 function ckItem(it,i){ return {i,dept:it[0],area:it[1],task:it[2],when:it[3],photo:photoSpec(it[4]),meta:it[5]||{}}; }
-function ckInSession(r,session){ return session==='Opening'?(r.when==='O'||r.when==='A'):(r.when==='C'||r.when==='A'); }
+function ckInSession(r,session){
+  if(session==='Opening') return r.when==='O'||r.when==='A';
+  if(session==='Closing') return r.when==='C'||r.when==='A';
+  if(session==='Mid-afternoon') return r.when==='M';
+  return false;
+}
+function ckDeadline(session){ return ((DB.checklist&&DB.checklist.deadlines)||{})[session] || CK_DEADLINE[session] || ''; }
+function ckEditDeadline(session){ const v=prompt('Deadline for '+session+' (e.g. 10:30 AM):', ckDeadline(session)); if(v==null) return;
+  DB.checklist.deadlines=DB.checklist.deadlines||{}; DB.checklist.deadlines[session]=v.trim(); if(window.persist)window.persist(); renderChecklist(); toast('✓ Deadline updated'); }
 function renderChecklist(){
   const C=DB.checklist; setAccent('#0e9f6e');
   if(!State.chk) State.chk={session:'Opening',dept:C.depts[0],area:'ALL',state:{}};
@@ -123,9 +131,10 @@ function renderChecklist(){
    <div class="ck-sessionbar card">
      <div class="seg ck-seg">
        <button class="seg-btn ${s.session==='Opening'?'active':''}" onclick="ckSession('Opening')">☀️ Opening</button>
+       <button class="seg-btn ${s.session==='Mid-afternoon'?'active':''}" onclick="ckSession('Mid-afternoon')">🌤️ Mid-afternoon</button>
        <button class="seg-btn ${s.session==='Closing'?'active':''}" onclick="ckSession('Closing')">🌙 Closing</button>
      </div>
-     <span class="ck-deadline ${s.session==='Opening'?'am':'pm'}">⏰ Deadline <b>${CK_DEADLINE[s.session]}</b></span>
+     <span class="ck-deadline ${s.session==='Opening'?'am':'pm'}">⏰ Deadline <b>${esc(ckDeadline(s.session))}</b>${isAdmin()?` <button class="ck-dl-edit" onclick="ckEditDeadline('${ckJS(s.session)}')" title="Edit deadline">✎</button>`:''}</span>
      <div class="tb-spacer"></div>
      <div class="filter"><label>Date</label><input type="date" value="${new Date().toISOString().slice(0,10)}"></div>
    </div>
@@ -165,11 +174,14 @@ function ckDraw(){
       html+=`<div class="ck-area-h">${esc(area)}${isAdmin()?`<button class="ck-add-task" onclick="ckRenameSection('${ckJS(dept)}','${ckJS(area)}')">Rename section</button><button class="ck-add-task" onclick="ckAddTask('${ckJS(dept)}','${ckJS(area)}')">＋ Add task</button>`:''}</div>`;
       items.forEach(r=>{ const st=State.chk.state[r.i]||{}; const done=st.done;
         if(isAdmin() && State.chk.editing===r.i){
+          const pm = r.photo ? (r.photo.req ? {mode:'R',min:r.photo.min,max:r.photo.max} : {mode:'O',min:0,max:(r.photo.max||5)}) : {mode:'0',min:1,max:5};
           html+=`<div class="ck-task editing" id="ck-row-${r.i}"><div class="ck-edit">
             <input id="cke-task" class="ck-edit-name" value="${esc(r.task)}" placeholder="Task description">
             <div class="ck-edit-row">
-              <select id="cke-when"><option value="O" ${r.when==='O'?'selected':''}>☀️ Opening</option><option value="C" ${r.when==='C'?'selected':''}>🌙 Closing</option><option value="A" ${r.when==='A'?'selected':''}>All day</option></select>
-              <select id="cke-photo"><option value="0" ${!r.photo?'selected':''}>No photo</option><option value="O" ${r.photo&&!r.photo.req?'selected':''}>📷 Photo optional</option><option value="R1-5" ${r.photo&&r.photo.req?'selected':''}>📷 Photo required</option></select>
+              <select id="cke-when"><option value="O" ${r.when==='O'?'selected':''}>☀️ Opening</option><option value="M" ${r.when==='M'?'selected':''}>🌤️ Mid-afternoon</option><option value="C" ${r.when==='C'?'selected':''}>🌙 Closing</option><option value="A" ${r.when==='A'?'selected':''}>All day</option></select>
+              <select id="cke-photo"><option value="0" ${pm.mode==='0'?'selected':''}>No photo</option><option value="O" ${pm.mode==='O'?'selected':''}>📷 Photo optional</option><option value="R" ${pm.mode==='R'?'selected':''}>📷 Photo required</option></select>
+              <label class="cke-num">min <input id="cke-pmin" type="number" min="0" max="10" value="${pm.min}"></label>
+              <label class="cke-num">max <input id="cke-pmax" type="number" min="1" max="10" value="${pm.max}"></label>
               <button class="btn sm primary" onclick="ckSaveTask(${r.i})">💾 Save</button>
               <button class="btn sm" onclick="ckCancelEdit()">Cancel</button>
               <button class="btn sm ck-del" onclick="ckDelTask(${r.i})"><i class="fas fa-trash"></i></button>
@@ -285,7 +297,12 @@ function ckSaveTask(i){
   const it=DB.checklist.items[i]; if(!it) return;
   const name=(document.getElementById('cke-task')?.value||'').trim(); if(name) it[2]=name;
   const w=document.getElementById('cke-when')?.value; if(w) it[3]=w;
-  const p=document.getElementById('cke-photo')?.value; it[4]= (p==='0'||!p)?0:p;
+  const mode=document.getElementById('cke-photo')?.value;
+  let pmin=parseInt(document.getElementById('cke-pmin')?.value,10); if(isNaN(pmin))pmin=1;
+  let pmax=parseInt(document.getElementById('cke-pmax')?.value,10); if(isNaN(pmax))pmax=Math.max(1,pmin);
+  if(mode==='R'){ pmin=Math.max(1,pmin); pmax=Math.max(pmax,pmin); it[4]='R'+pmin+'-'+pmax; }
+  else if(mode==='O'){ it[4]= pmax>0 ? ('O'+pmax) : 'O'; }
+  else it[4]=0;
   State.chk.editing=null; ckPersistTemplate(); renderChecklist(); toast('✓ Task saved');
 }
 function ckAddTask(dept,area){

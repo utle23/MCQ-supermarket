@@ -751,6 +751,10 @@ table.jobduty td{vertical-align:top}
 .ck-edit-name{width:100%;border:1.5px solid var(--line);border-radius:9px;padding:9px 11px;font-size:13.5px;font-family:inherit;font-weight:600}
 .ck-edit-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .ck-edit-row select{width:auto;min-width:128px}
+.cke-num{font-size:11px;font-weight:700;color:var(--muted);display:inline-flex;align-items:center;gap:5px}
+.cke-num input{width:58px;border:1.4px solid var(--line);border-radius:8px;padding:6px 7px;font-family:inherit;font-size:12px}
+.ck-dl-edit{border:0;background:transparent;cursor:pointer;font-size:12px;opacity:.7;margin-left:2px}
+.ck-dl-edit:hover{opacity:1}
 .ck-del{color:var(--bad);border-color:#f3c9c9}
 
 /* ---------------- staff structure live editor ---------------- */
