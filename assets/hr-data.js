@@ -97,8 +97,6 @@ DB.checklist = {
     ['MANAGER','Temperature Checks','FROZEN & DAIRY - FREEZER TEMPERATURE','C','R1-1',{temp:true,type:'freezer',dept:'Frozen & Dairy',equipment:'Freezer'}],
     ['MANAGER','Temperature Checks','BUTCHER - MEAT DISPLAY FRIDGE TEMPERATURE','C','R1-1',{temp:true,type:'fridge',dept:'Butcher',equipment:'Meat Display Fridge'}],
     ['MANAGER','Temperature Checks','BUTCHER - COLDROOM TEMPERATURE','C','R1-1',{temp:true,type:'fridge',dept:'Butcher',equipment:'Coldroom'}],
-    ['MANAGER','Opening','OVERNIGHT FRIDGE / FREEZER ALARMS CHECKED — ALL RECOVERED','O',0],
-    ['MANAGER','Opening','CCTV AND SECURITY ALARM WORKING','O',0],
     ['MANAGER','Opening','FIRST-AID KIT STOCKED AND ACCESSIBLE','O',0],
     ['MANAGER','Opening','CASH FLOATS ISSUED TO TILLS AND RECORDED','O',0],
     ['MANAGER','Closing','CASH COUNTED, RECONCILED AND SECURED IN SAFE','C',0],
@@ -133,8 +131,8 @@ DB.checklist = {
     ['CASHIER','Closing','FV & GROC RETURNED','C',0],
     ['CASHIER','Closing','LOCKED UP ALL BLACK GATES','C',0],
     ['CASHIER','Opening','EFTPOS TERMINALS AND SCANNERS TESTED AND WORKING','O',0],
-    ['CASHIER','Opening','HAND SANITISER AT COUNTER TOPPED UP','O',0],
-    ['CASHIER','Opening','CHECKOUT BELTS AND SCALES WIPED CLEAN','O','R1-2'],
+    ['CASHIER','Opening','HAND SANITISER AND WIPING CLOTHS AT COUNTER TOPPED UP','O',0],
+    ['CASHIER','Opening','CHECKOUT AREA AND SCALES WIPED CLEAN','O','R1-2'],
     ['CASHIER','Closing','TILL CASH COUNTED AND HANDED TO MANAGER','C',0],
     ['CASHIER','Closing','EFTPOS SETTLEMENT / BATCH DONE','C',0],
     // ---- FV ----
@@ -190,6 +188,7 @@ DB.checklist = {
     ['GROCERY','Grocery','REMOVE DAMAGED PACKAGING FROM SHELF','A',0],
     ['GROCERY','Grocery','RANDOM EXPIRY CHECK FOR SHORT-DATED ITEMS','A',0],
     ['GROCERY','Grocery','KEY VALUE ITEMS ARE FILLED UP','A','O'],
+    ['GROCERY','Grocery','PRODUCTS ARE WELL ORGANISED WITH NO EMPTY GAPS ON SHELVES','A','O'],
     ['GROCERY','Grocery','AISLES CLEAN, NO RUBBISH ON THE WAY','A',0],
     ['GROCERY','Grocery','FRONT SHELVES ARE FACED UP WITH LABELS','A','O'],
     ['GROCERY','Grocery','LEFT BEHIND PRODUCTS RETURNED','A',0],
@@ -203,6 +202,7 @@ DB.checklist = {
     ['FROZEN & DAIRY','Frozen & Dairy','CHECK PRICE LABEL ACCURACY','A',0],
     ['FROZEN & DAIRY','Frozen & Dairy','RANDOM EXPIRY CHECK FOR SHORT-DATED ITEMS. MARKDOWN DONE','A',0],
     ['FROZEN & DAIRY','Frozen & Dairy','KEY VALUE ITEMS ARE FILLED UP','A',0],
+    ['FROZEN & DAIRY','Frozen & Dairy','PRODUCTS ARE WELL ORGANISED WITH NO EMPTY GAPS ON SHELVES','A','O'],
     ['FROZEN & DAIRY','Frozen & Dairy','FRONT SHELVES ARE FACED UP WITH LABELS','A',0],
     ['FROZEN & DAIRY','Frozen & Dairy','AISLES CLEAN, NO RUBBISH ON THE WAY','A','R1-5'],
     ['FROZEN & DAIRY','Frozen & Dairy','TOFU QUALITY CHECKED AND CLEAN','A',0],
@@ -233,12 +233,9 @@ DB.checklist = {
     ['BUTCHER','Retail Closing','WASTE / TRIM BINS EMPTIED AND SANITISED','C',0],
     // ---- CASHIER · Cosmetics (sub-section of Cashier) ----
     ['CASHIER','Cosmetics','ALL COSMETIC SHELVES FULLY STOCKED AND FACED UP','O','R1-5'],
-    ['CASHIER','Cosmetics','GLASS DISPLAY CABINETS WIPED AND FINGERPRINT-FREE','O','R1-3'],
-    ['CASHIER','Cosmetics','TESTER UNITS CLEAN, WORKING AND TOPPED UP','O',0],
+    ['CASHIER','Cosmetics','GLASS DISPLAY CABINETS WIPED','O','R1-3'],
     ['CASHIER','Cosmetics','PRICE LABELS CORRECT AND PROMOTIONAL TAGS IN PLACE','O',0],
-    ['CASHIER','Cosmetics','CHECK EXPIRY DATES — REMOVE OR MARK DOWN SHORT-DATED ITEMS','A',0],
     ['CASHIER','Cosmetics','NEW ARRIVALS PRICED, TAGGED AND PUSHED TO SHELF','A','R1-3'],
-    ['CASHIER','Cosmetics','HIGH-VALUE / FRAGRANCE LOCKED CABINET STOCK CHECKED','A',0],
     ['CASHIER','Cosmetics','SECTION LOOKS NEAT, WELL ORGANISED AND SHOPPABLE','A','R1-3'],
     ['CASHIER','Cosmetics','RESTOCK GAPS FROM BACK STOCK AND FACE UP ALL SHELVES','C','R1-5'],
     ['CASHIER','Cosmetics','TIDY AND ORGANISE COSMETIC CABINETS NEATLY','C','R1-3'],
@@ -280,6 +277,40 @@ DB.checklist = {
     ['FORKLIFT','After Use / Closing','ANY FAULTS OR DAMAGE REPORTED TO MANAGER','C',0],
   ],
 };
+function normalizeChecklistTemplate(){
+  const items=(DB.checklist&&DB.checklist.items)||[];
+  if(!Array.isArray(items)) return;
+  const removeTasks=new Set([
+    'OVERNIGHT FRIDGE / FREEZER ALARMS CHECKED — ALL RECOVERED',
+    'CCTV AND SECURITY ALARM WORKING',
+    'TESTER UNITS CLEAN, WORKING AND TOPPED UP',
+    'CHECK EXPIRY DATES — REMOVE OR MARK DOWN SHORT-DATED ITEMS',
+    'HIGH-VALUE / FRAGRANCE LOCKED CABINET STOCK CHECKED',
+  ]);
+  DB.checklist.items=items.filter(it=>!removeTasks.has(it&&it[2]));
+  const renameTasks={
+    'HAND SANITISER AT COUNTER TOPPED UP':'HAND SANITISER AND WIPING CLOTHS AT COUNTER TOPPED UP',
+    'CHECKOUT BELTS AND SCALES WIPED CLEAN':'CHECKOUT AREA AND SCALES WIPED CLEAN',
+    'GLASS DISPLAY CABINETS WIPED AND FINGERPRINT-FREE':'GLASS DISPLAY CABINETS WIPED',
+  };
+  DB.checklist.items.forEach(it=>{ if(renameTasks[it[2]]) it[2]=renameTasks[it[2]]; });
+  const has=(dept,text)=>DB.checklist.items.some(it=>it[0]===dept&&it[2]===text);
+  const addAfter=(dept,after,row)=>{
+    if(has(dept,row[2])) return;
+    const idx=DB.checklist.items.findIndex(it=>it[0]===dept&&it[2]===after);
+    if(idx>=0) DB.checklist.items.splice(idx+1,0,row); else DB.checklist.items.push(row);
+  };
+  const addManagerPhoto=(row)=>{ if(!has('MANAGER',row[2])) DB.checklist.items.push(row); };
+  addAfter('GROCERY','KEY VALUE ITEMS ARE FILLED UP',
+    ['GROCERY','Grocery','PRODUCTS ARE WELL ORGANISED WITH NO EMPTY GAPS ON SHELVES','A','O']);
+  addAfter('FROZEN & DAIRY','KEY VALUE ITEMS ARE FILLED UP',
+    ['FROZEN & DAIRY','Frozen & Dairy','PRODUCTS ARE WELL ORGANISED WITH NO EMPTY GAPS ON SHELVES','A','O']);
+  addManagerPhoto(['MANAGER','Cool Room / Frozen Room','OPENING COOL ROOM PHOTO — WELL ORGANISED, STOCK OFF FLOOR AND WALKWAY CLEAR','O','R1-5']);
+  addManagerPhoto(['MANAGER','Cool Room / Frozen Room','OPENING FROZEN ROOM PHOTO — WELL ORGANISED, STOCK OFF FLOOR AND WALKWAY CLEAR','O','R1-5']);
+  addManagerPhoto(['MANAGER','Cool Room / Frozen Room','CLOSING COOL ROOM PHOTO — WELL ORGANISED, STOCK OFF FLOOR AND WALKWAY CLEAR','C','R1-5']);
+  addManagerPhoto(['MANAGER','Cool Room / Frozen Room','CLOSING FROZEN ROOM PHOTO — WELL ORGANISED, STOCK OFF FLOOR AND WALKWAY CLEAR','C','R1-5']);
+}
+normalizeChecklistTemplate();
 /* ============================================================
    CLEANING & MAINTENANCE — editable WEEKLY schedule (per department).
    Each task is scheduled on weekdays (days[]); scheduled day cells show
@@ -338,14 +369,25 @@ DB.staffRoles = ['Head Office','Store Manager','Assistant Manager','Supervisor',
    ORG STRUCTURE  (for the staff-structure org chart)
    ============================================================ */
 DB.structure = [
-  {dept:'Store Leadership', color:'#4f46e5', head:'Tony Lam — Head Office', members:['Linh Nguyen — Store Manager (Morley)','Hung Vo — Assistant Manager (Subiaco)']},
-  {dept:'Front End / Cashier', color:'#0ea5e9', head:'Sarah Nguyen — Front End Lead', members:['Anna Bui — Cashier','Cashier team ×6']},
-  {dept:'Fruit & Veg', color:'#10b981', head:'James Pham — FV Lead', members:['Kim Ha — FV Team','Cutting & packing team ×4']},
-  {dept:'Grocery', color:'#f59e0b', head:'Karsang Dorji — Grocery Lead', members:['Tuan Nguyen — Grocery Team','Frozen & dairy team ×3']},
-  {dept:'Butcher', color:'#ef4444', head:'David Tran — Head Butcher', members:['Minh Pham — Butcher','Back storage team ×2']},
-  {dept:'Café', color:'#8b5cf6', head:'Mai Le — Café Lead', members:['Lucy Tran — Café','Kitchen team ×3']},
-  {dept:'Warehouse / Logistics', color:'#6d4c41', head:'Peter Do — Warehouse Lead', members:['Receiving & crates team ×4','Drivers ×7']},
+  {dept:'Store Leadership', color:'#4f46e5', head:'Tony Lam — Head Office', members:['Linh Nguyen — Store Manager (Morley)','Hung Vo — Assistant Manager (Subiaco)'], newStaff:[]},
+  {dept:'Front End / Cashier', color:'#0ea5e9', head:'Sarah Nguyen — Front End Lead', members:['Anna Bui — Cashier','Cashier team ×6'], newStaff:['New cashier starters']},
+  {dept:'Fruit & Veg', color:'#10b981', head:'James Pham — FV Lead', members:['Kim Ha — FV Team','Cutting & packing team ×4'], newStaff:['New FV starters']},
+  {dept:'Grocery', color:'#f59e0b', head:'Karsang Dorji — Grocery Lead', members:['Tuan Nguyen — Grocery Team','Frozen & dairy team ×3'], newStaff:['New grocery starters']},
+  {dept:'Butcher', color:'#ef4444', head:'David Tran — Head Butcher', members:['Minh Pham — Butcher','Back storage team ×2'], newStaff:['New butcher starters']},
+  {dept:'Café', color:'#8b5cf6', head:'Mai Le — Café Lead', members:['Lucy Tran — Café','Kitchen team ×3'], newStaff:['New cafe starters']},
+  {dept:'Warehouse / Logistics', color:'#6d4c41', head:'Peter Do — Warehouse Lead', members:['Receiving & crates team ×4','Drivers ×7'], newStaff:['New warehouse starters']},
 ];
+function normalizeStaffStructure(){
+  if(!Array.isArray(DB.structure)) return;
+  DB.structure.forEach((d,i)=>{
+    if(!d) return;
+    if(!Array.isArray(d.members)) d.members=[];
+    if(!Array.isArray(d.newStaff)) d.newStaff=[];
+    delete d.level;
+    if(!d.color) d.color=['#4f46e5','#0ea5e9','#10b981','#f59e0b','#ef4444','#8b5cf6','#6d4c41'][i%7];
+  });
+}
+normalizeStaffStructure();
 
 /* ============================================================
    VIOLATION RULES catalog + escalation (verbal → written → final)
@@ -594,9 +636,9 @@ DB.modules.issue = {
 
 /* ---------- navigation groups (sidebar) ---------- */
 DB.navGroups = [
-  { id:'ops',    label:'Operations', icon:'fa-clipboard-list', items:['checklist','schedules','delivery','people'] },
+  { id:'ops',    label:'Operations', icon:'fa-clipboard-list', items:['checklist','schedules','delivery'] },
   { id:'hr',     label:'Staff & HR', icon:'fa-users',          items:['structure','staff','schedule','performance','training','violation','reward','raise','birthday'], admin:true },
-  { id:'mgmt',   label:'Management', icon:'fa-user-shield',     items:['manager','analytics','photos','whatsapp','email','data'], admin:true },
+  { id:'mgmt',   label:'Management', icon:'fa-user-shield',     items:['manager','storeconfig','analytics','photos','whatsapp','email','data'], admin:true },
   { id:'reports',label:'Reports & Rules', icon:'fa-flag',       items:['rules','issue'] },
   { id:'lab',    label:'AI Lab', icon:'fa-robot',                items:['aiuse'], admin:true },
   { id:'account',label:'Account', icon:'fa-user-lock',          items:['faceid'] },
@@ -679,6 +721,7 @@ DB.customPages = {
   performance:{ label:'Performance & Scoring', icon:'📊', render:'renderPerformance', admin:true },
   aiuse:    { label:'AI Lab',          icon:'🤖', render:'renderAIUse', admin:true },
   manager:  { label:'Manager Panel',   icon:'🛡️', render:'renderManager', admin:true },
+  storeconfig:{ label:'Store Config',   icon:'🏪', render:'renderStoreConfig', admin:true, super:true },
   analytics:{ label:'Analytics',       icon:'📈', render:'renderAnalytics', admin:true },
   photos:   { label:'Photo Gallery',   icon:'🖼️', render:'renderPhotos', admin:true },
   whatsapp: { label:'WhatsApp Daily Share', icon:'💬', render:'renderWhatsapp', admin:true },

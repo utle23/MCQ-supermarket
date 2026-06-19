@@ -1,9 +1,11 @@
 /* ============================================================
    MCQ Supermarket — Firebase sync layer (Firestore)
-   All stores share ONE document (mcq/state): records, staff,
-   structure, checklist template, email routes. Loads on boot,
-   auto-saves on change, syncs across devices in real time.
-   Falls back to in-memory sample data if Firebase is unreachable.
+   Store isolation model:
+   - mcq_store_states/{storeId}: each branch has its own staff,
+     records, checklist template, cleaning/maintenance schedule,
+     job schedule and submitted checklist data.
+   - Super Admin loads an aggregate view from every store document.
+   - The old mcq/state document is kept only as a migration seed.
    ============================================================ */
 (function(){
   const cfg = {
@@ -14,10 +16,35 @@
     messagingSenderId: "430633479978",
     appId: "1:430633479978:web:85fb955b05ef9dc1267853",
   };
-  const RECORD_MODS = ['complaint','maintenance','incident','delivery','people','violation','reward','raise','birthday','training','issue'];
-  const FB = window.MCQDB = { enabled:false };
+  const RECORD_MODS = Object.keys(DB.modules||{}).filter(k=>Array.isArray(DB.modules[k].records));
+  const STORE_COLL = 'mcq_store_states';
+  const FB = window.MCQDB = { enabled:false, lastSync:{status:'loading',message:'Starting sync...'} };
+  const clone = v => JSON.parse(JSON.stringify(v==null?null:v));
+  let baseState=null, activeUnsub=null, activeMode='none', activeStore='';
 
   function loadScript(src){ return new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.onload=res; s.onerror=()=>rej(new Error('load '+src)); document.head.appendChild(s); }); }
+  function storeId(store){ return String(store||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'unknown-store'; }
+  function storeRef(store){ return FB._db.collection(STORE_COLL).doc(storeId(store)); }
+  function legacyRef(){ return FB._db.collection('mcq').doc('state'); }
+  function captureBase(){ if(!baseState) baseState=buildState('',{full:true}); }
+  function resetToBase(){ captureBase(); applyState(clone(baseState)); }
+  function parseJSON(v,fallback){ if(v==null) return fallback; if(typeof v==='string'){ try{return JSON.parse(v);}catch(e){return fallback;} } return v; }
+  function isAllStore(store){ return !store || store==='All stores' || store==='ALL'; }
+  function inStore(r,store){ return isAllStore(store) || r.store===store; }
+  function accountStore(){
+    const acct=window.State&&State.account?State.account:null;
+    return acct&&acct.role==='super'?'All stores':acct&&acct.branch;
+  }
+  function currentPhotoStore(){
+    const acct=window.State&&State.account?State.account:null;
+    if(acct&&acct.role!=='super') return acct.branch;
+    if(window.State&&State.branch&&!isAllStore(State.branch)) return State.branch;
+    return 'All stores';
+  }
+  function canReadStore(store){
+    const acct=window.State&&State.account?State.account:null;
+    return !store || !acct || acct.role==='super' || store===acct.branch;
+  }
 
   /* ---------- Photo storage ----------
      Photos are compressed on capture and each saved as its own doc in the
@@ -48,41 +75,199 @@
     if(PhotoStore[ref]) return PhotoStore[ref];
     FB.fetchPhoto(ref); return LOADING_IMG;
   };
-  FB.savePhoto = function(dataUrl){
+  FB.savePhoto = function(dataUrl,meta){
     const id='p_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
     PhotoStore[id]=dataUrl;
-    if(FB.enabled && FB._db){ try{ FB._db.collection('mcq_photos').doc(id).set({data:dataUrl,created:Date.now()}).catch(e=>console.warn('[FB] photo save', e&&e.message)); }catch(e){} }
+    if(FB.enabled && FB._db){ try{
+      const doc=Object.assign({data:dataUrl,created:Date.now(),store:currentPhotoStore()},meta||{});
+      FB._db.collection('mcq_photos').doc(id).set(doc).catch(e=>console.warn('[FB] photo save', e&&e.message));
+    }catch(e){} }
     return id;
   };
   FB.fetchPhoto = function(id){
     if(!id || PhotoStore[id] || _photoPending[id] || !(FB.enabled&&FB._db)) return;
     _photoPending[id]=true;
     FB._db.collection('mcq_photos').doc(id).get().then(snap=>{ delete _photoPending[id];
-      if(snap&&snap.exists){ PhotoStore[id]=snap.data().data; rerenderSoon(); } }).catch(e=>{ delete _photoPending[id]; });
+      if(snap&&snap.exists){ const d=snap.data()||{}; if(!canReadStore(d.store)) return; PhotoStore[id]=d.data; rerenderSoon(); } }).catch(e=>{ delete _photoPending[id]; });
   };
 
-  function buildState(){
-    const modules={}; RECORD_MODS.forEach(m=>{ if(DB.modules[m]) modules[m]=DB.modules[m].records; });
-    return { modules, staff:DB.staff, structure:DB.structure,
+  function buildModules(store){
+    const modules={};
+    RECORD_MODS.forEach(m=>{ if(DB.modules[m]) modules[m]=(DB.modules[m].records||[]).filter(r=>inStore(r,store)).map(r=>Object.assign({store:store||r.store},clone(r))); });
+    return modules;
+  }
+  function buildState(store,opts){
+    const full=opts&&opts.full, scoped=!full&&!isAllStore(store);
+    const modules=buildModules(scoped?store:'');
+    const staff=(DB.staff||[]).filter(s=>!scoped||s.store===store).map(clone);
+    const subs=(DB.checklistSubs||[]).filter(s=>!scoped||s.store===store).map(clone);
+    const audits=(DB.auditLogs||[]).filter(a=>!scoped||a.store===store).map(clone);
+    return { schemaVersion:2, store:scoped?store:'All stores', modules, staff, structure:clone(DB.structure||[]),
       // checklist items are tuples (arrays) — Firestore forbids nested arrays, so store as JSON string
       checklistItems: JSON.stringify((DB.checklist&&DB.checklist.items)||[]),
-      checklistSubs: JSON.stringify(DB.checklistSubs||[]),
-      scheduleTasks: JSON.stringify(DB.scheduleTasks||[]), scheduleTicks: DB.scheduleTicks||{},
-      issueEmailRoutes:DB.issueEmailRoutes||{}, checklistEmailRoutes:DB.checklistEmailRoutes||{}, emailConfig:DB.emailConfig||null, faceCreds:DB.faceCreds||[], updatedAt:Date.now() };
+      checklistSubs: JSON.stringify(subs),
+      jobDuties: JSON.stringify(DB.jobDuties||null), jobRoster: JSON.stringify(DB.jobRoster||null),
+      scheduleTasks: JSON.stringify(DB.scheduleTasks||[]), scheduleTicks: clone(DB.scheduleTicks||{}), auditLogs:audits,
+      issueEmailRoutes:clone(DB.issueEmailRoutes||{}), checklistEmailRoutes:clone(DB.checklistEmailRoutes||{}), emailConfig:clone(DB.emailConfig||null), faceCreds:clone(DB.faceCreds||[]), updatedAt:Date.now() };
   }
   function applyState(d){
     if(!d) return;
-    if(d.modules) RECORD_MODS.forEach(m=>{ if(d.modules[m] && DB.modules[m]) DB.modules[m].records=d.modules[m]; });
-    if(Array.isArray(d.staff)) DB.staff=d.staff;
-    if(Array.isArray(d.structure)) DB.structure=d.structure;
-    if(d.checklistItems && DB.checklist){ let ci=d.checklistItems; if(typeof ci==='string'){ try{ ci=JSON.parse(ci); }catch(e){ ci=null; } } if(Array.isArray(ci)&&ci.length) DB.checklist.items=ci; }
-    if(d.checklistSubs!=null){ let cs=d.checklistSubs; if(typeof cs==='string'){ try{ cs=JSON.parse(cs); }catch(e){ cs=null; } } if(Array.isArray(cs)) DB.checklistSubs=cs; }
+    if(d.modules) RECORD_MODS.forEach(m=>{ if(DB.modules[m]) DB.modules[m].records=Array.isArray(d.modules[m])?clone(d.modules[m]):[]; });
+    if(Array.isArray(d.staff)) DB.staff=clone(d.staff);
+    if(Array.isArray(d.structure)){ DB.structure=clone(d.structure); if(window.normalizeStaffStructure) window.normalizeStaffStructure(); }
+    if(d.checklistItems && DB.checklist){ let ci=d.checklistItems; if(typeof ci==='string'){ try{ ci=JSON.parse(ci); }catch(e){ ci=null; } } if(Array.isArray(ci)&&ci.length) DB.checklist.items=ci; if(window.normalizeChecklistTemplate) window.normalizeChecklistTemplate(); }
+    if(d.checklistSubs!=null){ let cs=parseJSON(d.checklistSubs,null); if(Array.isArray(cs)) DB.checklistSubs=clone(cs); }
+    if(d.jobDuties!=null){ let jd=d.jobDuties; if(typeof jd==='string'){ try{ jd=JSON.parse(jd); }catch(e){ jd=null; } } if(jd&&typeof jd==='object') DB.jobDuties=jd; }
+    if(d.jobRoster!=null){ let jr=d.jobRoster; if(typeof jr==='string'){ try{ jr=JSON.parse(jr); }catch(e){ jr=null; } } if(jr&&typeof jr==='object') DB.jobRoster=jr; }
     if(d.scheduleTasks!=null){ let st=d.scheduleTasks; if(typeof st==='string'){ try{ st=JSON.parse(st); }catch(e){ st=null; } } if(Array.isArray(st)&&st.length) DB.scheduleTasks=st; }
-    if(d.scheduleTicks && typeof d.scheduleTicks==='object') DB.scheduleTicks=d.scheduleTicks;
-    if(d.emailConfig) DB.emailConfig=d.emailConfig;
-    if(Array.isArray(d.faceCreds)) DB.faceCreds=d.faceCreds;
-    if(d.issueEmailRoutes) DB.issueEmailRoutes=d.issueEmailRoutes;
-    if(d.checklistEmailRoutes) DB.checklistEmailRoutes=d.checklistEmailRoutes;
+    if(d.scheduleTicks && typeof d.scheduleTicks==='object') DB.scheduleTicks=clone(d.scheduleTicks);
+    if(Array.isArray(d.auditLogs)) DB.auditLogs=clone(d.auditLogs);
+    if(d.emailConfig) DB.emailConfig=clone(d.emailConfig);
+    if(Array.isArray(d.faceCreds)) DB.faceCreds=clone(d.faceCreds);
+    if(d.issueEmailRoutes) DB.issueEmailRoutes=clone(d.issueEmailRoutes);
+    if(d.checklistEmailRoutes) DB.checklistEmailRoutes=clone(d.checklistEmailRoutes);
+  }
+  async function seedStoreState(store){
+    resetToBase();
+    let legacy=null;
+    try{ const snap=await legacyRef().get(); if(snap.exists) legacy=snap.data(); }catch(e){}
+    if(legacy){ resetToBase(); applyState(legacy); }
+    const seeded=buildState(store);
+    seeded.seededFrom=legacy?'mcq/state':'local-defaults';
+    await storeRef(store).set(seeded);
+    return seeded;
+  }
+  async function loadStoreState(store){
+    if(isAllStore(store)) return loadAllStores();
+    resetToBase();
+    const snap=await storeRef(store).get();
+    const data=snap.exists?snap.data():await seedStoreState(store);
+    resetToBase();
+    applyState(data);
+    activeMode='store'; activeStore=store;
+    subscribeStore(store);
+  }
+  async function readOrSeedStore(store){
+    const snap=await storeRef(store).get();
+    return {store,data:snap.exists?snap.data():await seedStoreState(store)};
+  }
+  function aggregateStates(rows){
+    resetToBase();
+    RECORD_MODS.forEach(m=>{ if(DB.modules[m]) DB.modules[m].records=[]; });
+    DB.staff=[]; DB.checklistSubs=[]; DB.auditLogs=[];
+    const seenStaff=new Set(), seenSubs=new Set(), seenAudit=new Set(), seenRec={};
+    rows.forEach(row=>{
+      const d=row.data||{}, store=row.store;
+      const mods=d.modules||{};
+      RECORD_MODS.forEach(m=>{
+        if(!DB.modules[m]) return;
+        seenRec[m]=seenRec[m]||new Set();
+        (Array.isArray(mods[m])?mods[m]:[]).forEach(r=>{
+          const rec=Object.assign({store},clone(r));
+          const key=rec.store+'|'+(rec.id||JSON.stringify(rec));
+          if(!seenRec[m].has(key)){ seenRec[m].add(key); DB.modules[m].records.push(rec); }
+        });
+      });
+      (Array.isArray(d.staff)?d.staff:[]).forEach(s=>{
+        const rec=Object.assign({store},clone(s));
+        const key=rec.store+'|'+(rec.id||rec.name);
+        if(!seenStaff.has(key)){ seenStaff.add(key); DB.staff.push(rec); }
+      });
+      const subs=parseJSON(d.checklistSubs,[]);
+      (Array.isArray(subs)?subs:[]).forEach(s=>{
+        const rec=Object.assign({store},clone(s));
+        const key=rec.store+'|'+(rec.id||JSON.stringify(rec));
+        if(!seenSubs.has(key)){ seenSubs.add(key); DB.checklistSubs.push(rec); }
+      });
+      (Array.isArray(d.auditLogs)?d.auditLogs:[]).forEach(a=>{
+        const rec=Object.assign({store},clone(a));
+        const key=rec.store+'|'+(rec.id||rec.created+'|'+rec.entityId+'|'+rec.action);
+        if(!seenAudit.has(key)){ seenAudit.add(key); DB.auditLogs.push(rec); }
+      });
+    });
+    activeMode='super'; activeStore='All stores';
+  }
+  async function loadAllStores(){
+    const rows=[];
+    for(const store of (DB.branches||DB.stores||[])) rows.push(await readOrSeedStore(store));
+    aggregateStates(rows);
+    subscribeAllStores();
+  }
+  function rerenderApp(){
+    try{ if(window.State && State.account && typeof render==='function'){ render(); if(typeof buildSidebar==='function') buildSidebar(); if(typeof buildTopbar==='function') buildTopbar(); } }catch(e){}
+  }
+  function subscribeStore(store){
+    if(activeUnsub) activeUnsub();
+    let first=true;
+    activeUnsub=storeRef(store).onSnapshot(snap=>{
+      if(first){ first=false; return; }
+      if(!snap.exists || snap.metadata.hasPendingWrites) return;
+      resetToBase(); applyState(snap.data()); rerenderApp();
+    });
+  }
+  function subscribeAllStores(){
+    if(activeUnsub) activeUnsub();
+    let first=true;
+    activeUnsub=FB._db.collection(STORE_COLL).onSnapshot(async qs=>{
+      if(first){ first=false; return; }
+      if(qs.metadata.hasPendingWrites) return;
+      const rows=[];
+      qs.forEach(doc=>{
+        const d=doc.data(), store=d.store&&d.store!=='All stores'?d.store:(DB.branches||[]).find(s=>storeId(s)===doc.id)||doc.id;
+        rows.push({store,data:d});
+      });
+      if(rows.length){ aggregateStates(rows); rerenderApp(); }
+    });
+  }
+  async function saveStore(store){
+    if(isAllStore(store)) return saveAllStoresFromAggregate();
+    await storeRef(store).set(buildState(store));
+    FB.lastSync={status:'synced',message:`Saved ${store}`};
+  }
+  async function saveAllStoresFromAggregate(){
+    const stores=DB.branches||DB.stores||[];
+    await Promise.all(stores.map(async store=>{
+      let current={};
+      try{ const snap=await storeRef(store).get(); current=snap.exists?snap.data():buildState(store); }catch(e){ current=buildState(store); }
+      const patch={
+        schemaVersion:2, store, modules:buildModules(store),
+        staff:(DB.staff||[]).filter(s=>s.store===store).map(clone),
+        checklistSubs:JSON.stringify((DB.checklistSubs||[]).filter(s=>s.store===store).map(clone)),
+        auditLogs:(DB.auditLogs||[]).filter(a=>a.store===store).map(clone),
+        updatedAt:Date.now()
+      };
+      await storeRef(store).set(Object.assign({},current,patch),{merge:true});
+    }));
+    FB.lastSync={status:'synced',message:'Saved all stores'};
+  }
+  function parseStoreConfigData(d){
+    d=d||{};
+    return {
+      store:d.store||'',
+      staff:Array.isArray(d.staff)?clone(d.staff):[],
+      checklistItems:parseJSON(d.checklistItems,[]),
+      scheduleTasks:parseJSON(d.scheduleTasks,[]),
+      jobDuties:parseJSON(d.jobDuties,null),
+      auditLogs:Array.isArray(d.auditLogs)?clone(d.auditLogs):[]
+    };
+  }
+  async function fetchStoreConfig(store){
+    const snap=await storeRef(store).get();
+    const data=snap.exists?snap.data():await seedStoreState(store);
+    const cfg=parseStoreConfigData(data);
+    cfg.store=store;
+    return cfg;
+  }
+  async function saveStoreConfig(store,cfg){
+    const patch={schemaVersion:2,store,updatedAt:Date.now()};
+    if(cfg.staff) patch.staff=clone(cfg.staff).map(s=>Object.assign({},s,{store}));
+    if(cfg.checklistItems) patch.checklistItems=JSON.stringify(cfg.checklistItems);
+    if(cfg.scheduleTasks) patch.scheduleTasks=JSON.stringify(cfg.scheduleTasks);
+    if(cfg.jobDuties) patch.jobDuties=JSON.stringify(cfg.jobDuties);
+    if(cfg.auditLogs) patch.auditLogs=clone(cfg.auditLogs).map(a=>Object.assign({},a,{store:a.store||store}));
+    await storeRef(store).set(patch,{merge:true});
+    FB.lastSync={status:'synced',message:`Saved ${store} config`};
+    return true;
   }
 
   // resolves to true(connected) / false(offline) — never rejects, so boot never hangs
@@ -97,38 +282,52 @@
         try{ FB._db.settings({ experimentalForceLongPolling:true }); }catch(e){}  // robust on restrictive networks / headless
       })(), TIMEOUT]);
       FB.enabled = true;
-      const ref = FB._db.collection('mcq').doc('state');
-
       const withTimeout=(pr,ms,tag)=>Promise.race([pr, new Promise((_,rej)=>setTimeout(()=>rej(new Error(tag+'-timeout')),ms))]);
-      FB.loadAll = async function(){
-        try{ const snap = await withTimeout(ref.get(), 5000, 'load');
-          if(snap.exists){ applyState(snap.data()); }
-          else { await withTimeout(ref.set(buildState()), 7000, 'seed'); }   // first run: seed cloud from sample data
+      captureBase();
+      FB.loadForAccount = async function(account){
+        try{
+          const store=(account&&account.role==='super')?'All stores':(account&&account.branch)||'Morley';
+          await withTimeout(loadStoreState(store), 12000, 'load-'+storeId(store));
           FB._loaded = true;
-        }catch(e){ console.warn('[FB] load skipped — using local data', e&&e.message); }
+          FB.lastSync={status:'synced',message:`Loaded ${store==='All stores'?'all stores':store}`};
+          return FB.lastSync;
+        }catch(e){ FB.lastSync={status:'error',message:'Cloud unavailable · local data'}; console.warn('[FB] load skipped — using local data', e&&e.message); return FB.lastSync; }
       };
-      FB.saveAll = async function(){ try{ await withTimeout(ref.set(buildState()), 7000, 'save'); }catch(e){ console.warn('[FB] save skipped', e&&e.message); } };
-
-      // real-time: when ANOTHER device changes the data, refresh + re-render
-      let first=true;
-      ref.onSnapshot(snap=>{
-        if(first){ first=false; return; }
-        if(!snap.exists || snap.metadata.hasPendingWrites) return;   // ignore our own writes
-        applyState(snap.data());
-        try{ if(window.State && State.account && typeof render==='function'){ render(); if(typeof buildSidebar==='function') buildSidebar(); } }catch(e){}
-      });
-      console.log('[FB] connected · realtime sync on');
+      FB.loadAll = function(){ return FB.loadForAccount(window.State&&State.account?State.account:{role:'super',branch:'All stores'}); };
+      FB.saveAll = async function(){
+        try{
+          const acct=window.State&&State.account?State.account:null;
+          const store=(acct&&acct.role==='super')?'All stores':(acct&&acct.branch)||activeStore;
+          await withTimeout(saveStore(store), 12000, 'save-'+storeId(store));
+        }catch(e){ console.warn('[FB] save skipped', e&&e.message); }
+      };
+      FB.fetchStoreConfig = function(store){ return withTimeout(fetchStoreConfig(store), 12000, 'fetch-config-'+storeId(store)); };
+      FB.saveStoreConfig = function(store,cfg){ return withTimeout(saveStoreConfig(store,cfg), 12000, 'save-config-'+storeId(store)); };
+      FB.subcollectionPlan = {
+        root:'stores/{storeId}',
+        collections:['staff/{staffId}','records/{recordId}','checklistSubmissions/{submissionId}','scheduleTasks/{taskId}','auditLogs/{logId}','photos/{photoId}'],
+        status:'planned-safe-migration'
+      };
+      console.log('[FB] connected · per-store realtime sync on');
     }catch(e){
       FB.enabled=false; console.warn('[FB] unavailable — running offline with sample data', e&&e.message);
+      captureBase();
+      FB.loadForAccount = async function(account){ resetToBase(); if(account&&account.role!=='super') applyState(buildState(account.branch)); FB.lastSync={status:'local',message:'Offline · local sample data'}; return FB.lastSync; };
+      FB.loadAll = function(){ return FB.loadForAccount(window.State&&State.account?State.account:{role:'super'}); };
+      FB.saveAll = async function(){};
+      FB.fetchStoreConfig = async function(store){ return parseStoreConfigData(buildState(store)); };
+      FB.saveStoreConfig = async function(){ FB.lastSync={status:'local',message:'Offline · changes stay local'}; return false; };
     }
     return FB.enabled;
   })();
 
-  // debounced auto-save: any change is pushed to the cloud within ~0.8s
+  // debounced auto-save: any change is pushed to the current store doc within ~0.8s
   let timer, lastHash='';
-  function snapshotHash(){ try{ return JSON.stringify(buildState()).length+':'+JSON.stringify(buildState().modules).length; }catch(e){ return ''; } }
-  window.persist = function(){ if(!FB.enabled) return; clearTimeout(timer); timer=setTimeout(()=>{ FB.saveAll&&FB.saveAll(); }, 800); };
+  function snapshotHash(){
+    try{ const s=buildState(accountStore()||activeStore||''); delete s.updatedAt; return JSON.stringify(s)+':'+activeMode; }catch(e){ return ''; }
+  }
+  window.persist = function(){ if(!FB.enabled || !(window.State&&State.account)) return; clearTimeout(timer); timer=setTimeout(()=>{ FB.saveAll&&FB.saveAll(); }, 800); };
   // safety net: poll for changes every 5s and push if the data changed
-  setInterval(()=>{ if(!FB.enabled || !(window.State&&State.account)) return; const h=JSON.stringify(buildState()); if(h!==lastHash){ lastHash=h; FB.saveAll&&FB.saveAll(); } }, 5000);
+  setInterval(()=>{ if(!FB.enabled || !(window.State&&State.account)) return; const h=snapshotHash(); if(h!==lastHash){ lastHash=h; FB.saveAll&&FB.saveAll(); } }, 5000);
   window.addEventListener('beforeunload', ()=>{ if(FB.enabled&&FB.saveAll) FB.saveAll(); });
 })();

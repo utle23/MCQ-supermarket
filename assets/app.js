@@ -6,12 +6,72 @@
 'use strict';
 
 const State = { account:null, role:'store', branch:'Morley', route:{mod:'home',tab:null}, charts:[], idleTimer:null };
+window.State = State;
 const $  = (s,r=document)=>r.querySelector(s);
 const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const isAdmin = ()=> State.account && (State.account.role==='admin' || State.account.role==='super');
 const isSuper = ()=> State.account && State.account.role==='super';
 function logoHTML(cls){ return `<span class="mcq-logo ${cls||''}"><img src="assets/mcq-logo-exact.png" alt="MCQ Supermarket logo"></span>`; }
+function recordInScope(r){ return isSuper() || !!(r && r.store===State.branch); }
+function storeForWrite(store){ return isSuper() ? (store || State.branch) : State.branch; }
+function storeCode(store){
+  const map={'Morley':'MOR','Mirrabooka':'MIR','Malaga':'MAL','Subiaco':'SUB','Armadale':'ARM','Beechboro Fresh':'BEE','Market West':'MKT','Warehouse':'WHS','All stores':'ALL'};
+  if(map[store]) return map[store];
+  const parts=String(store||'store').replace(/[^a-z0-9 ]/gi,' ').trim().split(/\s+/).filter(Boolean);
+  return (parts.length>1?parts.map(p=>p[0]).join(''):String(parts[0]||'sto').slice(0,3)).toUpperCase();
+}
+function ymdCompact(d){ return (d?new Date(d):new Date()).toISOString().slice(0,10).replace(/-/g,''); }
+function makeRecordId(prefix,store,d){
+  const code=storeCode(storeForWrite(store));
+  return `${code}-${prefix}-${ymdCompact(d)}-${Math.floor(1000+Math.random()*9000)}`;
+}
+function auditUser(){ const a=State.account||{}; return {name:a.name||'System',role:a.role||'system',branch:a.branch||State.branch||''}; }
+function auditVal(v){
+  if(v==null || typeof v==='string' || typeof v==='number' || typeof v==='boolean') return v;
+  if(Array.isArray(v)) return `[${v.length} items]`;
+  return '[object]';
+}
+function auditDiff(before,after){
+  const b=before||{}, a=after||{}, keys=[...new Set(Object.keys(b).concat(Object.keys(a)))];
+  const out={};
+  keys.forEach(k=>{
+    if(['items','photo','photos','data'].includes(k)) return;
+    const bv=auditVal(b[k]), av=auditVal(a[k]);
+    if(JSON.stringify(bv)!==JSON.stringify(av)) out[k]={from:bv,to:av};
+  });
+  return out;
+}
+function auditLog(action,entity,entityId,store,before,after,note){
+  const st=storeForWrite(store || (after&&after.store) || (before&&before.store));
+  const u=auditUser();
+  DB.auditLogs=DB.auditLogs||[];
+  DB.auditLogs.unshift({id:makeRecordId('AUD',st),created:new Date().toISOString(),store:st,user:u.name,role:u.role,action,entity,entityId,note:note||'',changes:auditDiff(before,after)});
+  if(DB.auditLogs.length>800) DB.auditLogs.length=800;
+}
+function syncScopeLabel(account){
+  const a=account||State.account||{};
+  return a.role==='super'?'all stores':(a.branch||State.branch||'store');
+}
+function titleWords(s){ return String(s||'').replace(/\b\w/g,c=>c.toUpperCase()); }
+function setBootMessage(msg,detail){
+  const splash=document.getElementById('boot-splash');
+  if(!splash) return;
+  const text=document.getElementById('boot-text');
+  const sub=document.getElementById('boot-sub');
+  if(text) text.textContent=msg||'Loading...';
+  if(sub) sub.textContent=detail||'';
+}
+function syncBadge(){
+  const s=State.dataSync||{status:'local',message:'Local data'};
+  const cls=s.status==='synced'?'ok':s.status==='loading'?'warn':s.status==='error'?'bad':'warn';
+  const icon=s.status==='synced'?'fa-cloud-check':s.status==='loading'?'fa-spinner fa-spin':s.status==='error'?'fa-triangle-exclamation':'fa-database';
+  return `<span class="dot ${cls}"></span><i class="fas ${icon}"></i> ${esc(s.message||'Local data')}`;
+}
+function refreshSyncUi(){
+  const foot=document.getElementById('side-sync'); if(foot) foot.innerHTML=syncBadge();
+  const top=document.getElementById('sync-pill'); if(top) top.innerHTML=syncBadge();
+}
 
 /* ---------- tones / colours ---------- */
 const TONE_HEX={ok:'#10b981',warn:'#f59e0b',bad:'#ef4444',info:'#3b82f6',mute:'#94a3b8'};
@@ -29,7 +89,7 @@ function me(){
 function scopedRecords(mod){
   const m=DB.modules[mod]; if(!m||!m.records) return [];
   if(isSuper()) return m.records;                 // super admin: every store
-  const s=State.branch; return m.records.filter(r=>!r.store || r.store===s);  // admin + staff: own store only
+  const s=State.branch; return m.records.filter(r=>r.store===s);  // admin + staff: own store only
 }
 
 /* ============================================================ LOGIN */
@@ -53,8 +113,10 @@ function showLogin(notice){
         <button class="seg-btn" data-mode="admin">🛡️ Admin</button>
         <button class="seg-btn" data-mode="super">👑 Super</button>
       </div>
-      <label class="login-lbl">Store / Branch</label>
-      <select id="login-branch" class="login-input">${branches}</select>
+      <div id="login-store-row">
+        <label class="login-lbl">Store / Branch</label>
+        <select id="login-branch" class="login-input">${branches}</select>
+      </div>
       <label class="login-lbl">Password</label>
       <div class="login-pw">
         <input id="login-pw" class="login-input" type="password" placeholder="Enter password" autocomplete="off">
@@ -93,6 +155,7 @@ function loginMode(){ return $('#login-mode .seg-btn.active').dataset.mode; }
 function togglePw(){ const p=$('#login-pw'); p.type=p.type==='password'?'text':'password'; }
 function loginFail(m){ const e=$('#login-err'); if(e) e.textContent='❌ '+m; const c=$('.login-card'); if(c){ c.classList.add('shake'); setTimeout(()=>c.classList.remove('shake'),450); } }
 function updateLoginHint(){ const el=$('#login-hint'); if(!el) return; const mode=loginMode(), branch=$('#login-branch')?.value;
+  const row=$('#login-store-row'); if(row) row.style.display=mode==='super'?'none':'block';
   el.innerHTML = mode==='super' ? `Super Admin password: <b>${esc(DB.auth.superAdminPassword)}</b> · all stores + compare`
     : mode==='admin' ? `Admin password: <b>${esc(DB.auth.adminPassword)}</b> · this store only`
     : `MCQ ${esc(branch||'')} staff password: <b>${esc(DB.auth.branchPasswords[branch]||'—')}</b>`; }
@@ -100,7 +163,7 @@ function doLogin(){
   const pw=$('#login-pw').value.trim(), branch=$('#login-branch').value, mode=loginMode();
   $('#login-err').textContent='';
   if(mode==='super'){
-    if(pw===DB.auth.superAdminPassword) return loginAs('super',branch);
+    if(pw===DB.auth.superAdminPassword) return loginAs('super','All stores');
     return loginFail('Incorrect super admin password.');
   }
   if(mode==='admin'){
@@ -112,12 +175,34 @@ function doLogin(){
   if(pw===DB.auth.adminPassword) return loginFail('That is the admin password — switch to the Admin tab.');
   loginFail(`Wrong password for MCQ ${branch}.`);
 }
-function loginAs(role, branch){
+async function syncAccountData(){
+  const scope=syncScopeLabel(State.account);
+  State.dataSync={status:'loading',message:`Loading ${scope} data...`};
+  setBootMessage(`Loading ${scope} data...`,'Connecting to the store workspace');
+  refreshSyncUi();
+  try{
+    if(window.MCQDB && MCQDB.ready){
+      await MCQDB.ready;
+      const res=MCQDB.loadForAccount?await MCQDB.loadForAccount(State.account):null;
+      const last=MCQDB.lastSync||res||{};
+      State.dataSync={status:last.status||'synced',message:last.message||`${titleWords(scope)} data loaded`};
+    }else{
+      State.dataSync={status:'local',message:'Local sample data'};
+    }
+  }catch(e){
+    State.dataSync={status:'error',message:`Cloud load failed · local ${scope}`};
+    console.warn('[APP] data load failed', e&&e.message);
+  }
+  refreshSyncUi();
+}
+async function loginAs(role, branch){
   const name = role==='super' ? 'Head Office' : role==='admin' ? (branch+' Admin') : (branch+' Staff');
   const initials = role==='super' ? 'HO' : role==='admin' ? branch.slice(0,2).toUpperCase() : branch.slice(0,2).toUpperCase();
   State.account={ name, role, branch, initials };
   State.branch=branch; State.role=role==='staff'?'store':'ho';
   try{ sessionStorage.setItem('mcq_acct', JSON.stringify(State.account)); }catch(e){}
+  const btn=$('.login-btn'); if(btn){ btn.disabled=true; btn.textContent=`Loading ${syncScopeLabel(State.account)} data...`; }
+  await syncAccountData();
   enterApp();
 }
 function enterApp(){
@@ -180,6 +265,7 @@ function buildSidebar(){
       const m=DB.modules[id]||DB.customPages[id];
       if(!m) return false;
       if(m.admin && !isAdmin()) return false;
+      if(m.super && !isSuper()) return false;
       return true;
     });
     if(!items.length) return;
@@ -193,6 +279,7 @@ function buildSidebar(){
   const active=State.route.mod;
   $$('#nav .nav-group').forEach(g=>{ if($(`.nav-item[data-mod]`,g) && [...g.querySelectorAll('.nav-item')].some(a=>a.dataset.mod===active)) g.classList.add('open','has-active'); });
   paintActive();
+  refreshSyncUi();
 }
 function navItemFor(id){
   const m=DB.modules[id], c=DB.customPages[id];
@@ -219,10 +306,13 @@ function paintActive(){ $$('#nav .nav-item').forEach(el=>el.classList.toggle('ac
 /* ============================================================ TOPBAR */
 function buildTopbar(){
   const u=me();
+  const scopeLabel=isSuper()?'All stores':State.branch;
+  const roleLabel=isSuper()?'Super':isAdmin()?'Admin':'Staff';
   $('#topbar-right').innerHTML = `
-    <span class="tb-badge"><i class="fas fa-store"></i> ${esc(State.branch)}</span>
+    <span class="tb-badge"><i class="fas fa-store"></i> ${esc(scopeLabel)}</span>
     <span class="tb-badge"><i class="fas fa-clock"></i> idle <b id="idle-ind">30m</b></span>
-    <span class="tb-badge ${isAdmin()?'badge-admin':''}"><i class="fas ${isAdmin()?'fa-shield-halved':'fa-user'}"></i> ${isAdmin()?'Admin':'Staff'}</span>
+    <span class="tb-badge ${isAdmin()?'badge-admin':''}"><i class="fas ${isAdmin()?'fa-shield-halved':'fa-user'}"></i> ${roleLabel}</span>
+    <span class="tb-badge sync-top" id="sync-pill">${syncBadge()}</span>
     <div class="user-chip"><div class="avatar">${esc(u.initials)}</div>
       <div><div class="u-name">${esc(u.name)}</div><div class="u-role">${esc(u.role)}</div></div></div>
     <button class="logout" onclick="logout()" title="Logout"><i class="fas fa-right-from-bracket"></i></button>`;
@@ -239,7 +329,11 @@ function render(){
   const mod=State.route.mod;
   buildSidebar();
   if(mod==='home') return isAdmin()?renderHome():renderStaffHome();
-  if(DB.customPages[mod]) return window[DB.customPages[mod].render](DB.customPages[mod]);
+  if(DB.customPages[mod]){
+    const page=DB.customPages[mod];
+    if((page.admin&&!isAdmin())||(page.super&&!isSuper())){ location.hash='#/home'; return; }
+    return window[page.render](page);
+  }
   if(mod==='checklist') return renderChecklist();
   if(!DB.modules[mod]){ location.hash='#/home'; return; }
   renderModule(mod, State.route.tab||defaultTab());
@@ -248,12 +342,12 @@ function render(){
 
 /* ============================================================ HOME */
 function renderHome(){
-  setAccent('#4f46e5'); setCrumb('🏠','Dashboard',`${DB.brand.org} · ${isAdmin()?'All stores':State.branch}`);
+  setAccent('#4f46e5'); setCrumb('🏠','Dashboard',`${DB.brand.org} · ${isSuper()?'All stores':State.branch}`);
   const u=me();
   let totalOpen=0,critical=0,records=0;
   DB.order.forEach(id=>{ totalOpen+=openCount(id); records+=scopedRecords(id).length;
     critical+=scopedRecords(id).filter(r=>['Critical','Major'].includes(r.severity)||r.priority==='Critical').length; });
-  const stores=isAdmin()?DB.stores.length:1;
+  const stores=isSuper()?DB.stores.length:1;
   const opsTiles = DB.order.map(id=>tileFor(id)).join('');
   const hrTiles = ['violation','reward','training','birthday'].map(id=>tileFor(id)).join('');
   const feed = recentFeed().map(f=>`<div class="feed-row"><div class="feed-ic" style="background:${soft(f.accent)};color:${f.accent}">${f.icon}</div>
@@ -261,7 +355,7 @@ function renderHome(){
   $('#content').innerHTML = `
     <div class="hero"><div class="glow">${isAdmin()?'🏢':'🧑‍💼'}</div>
       <h2>Hi, ${esc(u.name.split(' ')[0])} 👋</h2>
-      <p>${isAdmin()?'Cross-store command centre — operations, staff, compliance and people risk in real time.':'Your store workspace — run checklists and log issues fast.'}</p>
+      <p>${isSuper()?'Cross-store command centre — operations, staff, compliance and people risk in real time.':isAdmin()?`MCQ ${esc(State.branch)} command centre — store operations, staff and compliance in real time.`:'Your store workspace — run checklists and log issues fast.'}</p>
       <div class="hero-stats">
         <div class="hs"><b>${stores}</b><span>${stores>1?'Stores':'Store'}</span></div>
         <div class="hs"><b>${totalOpen}</b><span>Open items</span></div>
@@ -333,10 +427,10 @@ function tabLabel(tab){ return tab==='new'?'New entry':tab==='overview'?'Overvie
 function renderRecords(m){
   const sevs=m.severities.length?['All',...m.severities]:null;
   const stat=['All',...m.statuses];
-  const storeOpts=isAdmin()?['All stores',...DB.stores]:[State.branch];
+  const storeOpts=isSuper()?['All stores',...DB.stores]:[State.branch];
   $('#view').innerHTML=`
     <div class="toolbar"><span class="count-chip" id="rec-count">…</span>
-      <div class="filter"><label>Store</label><select id="f-store" ${isAdmin()?'':'disabled'}>${opts(storeOpts)}</select></div>
+      <div class="filter"><label>Store</label><select id="f-store" ${isSuper()?'':'disabled'}>${opts(storeOpts)}</select></div>
       <div class="filter"><label>Status</label><select id="f-status">${opts(stat)}</select></div>
       ${sevs?`<div class="filter"><label>${m.id==='maintenance'?'Priority':'Severity'}</label><select id="f-sev">${opts(sevs)}</select></div>`:''}
       <div class="filter f-daterange"><label>Date</label><input type="date" id="f-from" title="From"><span>→</span><input type="date" id="f-to" title="To"></div>
@@ -366,7 +460,7 @@ function drawRows(m){
   $('#rec-count').innerHTML=`📋 ${rows.length} record${rows.length!==1?'s':''}`;
   const body=$('#rec-body');
   if(!rows.length){ body.innerHTML=`<tr><td colspan="${m.columns.length}"><div class="empty"><div class="e-ic">🗂️</div>No records match.</div></td></tr>`; return; }
-  body.innerHTML=rows.map(r=>`<tr onclick='openDetail("${m.id}","${esc(r.id)}")'>${m.columns.map(c=>`<td class="${c.kind==='num'?'num':''}">${cell(r,c)}</td>`).join('')}</tr>`).join('');
+  body.innerHTML=rows.map(r=>`<tr onclick='openDetail("${m.id}","${esc(r.id)}","${ckJS(r.store||'')}")'>${m.columns.map(c=>`<td class="${c.kind==='num'?'num':''}">${cell(r,c)}</td>`).join('')}</tr>`).join('');
 }
 function cell(r,c){
   const v=r[c.key];
@@ -436,7 +530,8 @@ function field(f){
   const req=f.required?'<span class="req">*</span>':''; const hint=f.hint?`<div class="fhint">${esc(f.hint)}</div>`:'';
   let ctrl='';
   const rq=f.required?' data-req="1"':'';
-  if(f.type==='select') ctrl=`<select name="${f.key}"${rq}><option value="">-- Select --</option>${opts(f.options)}</select>`;
+  if(f.key==='store' && !isSuper()) ctrl=`<input type="hidden" name="store" value="${esc(State.branch)}"><input value="${esc(State.branch)}" disabled>`;
+  else if(f.type==='select') ctrl=`<select name="${f.key}"${rq}><option value="">-- Select --</option>${opts(f.options)}</select>`;
   else if(f.type==='textarea') ctrl=`<textarea name="${f.key}"${rq} placeholder="${esc(f.placeholder||'')}"></textarea>`;
   else if(f.type==='radio') ctrl=`<div class="radios">${f.options.map(o=>`<label class="radio-pill"><input type="radio" name="${f.key}" value="${esc(o)}">${esc(o)}</label>`).join('')}</div>`;
   else if(f.type==='checks') ctrl=`<div class="checks">${f.options.map(o=>`<label class="check-row"><input type="checkbox" name="${f.key}" value="${esc(o)}">${esc(o)}</label>`).join('')}</div>`;
@@ -455,24 +550,34 @@ function submitForm(e,modId){
   if(bad){ toast('Please complete the required fields'); bad.classList.add('shake'); setTimeout(()=>bad.classList.remove('shake'),450); bad.scrollIntoView({behavior:'smooth',block:'center'}); return; }
   const m=DB.modules[modId]; const fd=new FormData(e.target); const obj={};
   fd.forEach((v,k)=>{obj[k]=obj[k]?obj[k]+', '+v:v;});
-  const id=`${m.idPrefix}-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${Math.floor(1000+Math.random()*9000)}`;
-  const rec=Object.assign({id,created:new Date().toISOString().slice(0,16).replace('T',' '),store:obj.store||State.branch,status:m.statuses[0],
+  const writeStore=storeForWrite(obj.store);
+  const id=makeRecordId(m.idPrefix,writeStore);
+  const rec=Object.assign({id,created:new Date().toISOString().slice(0,16).replace('T',' '),store:writeStore,status:m.statuses[0],
     severity:obj.severity||obj.priority,priority:obj.priority,summary:obj.whatHappened||obj.shortDescription||obj.issueDescription||obj.description||obj.caseDetails,
     issue:obj.issueDescription,shortDescription:obj.shortDescription,category:obj.category||obj.issueCategory||obj.concernCategory,
     equipment:obj.equipmentName,type:obj.incidentType,employee:obj.employeeName,step:obj.step||obj.disciplinaryStep,department:obj.department,age:0},obj);
-  m.records.unshift(rec); e.target.reset();
+  rec.store=storeForWrite(rec.store);
+  auditLog('create',modId,rec.id,rec.store,null,rec);
+  m.records.unshift(rec); if(window.persist) window.persist(); e.target.reset();
   toast(`${m.short} submitted — ${id}`); buildSidebar(); go(modId,'records');
 }
 
 /* ============================================================ DETAIL DRAWER */
-function openDetail(modId,id){
-  const m=DB.modules[modId]; const r=m.records.find(x=>x.id===id); if(!r) return;
+function findScopedRecord(modId,id,store){
+  const m=DB.modules[modId]; if(!m||!m.records) return null;
+  if(!isSuper()) return m.records.find(x=>x.id===id && x.store===State.branch)||null;
+  if(store) return m.records.find(x=>x.id===id && x.store===store)||null;
+  return m.records.find(x=>x.id===id)||null;
+}
+function openDetail(modId,id,store){
+  const m=DB.modules[modId]; const r=findScopedRecord(modId,id,store); if(!r) return;
+  if(!recordInScope(r)){ toast('This record belongs to another store'); return; }
   const skip=new Set(['id','created','age','photo']);
   const rows=Object.entries(r).filter(([k,v])=>!skip.has(k)&&v!==''&&v!=null).map(([k,v])=>{
     const isB=m.severities.includes(v)||m.statuses.includes(v)||TONES[v];
     return `<dt>${esc(prettyKey(k))}</dt><dd>${isB?badge(v):esc(v)}</dd>`;}).join('');
   const photoBlk=r.photo?`<div class="section-title" style="margin-top:4px">📷 Photo</div><a href="${imgSrc(r.photo)}" target="_blank" rel="noopener"><img src="${imgSrc(r.photo)}" style="max-width:100%;border-radius:12px;border:1px solid var(--line);margin-bottom:14px"></a>`:'';
-  const canEdit=isAdmin();
+  const canEdit=isAdmin() && recordInScope(r);
   $('#drawer').innerHTML=`<div class="drawer-head"><div class="dh-ic">${m.icon}</div>
     <div><div style="font-weight:840;font-size:16px">${esc(r.id)}</div><div style="color:var(--muted);font-size:12.5px">${esc(m.label)} · ${esc(r.store||'')} ${r.created?'· '+esc(r.created):''}</div>
     <div style="margin-top:7px;display:flex;gap:6px;flex-wrap:wrap">${r.severity?badge(r.severity):''}${r.priority&&r.priority!==r.severity?badge(r.priority):''}${r.step?badge(r.step):''}${r.status?badge(r.status):''}</div></div>
@@ -482,22 +587,28 @@ function openDetail(modId,id){
     ${canEdit?`<div class="section-title" style="margin-top:4px">Edit record <span class="badge info" style="margin-left:6px">Admin · full access</span></div>
       <div class="grid2">${editFields(r,m)}</div>
       <div style="display:flex;gap:10px;margin-top:16px">
-        <button class="btn primary" style="flex:1" onclick="recSaveAll('${modId}','${esc(id)}')">💾 Save changes</button>
-        <button class="btn" style="color:var(--bad);border-color:#f3c9c9" onclick="recDelete('${modId}','${esc(id)}')"><i class="fas fa-trash"></i>&nbsp; Delete</button>
+        <button class="btn primary" style="flex:1" onclick="recSaveAll('${modId}','${esc(id)}','${ckJS(r.store||'')}')">💾 Save changes</button>
+        <button class="btn" style="color:var(--bad);border-color:#f3c9c9" onclick="recDelete('${modId}','${esc(id)}','${ckJS(r.store||'')}')"><i class="fas fa-trash"></i>&nbsp; Delete</button>
       </div>`
       :`<dl class="dl">${rows}</dl><div class="rail-tip" style="margin-top:20px">👀 Viewing as Staff. Head Office can edit &amp; close this record.</div>`}</div>`;
   $('#drawer').classList.add('open'); $('#drawer-mask').classList.add('open');
 }
 function reviewField(f,r){
   const val=r[f.key]!=null?r[f.key]:''; let ctrl;
-  if(f.type==='select') ctrl=`<select id="d-${f.key}"><option value=""></option>${(f.options||[]).map(o=>`<option ${o===val?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
+  if(f.key==='store' && !isSuper()) ctrl=`<input id="d-store" type="hidden" value="${esc(State.branch)}"><input value="${esc(State.branch)}" disabled>`;
+  else if(f.type==='select') ctrl=`<select id="d-${f.key}"><option value=""></option>${(f.options||[]).map(o=>`<option ${o===val?'selected':''}>${esc(o)}</option>`).join('')}</select>`;
   else if(f.type==='textarea') ctrl=`<textarea id="d-${f.key}" placeholder="${esc(f.label)}…">${esc(val)}</textarea>`;
   else ctrl=`<input id="d-${f.key}" type="${f.type||'text'}" value="${esc(val)}" placeholder="${esc(f.label)}…">`;
   return `<div class="field ${f.full?'full':''}"><label>${esc(f.label)}</label>${ctrl}</div>`;
 }
-function reviewSave(modId,id){
-  const m=DB.modules[modId]; const r=m.records.find(x=>x.id===id);
+function reviewSave(modId,id,store){
+  const m=DB.modules[modId]; const r=findScopedRecord(modId,id,store);
+  if(!r || !recordInScope(r)){ toast('This record belongs to another store'); return; }
+  const before=JSON.parse(JSON.stringify(r));
   (m.review||[{key:'status'}]).forEach(f=>{const el=document.getElementById('d-'+f.key); if(el&&el.value!=='') r[f.key]=el.value;});
+  if(!isSuper()) r.store=State.branch;
+  auditLog('review',modId,r.id,r.store,before,r);
+  if(window.persist) window.persist();
   closeDrawer(); toast(`${id} updated`); buildSidebar(); if(State.route.mod===modId) render();
 }
 /* admin full-edit: render an editable control for every field of the record */
@@ -513,15 +624,23 @@ function editFields(r,m){
     return reviewField(f,r);
   }).join('');
 }
-function recSaveAll(modId,id){
-  const m=DB.modules[modId]; const r=m.records.find(x=>x.id===id); if(!r) return;
+function recSaveAll(modId,id,store){
+  const m=DB.modules[modId]; const r=findScopedRecord(modId,id,store); if(!r) return;
+  if(!recordInScope(r)){ toast('This record belongs to another store'); return; }
+  const before=JSON.parse(JSON.stringify(r));
   Object.keys(r).forEach(k=>{ const el=document.getElementById('d-'+k); if(el){ r[k]=el.value; } });
+  r.store=storeForWrite(r.store);
   if(r.priority && m.id==='maintenance') r.severity=r.priority;
+  auditLog('update',modId,r.id,r.store,before,r);
+  if(window.persist) window.persist();
   closeDrawer(); toast(`${id} saved`); buildSidebar(); render();
 }
-function recDelete(modId,id){
+function recDelete(modId,id,store){
   if(!confirm('Delete this record permanently?')) return;
-  const m=DB.modules[modId]; const i=m.records.findIndex(x=>x.id===id); if(i>=0) m.records.splice(i,1);
+  const m=DB.modules[modId]; const i=m.records.findIndex(x=>x.id===id && (isSuper()?(!store||x.store===store):x.store===State.branch));
+  if(i>=0 && !recordInScope(m.records[i])){ toast('This record belongs to another store'); return; }
+  if(i>=0){ const before=JSON.parse(JSON.stringify(m.records[i])); auditLog('delete',modId,before.id,before.store,before,null); m.records.splice(i,1); }
+  if(window.persist) window.persist();
   closeDrawer(); toast(`${id} deleted`); buildSidebar(); render();
 }
 function closeDrawer(){ $('#drawer')?.classList.remove('open'); $('#drawer-mask')?.classList.remove('open'); }
@@ -557,8 +676,8 @@ function toggleSidebar(){ const s=$('#sidebar'); if(!s) return; const open=s.cla
 function closeSidebarM(){ $('#sidebar')?.classList.remove('show'); $('#sb-backdrop')?.classList.remove('show'); }
 Object.assign(window,{go,openDetail,closeDrawer,submitForm,reviewSave,recSaveAll,recDelete,logout,doLogin,togglePw,updateLoginHint,faceIdLogin,closeFid,toggleGroup,toggleSidebar,closeSidebarM});
 async function boot(){
-  try{ if(window.MCQDB && MCQDB.ready){ const ok=await MCQDB.ready; if(ok && MCQDB.loadAll) await MCQDB.loadAll(); } }catch(e){}
   try{ const saved=sessionStorage.getItem('mcq_acct'); if(saved){ State.account=JSON.parse(saved); State.branch=State.account.branch; State.role=State.account.role==='staff'?'store':'ho'; } }catch(e){}
+  if(State.account){ setBootMessage(`Restoring ${syncScopeLabel(State.account)} data...`,'Preparing your workspace'); await syncAccountData(); }
   if(State.account) enterApp(); else showLogin();
 }
 document.addEventListener('DOMContentLoaded',boot);

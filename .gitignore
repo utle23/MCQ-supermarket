@@ -9,3 +9,4 @@ MCQ MIRRABOOKA RESTUARANT/
 __pycache__/
 *.pyc
 node_modules/
+.env

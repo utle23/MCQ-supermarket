@@ -2,7 +2,12 @@
 cd "$(dirname "$0")"
 PORT=8765
 echo "Starting MCQ Ops Hub on http://localhost:$PORT ..."
-python3 -m http.server $PORT >/dev/null 2>&1 &
+if command -v node >/dev/null 2>&1; then
+  PORT=$PORT node server.mjs &
+else
+  echo "Node.js not found, starting static mode without strong AI Vision."
+  python3 -m http.server $PORT >/dev/null 2>&1 &
+fi
 SRV=$!
 sleep 1
 open "http://localhost:$PORT/index.html"

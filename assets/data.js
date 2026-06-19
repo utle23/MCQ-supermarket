@@ -409,7 +409,7 @@ DB.modules = {
 };
 
 /* module display order */
-DB.order = ['checklist','complaint','maintenance','incident','delivery','people'];
+DB.order = ['checklist','complaint','maintenance','incident','delivery'];
 
 /* ============================================================
    GAP FILL — additional create-form fields captured from the

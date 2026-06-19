@@ -43,7 +43,7 @@ function vioStats(){
   let drillHtml='';
   if(dc){ const dRecs=recs.filter(r=>(r.category||'Other')===dc), dOpen=dRecs.filter(r=>!['Resolved','Cancelled'].includes(r.status)).length;
     drillHtml=`<div class="card drill-card"><div class="card-head"><h3>🔎 ${esc(dc)}</h3><span class="ch-sub">${dRecs.length} cases · ${dOpen} active</span><button class="btn sm" style="margin-left:auto" onclick="vioDrill('${String(dc).replace(/'/g,'’')}')">✕ Close</button></div>
-      <div class="card-pad"><div class="chart-grid cols-2"><div><div class="mini-h">By store</div><div class="chart-box"><canvas id="vd-store"></canvas></div></div><div><div class="mini-h">By warning step</div><div class="chart-box"><canvas id="vd-step"></canvas></div></div></div></div></div>`; }
+      <div class="card-pad"><div class="chart-grid cols-2"><div><div class="mini-h">${isSuper()?'By store':'This store'}</div><div class="chart-box"><canvas id="vd-store"></canvas></div></div><div><div class="mini-h">By warning step</div><div class="chart-box"><canvas id="vd-step"></canvas></div></div></div></div></div>`; }
   const superCmp = isSuper()?`<div class="card"><div class="card-head"><h3>Store comparison</h3><span class="ch-sub">stacked by step</span></div><div class="card-pad"><div class="chart-box"><canvas id="vio-bystore"></canvas></div></div></div>`:'';
   $('#content').innerHTML=`${vioHead('stats')}
     ${strikeHtml}
@@ -82,7 +82,7 @@ function vioRecords(){
   const from=State.vio&&State.vio.from||'', to=State.vio&&State.vio.to||'';
   const recs=vioFilteredRecs();
   const list=recs.map(v=>`
-    <div class="card vcard" style="--rc:${sevColor(v.severity)}" onclick='openDetail("violation","${esc(v.id)}")'>
+    <div class="card vcard" style="--rc:${sevColor(v.severity)}" onclick='openDetail("violation","${esc(v.id)}","${ckJS(v.store||'')}")'>
       <div class="vcard-h"><i class="fas fa-triangle-exclamation" style="color:${sevColor(v.severity)}"></i><b>${esc(v.category)}</b>
         <span class="badge ${toneOf(v.severity)}">${esc(v.severity)}</span><span class="badge ${toneOf(v.step)}">${esc(v.step||'')}</span><span class="badge ${toneOf(v.status)}">${esc(v.status)}</span>
         <span class="vcard-meta">👤 ${esc(v.staffName)} · 🏪 ${esc(v.store||'')} · ${esc((v.created||'').slice(0,16))}</span></div>
@@ -97,7 +97,7 @@ function vioRecords(){
 
 function vioNew(){
   setCrumb('⚠️','Violation Rules','Record a violation');
-  const staff=DB.staff.filter(x=>isAdmin()||x.store===State.branch).map(x=>x.name);
+  const staff=DB.staff.filter(x=>isSuper()||x.store===State.branch).map(x=>x.name);
   const ruleCards=DB.violationRules.map(rl=>`<button type="button" class="vrule ${State.vio.rule===rl.code?'active':''}" style="--rc:${sevColor(rl.severity)}" onclick="vioPick('${rl.code}')">
     <div class="vrule-h"><span class="vrule-ic" style="background:${sevColor(rl.severity)}"><i class="fas fa-triangle-exclamation"></i></span>
       <div><div class="vrule-t">${esc(rl.title)}</div><div class="vrule-tags"><span class="chip">${esc(rl.category)}</span><span class="badge ${toneOf(rl.severity)}">${esc(rl.severity)}</span></div></div></div>
@@ -108,7 +108,7 @@ function vioNew(){
         <div class="rail-tip" style="margin-bottom:14px">💡 Click a rule card to auto-fill the rule, severity &amp; suggested action. Picking a staff member auto-suggests the next warning step.</div>
         <div class="grid2">
           <div class="field"><label>Staff member <span class="req">*</span></label><select id="vio-staff" onchange="vioStaffChange()"><option value="">— Select staff —</option>${staff.map(n=>`<option>${esc(n)}</option>`).join('')}</select></div>
-          <div class="field"><label>Store</label><select id="vio-store">${(isAdmin()?DB.stores:[State.branch]).map(s=>`<option ${s===State.branch?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
+          <div class="field"><label>Store</label><select id="vio-store">${(isSuper()?DB.stores:[State.branch]).map(s=>`<option ${s===State.branch?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
           <div class="field"><label>Severity</label><select id="vio-sev2">${['Minor','Moderate','Major','Critical'].map(s=>`<option ${s===State.vio.sev?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
           <div class="field"><label>Warning step <span class="auto-tag" id="vio-step-auto" style="display:none">auto</span></label><select id="vio-step" onchange="State.vio.step=this.value">${DB.warningSteps.map(s=>`<option ${s===State.vio.step?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
           <div class="field full" id="vio-suggest-wrap" style="display:none"><div class="vio-suggest" id="vio-suggest"></div></div>
@@ -130,9 +130,12 @@ function vioSubmit(){
   const staff=$('#vio-staff').value, desc=$('#vio-desc').value.trim();
   if(!staff||staff.startsWith('—')||!State.vio.ruleTitle||!desc){ toast('Pick a rule, staff and description'); return; }
   const step=$('#vio-step').value;
-  const id=`VIO-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${Math.floor(1000+Math.random()*9000)}`;
-  DB.modules.violation.records.unshift({id,created:new Date().toISOString().slice(0,16).replace('T',' '),staffName:staff,store:$('#vio-store').value,
-    category:State.vio.ruleTitle,severity:$('#vio-sev2').value,step,status:step,description:desc,actionTaken:$('#vio-action').value,followUpDate:$('#vio-follow').value});
+  const store=storeForWrite($('#vio-store')?.value), id=makeRecordId('VIO',store);
+  const rec={id,created:new Date().toISOString().slice(0,16).replace('T',' '),staffName:staff,store,
+    category:State.vio.ruleTitle,severity:$('#vio-sev2').value,step,status:step,description:desc,actionTaken:$('#vio-action').value,followUpDate:$('#vio-follow').value};
+  auditLog('create','violation',rec.id,rec.store,null,rec);
+  DB.modules.violation.records.unshift(rec);
+  if(window.persist) window.persist();
   State.vio={rule:'',sev:'Minor',step:'Verbal Discussion',tab:'records'}; toast(`✓ Violation logged · ${step}`); buildSidebar(); renderViolation();
 }
 /* Auto-suggest the next escalation step from the staff's history (Verbal→Written→Final→Termination) */
@@ -183,14 +186,14 @@ function renderTraining(){
       <div class="filter f-daterange"><label>Date</label><input type="date" value="${esc(State.trn.from||'')}" onchange="trnDate('from',this.value)"><span>→</span><input type="date" value="${esc(State.trn.to||'')}" onchange="trnDate('to',this.value)"></div>
       ${(State.trn.from||State.trn.to)?`<button class="btn sm" onclick="State.trn.from='';trnDate('to','')">✕ Clear</button>`:''}</div>
     <div class="card"><div class="table-wrap"><table class="grid" id="trn-table"><thead><tr><th>Ref</th><th>Trainee</th><th>Role</th><th>Trainer</th><th>Date</th><th>Rating</th><th>Status</th></tr></thead><tbody>
-      ${(()=>{const lr=trnFilteredRecs();return lr.length?lr.map(r=>{const ri=ratingColor(r.overallRating);return `<tr onclick='openDetail("training","${esc(r.id)}")'><td class="cell-id">${esc(r.id)}</td><td><b>${esc(r.traineeName)}</b></td><td><span class="badge mute">${esc(r.traineeRole)}</span></td><td>${esc(r.trainerName||'')}</td><td>${esc(r.sessionDate||'')}</td><td>${r.overallRating?`<span class="rating-badge" style="background:${ri[2]};color:${ri[1]}">${esc(r.overallRating)}</span>`:'—'}</td><td>${badge(r.status)}</td></tr>`;}).join(''):'<tr><td colspan="7"><div class="empty">No sessions in this range.</div></td></tr>';})()}
+      ${(()=>{const lr=trnFilteredRecs();return lr.length?lr.map(r=>{const ri=ratingColor(r.overallRating);return `<tr onclick='openDetail("training","${esc(r.id)}","${ckJS(r.store||'')}")'><td class="cell-id">${esc(r.id)}</td><td><b>${esc(r.traineeName)}</b></td><td><span class="badge mute">${esc(r.traineeRole)}</span></td><td>${esc(r.trainerName||'')}</td><td>${esc(r.sessionDate||'')}</td><td>${r.overallRating?`<span class="rating-badge" style="background:${ri[2]};color:${ri[1]}">${esc(r.overallRating)}</span>`:'—'}</td><td>${badge(r.status)}</td></tr>`;}).join(''):'<tr><td colspan="7"><div class="empty">No sessions in this range.</div></td></tr>';})()}
     </tbody></table></div></div>`;
 }
 function trnNew(){ State.trn={mode:'new',role:'',rating:'',items:[]}; renderTraining(); }
 function trnBack(){ State.trn.mode='list'; renderTraining(); }
 function trnForm(){
   setCrumb('🎓','New Training Session','Score each topic by role');
-  const staff=DB.staff.map(x=>x.name);
+  const staff=DB.staff.filter(x=>isSuper()||x.store===State.branch).map(x=>x.name);
   const roles=Object.keys(trnTopics());
   $('#content').innerHTML=`
     <div class="page-head"><div class="ph-ic" style="background:#fdeaea">🎓</div><div><h2>New Training Session</h2><p>Pick a role to load its topics, then mark each as Achieved / Needs practice / Not covered.</p></div>
@@ -231,9 +234,12 @@ function trnRate(btn){ document.querySelectorAll('#trn-rating .ropt').forEach(b=
 function trnSave(){ const name=$('#trn-name').value.trim(), role=$('#trn-role').value;
   if(!name||!role){ toast('Enter trainee name and role'); return; }
   const rows=[...document.querySelectorAll('#trn-topics .trow')]; const ach=rows.filter(r=>r.classList.contains('s-ach')).length; const tot=rows.length||0;
-  const id=`TRN-${new Date().toISOString().slice(0,10).replace(/-/g,'')}-${Math.floor(100+Math.random()*900)}`;
-  DB.modules.training.records.unshift({id,created:new Date().toISOString().slice(0,16).replace('T',' '),traineeName:name,traineeRole:role,trainerName:$('#trn-trainer').value,
-    sessionDate:$('#trn-date').value,status:'Completed',overallRating:State.trn.rating||'Good',score:`${ach}/${tot}`,keyAchievements:$('#trn-ach').value,needsImprovement:$('#trn-imp').value,store:State.branch});
+  const id=makeRecordId('TRN',State.branch);
+  const rec={id,created:new Date().toISOString().slice(0,16).replace('T',' '),traineeName:name,traineeRole:role,trainerName:$('#trn-trainer').value,
+    sessionDate:$('#trn-date').value,status:'Completed',overallRating:State.trn.rating||'Good',score:`${ach}/${tot}`,keyAchievements:$('#trn-ach').value,needsImprovement:$('#trn-imp').value,store:State.branch};
+  auditLog('create','training',rec.id,rec.store,null,rec);
+  DB.modules.training.records.unshift(rec);
+  if(window.persist) window.persist();
   State.trn={mode:'list'}; toast(`✓ Training saved · ${ach}/${tot} achieved`); buildSidebar(); renderTraining();
 }
 
@@ -245,7 +251,7 @@ function renderReward(){
   const month=State.rwdMonth||months[0]||new Date().toISOString().slice(0,7);
   const mRecs=recs.filter(r=>r.rewardMonth===month);
   const eom=mRecs.find(r=>r.awardType==='Employee of the Month');
-  const staff=['— Select staff —',...DB.staff.map(x=>x.name)];
+  const staff=['— Select staff —',...DB.staff.filter(x=>isSuper()||x.store===State.branch).map(x=>x.name)];
   const awards=['Employee of the Month','Best Customer Service','Best Team Player','Perfect Attendance','Cleanliness Champion'];
   $('#content').innerHTML=`
     <div class="page-head"><div class="ph-ic" style="background:#e7f6ee">🏆</div><div><h2>Monthly Rewards</h2><p>Decide and track monthly staff awards and goodwill amounts.</p></div>
@@ -260,13 +266,13 @@ function renderReward(){
       <div class="card"><div class="card-head"><h3><i class="fas fa-award"></i>&nbsp; Give an award</h3></div><div class="card-pad"><div class="grid2">
         <div class="field"><label>Award</label><select id="rwd-type">${awards.map(a=>`<option>${esc(a)}</option>`).join('')}</select></div>
         <div class="field"><label>Staff</label><select id="rwd-staff">${staff.map(n=>`<option>${esc(n)}</option>`).join('')}</select></div>
-        <div class="field"><label>Store</label><select id="rwd-store">${DB.stores.map(s=>`<option>${esc(s)}</option>`).join('')}</select></div>
+        <div class="field"><label>Store</label><select id="rwd-store">${(isSuper()?DB.stores:[State.branch]).map(s=>`<option>${esc(s)}</option>`).join('')}</select></div>
         <div class="field"><label>Amount ($)</label><input type="number" id="rwd-amt" placeholder="100"></div>
         <div class="field full"><label>Notes</label><textarea id="rwd-notes"></textarea></div>
       </div><button class="btn primary block" style="margin-top:12px" onclick="rwdSubmit()">🏆 Award staff</button></div></div>
       <div><div class="section-title" style="margin-top:0">Awards · ${esc(month)}</div>
         <div class="card"><div class="table-wrap"><table class="grid"><thead><tr><th>Award</th><th>Staff</th><th>$</th><th>Status</th></tr></thead><tbody>
-        ${mRecs.length?mRecs.map(r=>`<tr onclick='openDetail("reward","${esc(r.id)}")'><td><span class="badge ok">${esc(r.awardType)}</span></td><td><b>${esc(r.staffName)}</b><div class="cell-sub">${esc(r.store||'')}</div></td><td class="num">${r.rewardAmount||0}</td><td>${badge(r.status)}</td></tr>`).join(''):'<tr><td colspan="4"><div class="empty">No awards yet this month.</div></td></tr>'}
+        ${mRecs.length?mRecs.map(r=>`<tr onclick='openDetail("reward","${esc(r.id)}","${ckJS(r.store||'')}")'><td><span class="badge ok">${esc(r.awardType)}</span></td><td><b>${esc(r.staffName)}</b><div class="cell-sub">${esc(r.store||'')}</div></td><td class="num">${r.rewardAmount||0}</td><td>${badge(r.status)}</td></tr>`).join(''):'<tr><td colspan="4"><div class="empty">No awards yet this month.</div></td></tr>'}
         </tbody></table></div></div></div>
     </div>`;
 }
@@ -274,7 +280,11 @@ function rwdMonth(m){ State.rwdMonth=m; renderReward(); }
 function rwdExport(fmt){ const cols=[{label:'Month',get:r=>r.rewardMonth},{label:'Award',get:r=>r.awardType},{label:'Staff',get:r=>r.staffName},{label:'Store',get:r=>r.store},{label:'Amount ($)',get:r=>r.rewardAmount||0},{label:'Status',get:r=>r.status}]; expRecords('Monthly Rewards',cols,scopedRecords('reward'),fmt); }
 function rwdSubmit(){ const staff=$('#rwd-staff').value; if(staff.startsWith('—')){toast('Select a staff member');return;}
   const month=State.rwdMonth||new Date().toISOString().slice(0,7);
-  DB.modules.reward.records.unshift({id:`RWD-${month.replace('-','')}-${Math.floor(10+Math.random()*89)}`,rewardMonth:month,awardType:$('#rwd-type').value,staffName:staff,store:$('#rwd-store').value,rewardAmount:+$('#rwd-amt').value||0,status:'Proposed',created:new Date().toISOString().slice(0,16).replace('T',' ')});
+  const store=storeForWrite($('#rwd-store')?.value);
+  const rec={id:makeRecordId('RWD',store),rewardMonth:month,awardType:$('#rwd-type').value,staffName:staff,store,rewardAmount:+$('#rwd-amt').value||0,status:'Proposed',created:new Date().toISOString().slice(0,16).replace('T',' ')};
+  auditLog('create','reward',rec.id,rec.store,null,rec);
+  DB.modules.reward.records.unshift(rec);
+  if(window.persist) window.persist();
   toast('🏆 Award added'); buildSidebar(); renderReward();
 }
 
@@ -282,7 +292,7 @@ function rwdSubmit(){ const staff=$('#rwd-staff').value; if(staff.startsWith('�
 function renderRaise(){
   setAccent('#6a1b9a'); setCrumb('💸','Raise Salary Review','Review & approve pay-rate changes');
   const recs=scopedRecords('raise');
-  const staff=['— Select staff —',...DB.staff.map(x=>x.name)];
+  const staff=['— Select staff —',...DB.staff.filter(x=>isSuper()||x.store===State.branch).map(x=>x.name)];
   $('#content').innerHTML=`
     <div class="page-head"><div class="ph-ic" style="background:#f3e8fb">💸</div><div><h2>Raise Salary Review</h2><p>Track current vs proposed pay rates and approval decisions.</p></div><div class="ph-actions">${expMenu('raiExport')}</div></div>
     <div class="kpi-grid">
@@ -302,7 +312,7 @@ function renderRaise(){
       </div><button class="btn primary block" style="margin-top:12px" onclick="raiSubmit()">📤 Submit review</button></div></div>
       <div><div class="section-title" style="margin-top:0">Reviews</div>
         <div class="card"><div class="table-wrap"><table class="grid"><thead><tr><th>Staff</th><th>Current</th><th>Proposed</th><th>Change</th><th>Status</th></tr></thead><tbody>
-        ${recs.length?recs.map(r=>{const up=(+r.proposedRate)-(+r.currentRate);return `<tr onclick='openDetail("raise","${esc(r.id)}")'><td><b>${esc(r.staffName)}</b><div class="cell-sub">${esc(r.store||'')}</div></td><td class="num">$${r.currentRate}</td><td class="num">$${r.proposedRate}</td><td class="num" style="color:${up>=0?'#0a8a5f':'#d13030'}">${up>=0?'+':''}$${up.toFixed(2)}</td><td>${badge(r.status)}</td></tr>`;}).join(''):'<tr><td colspan="5"><div class="empty">No reviews.</div></td></tr>'}
+        ${recs.length?recs.map(r=>{const up=(+r.proposedRate)-(+r.currentRate);return `<tr onclick='openDetail("raise","${esc(r.id)}","${ckJS(r.store||'')}")'><td><b>${esc(r.staffName)}</b><div class="cell-sub">${esc(r.store||'')}</div></td><td class="num">$${r.currentRate}</td><td class="num">$${r.proposedRate}</td><td class="num" style="color:${up>=0?'#0a8a5f':'#d13030'}">${up>=0?'+':''}$${up.toFixed(2)}</td><td>${badge(r.status)}</td></tr>`;}).join(''):'<tr><td colspan="5"><div class="empty">No reviews.</div></td></tr>'}
         </tbody></table></div></div></div>
     </div>`;
 }
@@ -314,7 +324,12 @@ function raiPerfHint(){ const name=$('#rai-staff').value, wrap=$('#rai-perf-wrap
 }
 function raiExport(fmt){ const cols=[{label:'Staff',get:r=>r.staffName},{label:'Store',get:r=>r.store},{label:'Review month',get:r=>r.reviewMonth},{label:'Current ($/h)',get:r=>r.currentRate},{label:'Proposed ($/h)',get:r=>r.proposedRate},{label:'Change',get:r=>((+r.proposedRate)-(+r.currentRate)).toFixed(2)},{label:'Effective',get:r=>r.effectiveDate},{label:'Status',get:r=>r.status}]; expRecords('Raise Salary Reviews',cols,scopedRecords('raise'),fmt); }
 function raiSubmit(){ const staff=$('#rai-staff').value; if(staff.startsWith('—')){toast('Select a staff member');return;}
-  DB.modules.raise.records.unshift({id:`RAI-${Math.floor(100+Math.random()*899)}`,staffName:staff,store:(DB.staff.find(x=>x.name===staff)||{}).store||State.branch,reviewMonth:$('#rai-month').value,currentRate:+$('#rai-cur').value||0,proposedRate:+$('#rai-prop').value||0,effectiveDate:$('#rai-eff').value,status:'Submitted',managerNotes:$('#rai-notes').value,created:new Date().toISOString().slice(0,16).replace('T',' ')});
+  const staffStore=(DB.staff.find(x=>x.name===staff)||{}).store;
+  const store=storeForWrite(staffStore||State.branch);
+  const rec={id:makeRecordId('RAI',store),staffName:staff,store,reviewMonth:$('#rai-month').value,currentRate:+$('#rai-cur').value||0,proposedRate:+$('#rai-prop').value||0,effectiveDate:$('#rai-eff').value,status:'Submitted',managerNotes:$('#rai-notes').value,created:new Date().toISOString().slice(0,16).replace('T',' ')};
+  auditLog('create','raise',rec.id,rec.store,null,rec);
+  DB.modules.raise.records.unshift(rec);
+  if(window.persist) window.persist();
   toast('📤 Raise review submitted'); buildSidebar(); renderRaise();
 }
 
@@ -330,7 +345,7 @@ function renderBirthday(){
   const next30=withDays.filter(r=>r.du<=30);
   const thisMonth=recs.filter(r=>(r.birthday||'').slice(5,7)===String(today.getMonth()+1).padStart(2,'0'));
   const given=recs.filter(r=>r.status==='Given');
-  const staff=['— Select staff —',...DB.staff.map(x=>x.name)];
+  const staff=['— Select staff —',...DB.staff.filter(x=>isSuper()||x.store===State.branch).map(x=>x.name)];
   $('#content').innerHTML=`
     <div class="page-head"><div class="ph-ic" style="background:#fef4e0">🎂</div><div><h2>Birthday Giveaways</h2><p>Track staff birthdays and plan their gift.</p></div><div class="ph-actions">${expMenu('bdExport')}</div></div>
     ${next?`<div class="bd-hero"><div class="bd-days"><b>${next.du}</b><span>days</span></div><div><div class="bd-cap">Next birthday</div><div class="bd-name">${esc(next.staffName)}</div>
@@ -343,7 +358,7 @@ function renderBirthday(){
     <div class="vio-grid">
       <div><div class="section-title" style="margin-top:0">Upcoming birthdays</div>
         <div class="card"><div class="table-wrap"><table class="grid"><thead><tr><th>Staff</th><th>Birthday</th><th>Gift</th><th>In</th><th>Status</th></tr></thead><tbody>
-        ${withDays.map(r=>`<tr onclick='openDetail("birthday","${esc(r.id)}")'><td><b>${esc(r.staffName)}</b><div class="cell-sub">${esc(r.store||'')}</div></td><td>${esc(r.birthday)}</td><td>${esc(r.favoriteGift||'—')}</td><td><span class="badge ${r.du<=7?'bad':r.du<=30?'warn':'mute'}">${r.du} days</span></td><td>${badge(r.status)}</td></tr>`).join('')}
+        ${withDays.map(r=>`<tr onclick='openDetail("birthday","${esc(r.id)}","${ckJS(r.store||'')}")'><td><b>${esc(r.staffName)}</b><div class="cell-sub">${esc(r.store||'')}</div></td><td>${esc(r.birthday)}</td><td>${esc(r.favoriteGift||'—')}</td><td><span class="badge ${r.du<=7?'bad':r.du<=30?'warn':'mute'}">${r.du} days</span></td><td>${badge(r.status)}</td></tr>`).join('')}
         </tbody></table></div></div></div>
       <div class="card" style="align-self:start"><div class="card-head"><h3><i class="fas fa-pen-to-square"></i>&nbsp; Add / update birthday</h3></div><div class="card-pad"><div class="grid2">
         <div class="field full"><label>Staff</label><select id="bd-staff">${staff.map(n=>`<option>${esc(n)}</option>`).join('')}</select></div>
@@ -354,9 +369,12 @@ function renderBirthday(){
     </div>`;
 }
 function bdSubmit(){ const staff=$('#bd-staff').value, date=$('#bd-date').value; if(staff.startsWith('—')||!date){toast('Pick staff and birthday');return;}
-  const ex=DB.modules.birthday.records.find(r=>r.staffName===staff);
-  const rec={id:ex?ex.id:`BDY-${Math.floor(10+Math.random()*89)}`,staffName:staff,store:(DB.staff.find(x=>x.name===staff)||{}).store||State.branch,birthday:date,favoriteGift:$('#bd-gift').value,status:$('#bd-status').value,created:new Date().toISOString().slice(0,10)};
-  if(ex) Object.assign(ex,rec); else DB.modules.birthday.records.unshift(rec);
+  const recStore=storeForWrite((DB.staff.find(x=>x.name===staff)||{}).store||State.branch);
+  const ex=DB.modules.birthday.records.find(r=>r.staffName===staff && r.store===recStore);
+  const rec={id:ex?ex.id:makeRecordId('BDY',recStore),staffName:staff,store:recStore,birthday:date,favoriteGift:$('#bd-gift').value,status:$('#bd-status').value,created:new Date().toISOString().slice(0,10)};
+  if(ex){ const before=JSON.parse(JSON.stringify(ex)); Object.assign(ex,rec); auditLog('update','birthday',ex.id,ex.store,before,ex); }
+  else { auditLog('create','birthday',rec.id,rec.store,null,rec); DB.modules.birthday.records.unshift(rec); }
+  if(window.persist) window.persist();
   toast('🎂 Birthday saved'); buildSidebar(); renderBirthday();
 }
 
@@ -481,37 +499,44 @@ function renderStructure(){
   setAccent('#0e9f6e'); setCrumb('🏢','Staff Structure','Organisation chart');
   if(!State.struct) State.struct={edit:false};
   if(isAdmin() && State.struct.edit) return structEditor();
-  const top=DB.structure[0];
-  const depts=DB.structure.slice(1).map(d=>`<div class="ssd" style="--c:${d.color}"><div class="ssd-card"><div class="ssd-title">${esc(d.dept)}</div><div class="ssd-lead">${esc((d.head||'').split('—')[0].trim())}</div><div class="ssd-badge">${esc(((d.head||'').split('—')[1]||'LEAD').trim().toUpperCase())}</div></div>
-      <div class="ssd-members">${(d.members||[]).map(m=>`<div class="ssd-member">${esc(m)}</div>`).join('')}</div></div>`).join('');
+  const deptCard=d=>`<div class="ssd" style="--c:${d.color}">
+    <div class="ssd-card">
+      <div class="ssd-title">${esc(d.dept)}</div>
+      <div class="ssd-tier lead"><span>Level 1</span><b>${esc((d.head||'').split('—')[0].trim())}</b><small>${esc(((d.head||'').split('—')[1]||'DEPARTMENT LEAD').trim())}</small></div>
+      <div class="ssd-tier"><span>Level 2</span><b>Department staff</b><div class="ssd-members">${(d.members||[]).map(m=>`<div class="ssd-member">${esc(m)}</div>`).join('')||'<div class="ssd-empty">No level 2 staff yet</div>'}</div></div>
+      <div class="ssd-tier new"><span>Level 3</span><b>New staff / trainees</b><div class="ssd-members">${(d.newStaff||[]).map(m=>`<div class="ssd-member">${esc(m)}</div>`).join('')||'<div class="ssd-empty">No new staff yet</div>'}</div></div>
+    </div>
+  </div>`;
   $('#content').innerHTML=`
     <div class="page-head"><div class="ph-ic">🏢</div><div><h2>Staff Structure</h2><p>How MCQ Supermarket teams report and connect.</p></div>
       ${isAdmin()?`<div class="ph-actions"><button class="btn primary" onclick="structEditToggle()">✎ Live editor</button></div>`:''}</div>
     <div class="ss-wrap">
-      <div class="ss-mgr"><div class="ss-mgr-role">${esc(((top.head||'').split('—')[1]||'HEAD OFFICE').trim().toUpperCase())}</div><div class="ss-mgr-name">${esc((top.head||'').split('—')[0].trim())}</div>
-        <div class="ss-mgr-sub">${(top.members||[]).map(m=>esc(m)).join(' · ')}</div></div>
-      <div class="ss-line"></div>
-      <div class="ss-grid">${depts}</div>
+      <div class="ss-grid">${(DB.structure||[]).map(deptCard).join('')}</div>
     </div>`;
 }
 function structEditToggle(){ State.struct=State.struct||{}; State.struct.edit=!State.struct.edit; renderStructure(); }
-function structSet(i,f,v){ if(DB.structure[i]) DB.structure[i][f]=v; }
-function structSetMembers(i,txt){ if(DB.structure[i]) DB.structure[i].members=txt.split('\n').map(s=>s.trim()).filter(Boolean); }
-function structAddDept(){ DB.structure.push({dept:'NEW DEPARTMENT',color:'#0e9f6e',head:'Name — Lead',members:[]}); renderStructure(); }
-function structDelDept(i){ if(!confirm('Delete this department branch?')) return; DB.structure.splice(i,1); renderStructure(); }
+function structPersist(){ if(window.persist) window.persist(); }
+function structSet(i,f,v){ if(DB.structure[i]){ DB.structure[i][f]=v; structPersist(); } }
+function structSetMembers(i,txt){ if(DB.structure[i]){ DB.structure[i].members=txt.split('\n').map(s=>s.trim()).filter(Boolean); structPersist(); } }
+function structSetNewStaff(i,txt){ if(DB.structure[i]){ DB.structure[i].newStaff=txt.split('\n').map(s=>s.trim()).filter(Boolean); structPersist(); } }
+function structAddDept(){ DB.structure.push({dept:'NEW DEPARTMENT',color:'#0e9f6e',head:'Name — Department Lead',members:[],newStaff:[]}); structPersist(); renderStructure(); }
+function structDelDept(i){ if(!confirm('Delete this department branch?')) return; DB.structure.splice(i,1); structPersist(); renderStructure(); }
 function structEditor(){
   setCrumb('🏢','Staff Structure','Live editor');
   const card=(d,i)=>`<div class="card struct-edit-card" style="border-top:4px solid ${d.color||'#0e9f6e'}"><div class="card-pad">
     <div class="grid2">
       <div class="field"><label>${i===0?'Top / Head Office':'Department / branch'}</label><input value="${esc(d.dept)}" oninput="structSet(${i},'dept',this.value)"></div>
-      <div class="field"><label>Lead / Head &nbsp;<small style="color:var(--muted)">(Name — Role)</small></label><input value="${esc(d.head||'')}" oninput="structSet(${i},'head',this.value)"></div>
-      ${i>0?`<div class="field"><label>Colour</label><input type="color" value="${d.color||'#0e9f6e'}" oninput="structSet(${i},'color',this.value)"></div>`:''}
+      <div class="field"><label>Level 1 · Department lead <small style="color:var(--muted)">(Name — Role)</small></label><input value="${esc(d.head||'')}" oninput="structSet(${i},'head',this.value)"></div>
+      <div class="field"><label>Colour</label><input type="color" value="${d.color||'#0e9f6e'}" oninput="structSet(${i},'color',this.value)"></div>
     </div>
-    <div class="field" style="margin-top:12px"><label>Members <small style="color:var(--muted)">(one per line)</small></label><textarea rows="4" oninput="structSetMembers(${i},this.value)">${esc((d.members||[]).join('\n'))}</textarea></div>
+    <div class="grid2" style="margin-top:12px">
+      <div class="field"><label>Level 2 · Staff under lead <small style="color:var(--muted)">(one per line)</small></label><textarea rows="5" oninput="structSetMembers(${i},this.value)">${esc((d.members||[]).join('\n'))}</textarea></div>
+      <div class="field"><label>Level 3 · New staff / trainees <small style="color:var(--muted)">(one per line)</small></label><textarea rows="5" oninput="structSetNewStaff(${i},this.value)">${esc((d.newStaff||[]).join('\n'))}</textarea></div>
+    </div>
     ${i>0?`<button class="btn sm" style="margin-top:10px;color:var(--bad);border-color:#f3c9c9" onclick="structDelDept(${i})"><i class="fas fa-trash"></i>&nbsp; Delete branch</button>`:''}
   </div></div>`;
   $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🏢</div><div><h2>Staff Structure · Live editor</h2><p>Edit departments, leads &amp; members — changes apply instantly. Add new branches/levels or rename.</p></div>
-      <div class="ph-actions"><button class="btn" onclick="structAddDept()">＋ Add branch</button><button class="btn primary" onclick="structEditToggle()">✓ Done</button></div></div>
+      <div class="ph-actions"><button class="btn" onclick="structAddDept()">＋ Add department</button><button class="btn primary" onclick="structEditToggle()">✓ Done</button></div></div>
     ${card(DB.structure[0],0)}
     <div class="section-title">Departments / branches</div>
     <div class="struct-edit-grid">${DB.structure.slice(1).map((d,k)=>card(d,k+1)).join('')}</div>`;

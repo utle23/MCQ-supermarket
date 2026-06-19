@@ -2,7 +2,7 @@
    Same-origin GET requests are served cache-first then network-updated; all
    cross-origin traffic (Firebase, Tesseract CDN, Brevo, fonts) goes straight
    to the network so live sync/AI/email are never intercepted. */
-const CACHE = 'mcq-ops-v3';
+const CACHE = 'mcq-ops-v27';
 const ASSETS = [
   './', 'index.html',
   'assets/styles.css', 'assets/styles2.css',
@@ -23,6 +23,15 @@ self.addEventListener('fetch', e => {
   if (req.method !== 'GET') return;
   const url = new URL(req.url);
   if (url.origin !== location.origin) return;            // let CDN / Firebase / Brevo go to network
+  const liveAsset = url.pathname === '/' || /\.(?:html|js|css)$/i.test(url.pathname);
+  if (liveAsset) {
+    e.respondWith(fetch(req).then(res => {
+      const copy = res.clone();
+      caches.open(CACHE).then(c => c.put(req, copy)).catch(() => {});
+      return res;
+    }).catch(() => caches.match(req)));
+    return;
+  }
   e.respondWith(
     caches.match(req).then(cached => cached || fetch(req).then(res => {
       const copy = res.clone();

@@ -42,6 +42,68 @@ function renderStaffHome(){
 /* ============================================================ CHECKLIST — Opening/Closing + photo capture */
 const CK_DEADLINE={Opening:'10:30 AM',Closing:'6:30 PM'};
 function ckJS(s){ return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
+function staffNorm(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase(); }
+function staffScopeList(){
+  return (DB.staff||[]).filter(s=>s.active!==0 && (isSuper() || s.store===State.branch));
+}
+function staffDeptNeedles(dept){
+  const d=staffNorm(dept);
+  if(!d || /whole store|all store|all staff|storefront|amenit/.test(d)) return [];
+  const rules=[
+    [/cash|checkout|front/,['cashier','front end']],
+    [/\bfv\b|fruit|veg/,['fv','fruit','veg']],
+    [/grocery/,['grocery']],
+    [/frozen|dairy|refrigeration|coolroom|freezer/,['frozen','dairy','grocery']],
+    [/butcher|meat/,['butcher']],
+    [/cafe/,['cafe']],
+    [/manager|office|leadership/,['manager','supervisor','head office','assistant manager']],
+    [/forklift|warehouse|loading|logistics/,['warehouse','logistics','forklift']],
+    [/clean|toilet/,['cleaner']],
+    [/maintenance|building|electrical|plumbing|\bit\b|safety/,['maintenance','manager','supervisor','warehouse']]
+  ];
+  const hit=rules.find(r=>r[0].test(d));
+  return hit?hit[1]:[d];
+}
+function staffForDept(dept,opts){
+  const all=staffScopeList(), needles=staffDeptNeedles(dept);
+  if(!needles.length) return all;
+  const rows=all.filter(s=>{ const role=staffNorm(s.role), name=staffNorm(s.name); return needles.some(n=>role.includes(n)||name.includes(n)); });
+  return rows.length?rows:((opts&&opts.fallbackAll)?all:[]);
+}
+function staffById(id){
+  return (DB.staff||[]).find(s=>String(s.id)===String(id));
+}
+function staffIdsForNames(names,dept){
+  const vals=String(names||'').split(',').map(s=>s.trim()).filter(Boolean);
+  const pool=staffForDept(dept,{fallbackAll:true});
+  return vals.map(n=>(pool.find(s=>s.name===n)||staffScopeList().find(s=>s.name===n)||{}).id).filter(Boolean);
+}
+function staffNamesFromIds(ids){
+  return (ids||[]).map(id=>staffById(id)).filter(Boolean).map(s=>s.name);
+}
+function staffDisplayForTask(t){
+  const names=staffNamesFromIds(t.staffIds||[]);
+  if(names.length) return names.join(', ');
+  return staffDisplayForDept(t.dept,t.who);
+}
+function staffDataList(id,dept,current){
+  const rows=staffForDept(dept), seen=new Set(rows.map(s=>s.name));
+  const currentVals=(Array.isArray(current)?current:[current]).map(v=>String(v||'').trim()).filter(Boolean);
+  const curOpt=currentVals.filter(v=>!seen.has(v)).map(v=>`<option value="${esc(v)}" label="Current value"></option>`).join('');
+  return `<datalist id="${id}">${curOpt}${rows.map(s=>`<option value="${esc(s.name)}" label="${esc((s.role||'Staff')+(isSuper()?' · '+s.store:''))}"></option>`).join('')}</datalist>`;
+}
+function staffSelectOptions(dept,current,placeholder,opts){
+  const rows=dept?staffForDept(dept,opts):staffScopeList(), cur=String(current||'').trim(), seen=new Set(rows.map(s=>s.name));
+  const curOpt=cur&&!seen.has(cur)?`<option selected>${esc(cur)}</option>`:'';
+  return `<option value="">${esc(placeholder||'— Select staff —')}</option>${curOpt}${rows.map(s=>`<option value="${esc(s.name)}" ${s.name===cur?'selected':''}>${esc(s.name)}${isSuper()?` · ${esc(s.store)}`:''}${s.role?` · ${esc(s.role)}`:''}</option>`).join('')}`;
+}
+function staffDisplayForDept(dept,current){
+  const cur=String(current||'').trim();
+  const actual=cur && staffScopeList().some(s=>s.name===cur);
+  if(actual || /external|contractor|technician|electrician|plumber|fire contractor/i.test(cur)) return cur;
+  const names=staffForDept(dept).slice(0,3).map(s=>s.name);
+  return names.length?names.join(', '):(cur||'—');
+}
 function ckItem(it,i){ return {i,dept:it[0],area:it[1],task:it[2],when:it[3],photo:photoSpec(it[4]),meta:it[5]||{}}; }
 function ckInSession(r,session){ return session==='Opening'?(r.when==='O'||r.when==='A'):(r.when==='C'||r.when==='A'); }
 function renderChecklist(){
@@ -51,15 +113,13 @@ function renderChecklist(){
   if(!State.chk.area) State.chk.area='ALL';
   if(!State.chk.resp) State.chk.resp={};
   const s=State.chk;
-  setCrumb('✅','Store Operation Checklist',`${isAdmin()?'All stores':State.branch} · ${s.session}`);
+  setCrumb('✅','Store Operation Checklist',`${isSuper()?'All stores':State.branch} · ${s.session}`);
   const chips=C.depts.map(d=>`<button class="dept-chip ${d===s.dept?'active':''}" onclick="ckDept('${ckJS(d)}')">${esc(d)}</button>`).join('');
   const areaChips=ckAreaChips();
-  const staff=DB.staff.filter(x=>isAdmin()||x.store===State.branch).map(x=>x.name);
   $('#content').innerHTML=`
    <div class="page-head"><div class="ph-ic">✅</div>
      <div><h2>Store Operation Checklist</h2><p>Every photo task needs evidence before submit. Temperature checks must be read by AI Vision or marked defrosting.</p></div>
      <div class="ph-actions">${checklistExportMenu()}</div></div>
-   <datalist id="ck-staff-list">${staff.map(n=>`<option value="${esc(n)}"></option>`).join('')}</datalist>
    <div class="ck-sessionbar card">
      <div class="seg ck-seg">
        <button class="seg-btn ${s.session==='Opening'?'active':''}" onclick="ckSession('Opening')">☀️ Opening</button>
@@ -99,10 +159,10 @@ function ckDraw(){
   let html='';
   Object.entries(groups).forEach(([dept,areas])=>{
     const dm=C.deptMeta[dept]||{};
-    html+=`<div class="ck-dept"><div class="ck-dept-h" style="--dc:${dm.color}"><span class="chk-dot" style="background:${dm.color}"></span>${esc(dept)}<span class="ck-dept-n">${Object.values(areas).flat().length} tasks</span></div>`;
+    html+=`<div class="ck-dept"><div class="ck-dept-h" style="--dc:${dm.color}"><span class="chk-dot" style="background:${dm.color}"></span>${esc(dept)}<span class="ck-dept-n">${Object.values(areas).flat().length} tasks</span>${isAdmin()?`<button class="ck-add-task" onclick="ckAddSection('${ckJS(dept)}')">＋ Add section</button>`:''}</div>`;
     html+=ckRespHTML(dept);
     Object.entries(areas).forEach(([area,items])=>{
-      html+=`<div class="ck-area-h">${esc(area)}${isAdmin()?`<button class="ck-add-task" onclick="ckAddTask('${ckJS(dept)}','${ckJS(area)}')">＋ Add task</button>`:''}</div>`;
+      html+=`<div class="ck-area-h">${esc(area)}${isAdmin()?`<button class="ck-add-task" onclick="ckRenameSection('${ckJS(dept)}','${ckJS(area)}')">Rename section</button><button class="ck-add-task" onclick="ckAddTask('${ckJS(dept)}','${ckJS(area)}')">＋ Add task</button>`:''}</div>`;
       items.forEach(r=>{ const st=State.chk.state[r.i]||{}; const done=st.done;
         if(isAdmin() && State.chk.editing===r.i){
           html+=`<div class="ck-task editing" id="ck-row-${r.i}"><div class="ck-edit">
@@ -145,8 +205,10 @@ function ckRespId(dept,field){ return 'ck-resp-'+field+'-'+String(dept).toLowerC
 function ckRespHTML(dept){
   State.chk.resp=State.chk.resp||{};
   const rec=(State.chk.resp[dept]=State.chk.resp[dept]||{p1:'',p2:'',submittedBy:''});
-  const field=(key,label,required)=>`<label class="ck-resp-field"><span>${esc(label)}${required?' <b>*</b>':''}</span><input id="${ckRespId(dept,key)}" list="ck-staff-list" value="${esc(rec[key]||'')}" placeholder="Enter name" oninput="ckResp('${ckJS(dept)}','${key}',this.value)"></label>`;
+  const listId=ckRespId(dept,'staff-list');
+  const field=(key,label,required)=>`<label class="ck-resp-field"><span>${esc(label)}${required?' <b>*</b>':''}</span><input id="${ckRespId(dept,key)}" list="${listId}" value="${esc(rec[key]||'')}" placeholder="Select ${esc(dept)} staff" oninput="ckResp('${ckJS(dept)}','${key}',this.value)"></label>`;
   return `<div class="ck-resp-card" id="${ckRespId(dept,'card')}">
+    ${staffDataList(listId,dept,[rec.p1,rec.p2,rec.submittedBy])}
     ${field('p1','Responsible Person 1',true)}
     ${field('p2','Responsible Person 2',false)}
     ${field('submittedBy','Submitted by',true)}
@@ -204,18 +266,19 @@ async function ckPhoto(input,i){
   if(r.meta.temp&&st.defrosting){ input.value=''; toast('Defrosting is ticked, so photo capture is locked'); return; }
   let ref; try{ const d=await compressImage(f); ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d; }catch(e){ ref=URL.createObjectURL(f); }
   st.photos=st.photos||[]; st.photos.push(ref);
-  if(r.meta.temp){ st.aiStatus='scanning'; st.temp=null; st.done=false; ckDraw(); toast('AI Vision reading temperature...');
+  if(r.meta.temp){ st.aiStatus='scanning'; st.aiError=''; st.aiSuggestion=null; st.aiManualAllowed=false; st.temp=null; st.done=false; ckDraw(); toast('AI Vision reading temperature...');
     setTimeout(()=>ckAiTemp(i,f.name,f),700);
   }else{ ckDraw(); toast('📷 Photo added'); }
 }
 function ckRmPhoto(e,i,url){
   e.preventDefault(); e.stopPropagation();
   const st=State.chk.state[i], r=ckItem(DB.checklist.items[i],i);
-  if(st&&st.photos){st.photos=st.photos.filter(u=>u!==url); if(r.meta.temp&&!st.photos.length){st.temp=null;st.aiStatus=null;st.done=false;} ckDraw();}
+  if(st&&st.photos){st.photos=st.photos.filter(u=>u!==url); if(r.meta.temp&&!st.photos.length){st.temp=null;st.aiStatus=null;st.aiError='';st.aiSuggestion=null;st.aiManualAllowed=false;st.done=false;} ckDraw();}
 }
 function ckSession(v){State.chk.session=v;State.chk.area='ALL';renderChecklist();}
 function ckDept(d){State.chk.dept=d;State.chk.area='ALL';renderChecklist();}
 /* ---- admin checklist CRUD (add / edit / delete task) ---- */
+function ckPersistTemplate(){ if(window.persist) window.persist(); }
 function ckEditTask(i){ State.chk.editing=i; renderChecklist(); }
 function ckCancelEdit(){ State.chk.editing=null; renderChecklist(); }
 function ckSaveTask(i){
@@ -223,14 +286,37 @@ function ckSaveTask(i){
   const name=(document.getElementById('cke-task')?.value||'').trim(); if(name) it[2]=name;
   const w=document.getElementById('cke-when')?.value; if(w) it[3]=w;
   const p=document.getElementById('cke-photo')?.value; it[4]= (p==='0'||!p)?0:p;
-  State.chk.editing=null; renderChecklist(); toast('✓ Task saved');
+  State.chk.editing=null; ckPersistTemplate(); renderChecklist(); toast('✓ Task saved');
 }
 function ckAddTask(dept,area){
   const when=State.chk.session==='Opening'?'O':'C';
   DB.checklist.items.push([dept,area,'NEW TASK',when,0]);
   State.chk.editing=DB.checklist.items.length-1;
   if(State.chk.dept!=='ALL' && State.chk.dept!==dept) State.chk.dept=dept;
+  State.chk.area=area;
+  ckPersistTemplate();
   renderChecklist();
+}
+function ckAddSection(dept){
+  const area=(prompt('New section name:')||'').trim();
+  if(!area) return;
+  const when=State.chk.session==='Opening'?'O':'C';
+  DB.checklist.items.push([dept,area,'NEW TASK',when,0]);
+  State.chk.editing=DB.checklist.items.length-1;
+  State.chk.dept=dept;
+  State.chk.area=area;
+  ckPersistTemplate();
+  renderChecklist();
+  toast('✓ Section added');
+}
+function ckRenameSection(dept,area){
+  const name=(prompt('Rename section:',area)||'').trim();
+  if(!name||name===area) return;
+  DB.checklist.items.forEach(it=>{ if(it[0]===dept&&it[1]===area) it[1]=name; });
+  if(State.chk.area===area) State.chk.area=name;
+  ckPersistTemplate();
+  renderChecklist();
+  toast('✓ Section renamed');
 }
 function ckDelTask(i){
   if(!confirm('Delete this checklist task permanently?')) return;
@@ -238,13 +324,13 @@ function ckDelTask(i){
   const ns={}; Object.entries(State.chk.state||{}).forEach(([k,v])=>{k=+k; if(k===i)return; ns[k>i?k-1:k]=v;});
   State.chk.state=ns;
   if(State.chk.editing===i) State.chk.editing=null; else if(State.chk.editing>i) State.chk.editing--;
-  renderChecklist(); toast('🗑 Task deleted');
+  ckPersistTemplate(); renderChecklist(); toast('🗑 Task deleted');
 }
 function ckArea(a){State.chk.area=a;renderChecklist();}
 function ckAll(v){ckList().forEach(r=>{const st=State.chk.state[r.i]=State.chk.state[r.i]||{};st.done=v;});ckDraw();}
 function ckDefrost(i,on){
   const st=State.chk.state[i]=State.chk.state[i]||{};
-  st.defrosting=on; st.aiStatus=null; st.temp=null;
+  st.defrosting=on; st.aiStatus=null; st.temp=null; st.aiError=''; st.aiSuggestion=null; st.aiManualAllowed=false;
   if(on){ st.photos=[]; st.done=true; ckRecordTemp(i,{defrosting:true,inRange:true,value:null}); }
   else st.done=false;
   ckDraw();
@@ -261,22 +347,54 @@ async function ckAiTemp(i,fileName,file){
   const r=ckItem(DB.checklist.items[i],i), st=State.chk.state[i]=State.chk.state[i]||{};
   if(!r.meta.temp||st.defrosting) return;
   const result=await ckVisionValue(fileName,file,r,i);
-  if(!result||!Number.isFinite(result.value)){
-    st.aiStatus='error';
+  if(!result||result.error||!Number.isFinite(result.value)){
+    const suggestion=Number(result&&result.suggestedValue);
+    st.aiStatus=Number.isFinite(suggestion)?'confirm':'error';
+    st.aiError=result&&result.message?result.message:'AI Vision could not read the temperature clearly. Retake a closer, brighter photo of only the display.';
+    st.aiQuality=result&&result.quality?result.quality:null;
+    st.aiSuggestion=Number.isFinite(suggestion)?{value:suggestion,confidence:result.confidence||null,source:result.source||'AI Vision OCR',text:result.text||'',rawReading:result.rawReading||result.text||''}:null;
+    const manualSetting=result&&Object.prototype.hasOwnProperty.call(result,'manualAllowed');
+    st.aiManualAllowed=!!(result&&(manualSetting?result.manualAllowed:(Number.isFinite(suggestion)||(result.quality&&!result.quality.fail))));
     st.temp=null;
     st.done=false;
     ckDraw();
-    toast('AI Vision could not read the temperature. Retake a clearer photo.');
+    toast(st.aiError);
     return;
   }
-  const value=result.value, inRange=ckTempInRange(value,r.meta.type);
+  ckSaveTempReading(i,result.value,result,false);
+}
+function ckSaveTempReading(i,value,result,manual){
+  const r=ckItem(DB.checklist.items[i],i), st=State.chk.state[i]=State.chk.state[i]||{};
+  const tempValue=Number(value), inRange=ckTempInRange(tempValue,r.meta.type);
   st.aiStatus='done';
+  st.aiError='';
+  st.aiSuggestion=null;
+  st.aiManualAllowed=false;
   st.done=true;
-  st.temp={value,inRange,type:r.meta.type,range:ckTempRange(r.meta.type).text,source:result.source||'AI Vision OCR',ocrText:result.text||'',confidence:result.confidence||null,at:new Date().toISOString()};
+  st.temp={value:tempValue,inRange,type:r.meta.type,range:ckTempRange(r.meta.type).text,source:result.source||'AI Vision OCR',ocrText:result.text||'',confidence:result.confidence||null,quality:result.quality||null,manual:!!manual,confirmedBy:manual?ckTempConfirmer():'',suggestedValue:result.suggestedValue??null,rawReading:result.rawReading||result.text||'',at:new Date().toISOString()};
   ckRecordTemp(i,st.temp);
   if(!inRange) ckQueueTempAlert(i,st.temp);
   ckDraw();
-  toast(inRange?`AI Vision saved ${value.toFixed(1)} C · in range`:`AI Vision saved ${value.toFixed(1)} C · Gmail alert queued`);
+  const label=manual?'Manager confirmed':'AI Vision saved';
+  toast(inRange?`${label} ${tempValue.toFixed(1)} C · in range`:`${label} ${tempValue.toFixed(1)} C · Gmail alert queued`);
+}
+function ckTempConfirmer(){
+  const resp=(State.chk&&State.chk.resp&&State.chk.resp[State.chk.dept])||{};
+  return resp.submittedBy||resp.p1||State.user?.name||State.role||'Manager';
+}
+function ckManualTemp(i){
+  const st=State.chk.state[i]=State.chk.state[i]||{};
+  const input=document.getElementById(`ck-temp-manual-${i}`);
+  const raw=(input&&input.value.trim())||(st.aiSuggestion&&String(st.aiSuggestion.value))||'';
+  const value=Number(String(raw).replace(',','.'));
+  if(!Number.isFinite(value)||value<=-45||value>=35){ toast('Enter a valid temperature between -45 C and 35 C'); return; }
+  ckSaveTempReading(i,value,{value,source:'Manager confirmed',text:st.aiSuggestion?.text||'',confidence:st.aiSuggestion?.confidence||null,quality:st.aiQuality||null,suggestedValue:st.aiSuggestion?.value??null,rawReading:st.aiSuggestion?.rawReading||st.aiSuggestion?.text||''},true);
+}
+function ckRetakeTemp(i){
+  const st=State.chk.state[i]=State.chk.state[i]||{};
+  st.photos=[]; st.temp=null; st.aiStatus=null; st.aiError=''; st.aiSuggestion=null; st.aiManualAllowed=false; st.done=false;
+  ckDraw();
+  toast('Temperature photo cleared. Take a new close-up photo.');
 }
 async function ckVisionValue(fileName,file,r,i){
   const endpoint=window.MCQ_AI_VISION_ENDPOINT||localStorage.getItem('mcq_ai_vision_endpoint');
@@ -288,8 +406,11 @@ async function ckVisionValue(fileName,file,r,i){
       body.append('type',r.meta.type||'fridge');
       const res=await fetch(endpoint,{method:'POST',body});
       const data=await res.json();
+      if(!res.ok && data.fallback) throw new Error(data.message||'AI Vision endpoint unavailable');
       const v=Number(data.temperature ?? data.value ?? data.tempC);
-      if(Number.isFinite(v)) return {value:v,source:'AI Vision endpoint',text:data.text||data.rawText||'',confidence:data.confidence||null};
+      const confidence=data.confidence==null?null:Number(data.confidence);
+      if(Number.isFinite(v)) return {value:v,source:data.source||'Strong AI Vision',text:data.text||data.rawText||'',confidence,quality:{reason:data.reason||'',model:data.model||''},candidates:Array.isArray(data.candidates)?data.candidates:[]};
+      if(data.error||data.readable===false) return {error:true,message:data.message||'Strong AI Vision could not read a temperature number. Retake a closer photo of the display.',source:data.source||'Strong AI Vision',text:data.text||data.rawText||'',confidence,manualAllowed:false};
     }catch(e){ console.warn('AI Vision endpoint failed, trying browser OCR',e); }
   }
   const ocr=await ckOcrTemperature(file,r.meta.type);
@@ -297,17 +418,174 @@ async function ckVisionValue(fileName,file,r,i){
   return null;
 }
 async function ckOcrTemperature(file,type){
-  if(!file||!window.Tesseract) return null;
+  if(!file) return null;
   try{
-    const img=await ckPrepOcrImage(file);
-    const res=await Tesseract.recognize(img,'eng',{
-      tessedit_char_whitelist:'-0123456789.,Ccin '
-    });
-    const text=res?.data?.text||'';
-    const value=ckPickTempFromText(text,type);
-    if(Number.isFinite(value)) return {value,source:'AI Vision OCR',text,confidence:Math.round(res?.data?.confidence||0)};
+    const quality=await ckImageQuality(file).catch(()=>null);
+    const led=await ckReadRedLedTemperature(file,type,quality).catch(e=>(console.warn('Local LED OCR failed',e),null));
+    if(led) return led;
+    if(window.Tesseract){
+      const raw=await ckTesseractTemperature(file,type,quality,'AI Vision OCR');
+      if(raw) return raw;
+      const img=await ckPrepOcrImage(file);
+      const prep=await ckTesseractTemperature(img,type,quality,'AI Vision OCR enhanced');
+      if(prep) return prep;
+    }
+    return {error:true,message:'AI Vision found no readable temperature number. Retake a closer photo of the display with the full number visible.',quality,manualAllowed:false};
   }catch(e){ console.warn('Temperature OCR failed; retake required',e); }
   return null;
+}
+async function ckTesseractTemperature(img,type,quality,source){
+  const res=await Tesseract.recognize(img,'eng',{
+    tessedit_char_whitelist:'-0123456789.,Ccin ',
+    tessedit_pageseg_mode:'7'
+  });
+  const text=res?.data?.text||'';
+  const confidence=Math.round(res?.data?.confidence||0);
+  const pick=ckPickTempFromText(text,type);
+  if(pick&&Number.isFinite(pick.value)) return {value:pick.value,source,text,confidence,quality,candidates:pick.candidates};
+  return null;
+}
+function ckReadRedLedTemperature(file,type,quality){
+  return new Promise(resolve=>{
+    const img=new Image();
+    img.onload=()=>{
+      const max=1400, scale=Math.min(1,max/Math.max(img.width,img.height));
+      const w=Math.max(1,Math.round(img.width*scale)), h=Math.max(1,Math.round(img.height*scale));
+      const canvas=document.createElement('canvas'); canvas.width=w; canvas.height=h;
+      const ctx=canvas.getContext('2d',{willReadFrequently:true}); ctx.drawImage(img,0,0,w,h);
+      const data=ctx.getImageData(0,0,w,h).data;
+      const strict=ckRedMask(data,w,h,true);
+      const comps=ckMaskComponents(strict,w,h).filter(c=>c.area>=8);
+      const reading=ckRecognizeLedComponents(comps,strict,w,h,type);
+      URL.revokeObjectURL(img.src);
+      if(reading&&Number.isFinite(reading.value)){
+        const readingQuality=Object.assign({},quality||{},{led:true,display:reading.box,rawReading:reading.text});
+        if(reading.suggestedValue!=null){
+          resolve({error:true,suggestedValue:reading.suggestedValue,message:reading.message,source:'Local red LED OCR',text:reading.text,rawReading:reading.text,confidence:reading.confidence,quality:readingQuality,candidates:[reading.value,reading.suggestedValue],manualAllowed:true});
+        }else{
+          resolve({value:reading.value,source:'Local red LED OCR',text:reading.text,confidence:reading.confidence,quality:readingQuality,candidates:[reading.value]});
+        }
+      }else resolve(null);
+    };
+    img.onerror=()=>resolve(null);
+    img.src=URL.createObjectURL(file);
+  });
+}
+function ckRedMask(data,w,h,strict){
+  const mask=new Uint8Array(w*h);
+  for(let i=0,p=0;i<data.length;i+=4,p++){
+    const r=data[i], g=data[i+1], b=data[i+2];
+    const isRed=strict
+      ? (r>195 && g<85 && b<95 && r>g*2.15 && r>b*1.95)
+      : (r>135 && g<120 && b<135 && r>g*1.35 && r>b*1.2);
+    if(isRed) mask[p]=1;
+  }
+  return mask;
+}
+function ckMaskComponents(mask,w,h){
+  const seen=new Uint8Array(mask.length), out=[], stack=[];
+  for(let p=0;p<mask.length;p++){
+    if(!mask[p]||seen[p]) continue;
+    let x=p%w, y=Math.floor(p/w), x1=x,x2=x,y1=y,y2=y, area=0;
+    stack.length=0; stack.push(p); seen[p]=1;
+    while(stack.length){
+      const q=stack.pop(), qx=q%w, qy=Math.floor(q/w); area++;
+      if(qx<x1)x1=qx; if(qx>x2)x2=qx; if(qy<y1)y1=qy; if(qy>y2)y2=qy;
+      for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){
+        if(!dx&&!dy) continue;
+        const nx=qx+dx, ny=qy+dy;
+        if(nx<0||ny<0||nx>=w||ny>=h) continue;
+        const np=ny*w+nx;
+        if(mask[np]&&!seen[np]){ seen[np]=1; stack.push(np); }
+      }
+    }
+    out.push({x1,y1,x2,y2,area,w:x2-x1+1,h:y2-y1+1,cx:(x1+x2)/2,cy:(y1+y2)/2});
+  }
+  return out;
+}
+function ckRecognizeLedComponents(comps,mask,w,h,type){
+  const main=comps.filter(c=>c.area>=25&&c.h>=10&&c.w>=5).sort((a,b)=>b.area-a.area)[0];
+  if(!main) return null;
+  const H=main.h;
+  const near=comps.filter(c=>{
+    if(c===main) return true;
+    const vOverlap=Math.max(0,Math.min(main.y2,c.y2)-Math.max(main.y1,c.y1)+1);
+    const closeLeft=c.x2>=main.x1-H*.85 && c.x1<=main.x1+H*.25;
+    const closeRight=c.x1<=main.x2+H*.28 && c.x2>=main.x2-H*.08;
+    return c.area>=8 && vOverlap>=Math.min(c.h,main.h)*.35 && (closeLeft||closeRight) && c.cy>=main.y1-H*.12 && c.cy<=main.y2+H*.18;
+  });
+  const digitComps=near.filter(c=>!(c.h<=H*.28&&c.w<=H*.28&&c.cy>main.y1+H*.45));
+  const leftComps=digitComps.filter(c=>c!==main && c.cx<main.cx && c.x1<main.x1+H*.18);
+  const leftBox=ckUnionBox(leftComps);
+  const rightDigit=ckSevenDigit(main,mask,w,h);
+  if(!rightDigit) return null;
+  const chars=[];
+  if(leftBox){
+    const leftDigit=(leftBox.w<=H*.45&&leftBox.h>=H*.30)?'1':ckSevenDigit(leftBox,mask,w,h);
+    if(leftDigit) chars.push(leftDigit);
+  }
+  chars.push(rightDigit);
+  if(!chars.length) return null;
+  const decimal=ckLedDecimalPoint(near,digitComps,leftBox,main,H);
+  let text=chars.join('');
+  if(decimal&&chars.length>=2) text=`${chars[0]}.${chars.slice(1).join('')}`;
+  const value=Number(text);
+  if(!Number.isFinite(value)||value<=-45||value>=80) return null;
+  const box=ckUnionBox(near)||main;
+  const out={value,text,confidence:decimal?94:90,box:{x1:box.x1,y1:box.y1,x2:box.x2,y2:box.y2}};
+  if(!decimal && /^\d{2}$/.test(text)){
+    if(type==='freezer' && value>=10 && value<=35){
+      out.suggestedValue=-value;
+      out.message=`AI Vision read ${text} on the freezer LED and suggests ${out.suggestedValue.toFixed(1)} C. Confirm, edit the value, or retake if the display is different.`;
+    }else if(type!=='freezer' && value>=10 && value<=99){
+      out.suggestedValue=Math.round(value)/10;
+      out.message=`AI Vision read ${text} on the fridge LED and suggests ${out.suggestedValue.toFixed(1)} C. Confirm, edit the value, or retake if the display is different.`;
+    }
+  }
+  return out;
+}
+function ckUnionBox(comps){
+  if(!comps||!comps.length) return null;
+  return comps.reduce((b,c)=>({
+    x1:Math.min(b.x1,c.x1), y1:Math.min(b.y1,c.y1), x2:Math.max(b.x2,c.x2), y2:Math.max(b.y2,c.y2),
+    area:(b.area||0)+c.area, w:Math.max(b.x2,c.x2)-Math.min(b.x1,c.x1)+1, h:Math.max(b.y2,c.y2)-Math.min(b.y1,c.y1)+1,
+    cx:(Math.min(b.x1,c.x1)+Math.max(b.x2,c.x2))/2, cy:(Math.min(b.y1,c.y1)+Math.max(b.y2,c.y2))/2
+  }), comps[0]);
+}
+function ckLedDecimalPoint(near,digitComps,leftBox,rightBox,H){
+  if(!leftBox) return false;
+  const digitSet=new Set(digitComps);
+  return near.some(c=>{
+    if(digitSet.has(c)) return false;
+    const between=c.cx>=leftBox.x2-H*.08 && c.cx<=rightBox.x1+H*.18;
+    const low=c.cy>=rightBox.y1+H*.52;
+    return between && low && c.h<=H*.28 && c.w<=H*.28 && c.area>=3;
+  });
+}
+function ckSevenDigit(box,mask,w,h){
+  const regs={
+    a:[.22,.78,0,.20], b:[.62,1,.10,.48], c:[.62,1,.52,.90],
+    d:[.22,.78,.78,1], e:[0,.38,.52,.90], f:[0,.38,.10,.48], g:[.22,.78,.39,.62]
+  };
+  const occ={};
+  Object.entries(regs).forEach(([k,r])=>{
+    const x1=Math.max(0,Math.round(box.x1+r[0]*box.w)), x2=Math.min(w-1,Math.round(box.x1+r[1]*box.w));
+    const y1=Math.max(0,Math.round(box.y1+r[2]*box.h)), y2=Math.min(h-1,Math.round(box.y1+r[3]*box.h));
+    let red=0,total=0;
+    for(let y=y1;y<=y2;y++) for(let x=x1;x<=x2;x++){ total++; if(mask[y*w+x]) red++; }
+    occ[k]=red/Math.max(1,total);
+  });
+  const patterns={
+    0:'abcdef', 1:'bc', 2:'abged', 3:'abgcd', 4:'fgbc', 5:'afgcd',
+    6:'afgecd', 7:'abc', 8:'abcdefg', 9:'abfgcd'
+  };
+  let best=null;
+  Object.entries(patterns).forEach(([d,segs])=>{
+    let score=0;
+    'abcdefg'.split('').forEach(s=>{ const on=segs.includes(s); score+=on?occ[s]:(1-Math.min(1,occ[s]*1.8)); });
+    if(!best||score>best.score) best={digit:d,score};
+  });
+  return best&&best.score>3.1?best.digit:null;
 }
 function ckPickTempFromText(text,type){
   const clean=String(text||'').replace(/[−–—]/g,'-').replace(/,/g,'.');
@@ -321,12 +599,37 @@ function ckPickTempCandidate(nums,type){
     vals=vals.flatMap(n=>(n>10&&n<35)?[-Math.abs(n),n]:[n]);
   }
   vals=[...new Set(vals.map(n=>Math.round(n*10)/10))];
-  if(!vals.length) return null;
+  if(!vals.length) return {error:true,message:'AI Vision found no valid temperature number. Retake a close-up of the display.'};
   const inRange=vals.filter(n=>ckTempInRange(n,type));
   const target=type==='freezer'?-20:3.5;
   const pool=inRange.length?inRange:vals.filter(n=>type==='freezer'?n<=0:n>=-2&&n<=12);
   const finalPool=pool.length?pool:vals;
-  return finalPool.sort((a,b)=>Math.abs(a-target)-Math.abs(b-target))[0];
+  const sorted=finalPool.sort((a,b)=>Math.abs(a-target)-Math.abs(b-target));
+  return {value:sorted[0],candidates:vals};
+}
+function ckImageQuality(file){
+  return new Promise(resolve=>{
+    const img=new Image();
+    img.onload=()=>{
+      const max=360, scale=Math.min(1,max/Math.max(img.width,img.height));
+      const w=Math.max(1,Math.round(img.width*scale)), h=Math.max(1,Math.round(img.height*scale));
+      const canvas=document.createElement('canvas'); canvas.width=w; canvas.height=h;
+      const ctx=canvas.getContext('2d'); ctx.drawImage(img,0,0,w,h);
+      const d=ctx.getImageData(0,0,w,h).data, gray=new Float32Array(w*h);
+      let sum=0, sumSq=0;
+      for(let i=0,p=0;i<d.length;i+=4,p++){ const g=d[i]*0.299+d[i+1]*0.587+d[i+2]*0.114; gray[p]=g; sum+=g; sumSq+=g*g; }
+      const n=w*h, brightness=sum/n, contrast=Math.sqrt(Math.max(0,sumSq/n-brightness*brightness));
+      let lapSum=0, lapSq=0, count=0;
+      for(let y=1;y<h-1;y++) for(let x=1;x<w-1;x++){ const p=y*w+x, lap=gray[p-1]+gray[p+1]+gray[p-w]+gray[p+w]-4*gray[p]; lapSum+=lap; lapSq+=lap*lap; count++; }
+      const blur=count?Math.max(0,lapSq/count-Math.pow(lapSum/count,2)):0;
+      URL.revokeObjectURL(img.src);
+      const fail=blur<18||brightness<35||brightness>235||contrast<18;
+      const reason=blur<18?'photo is too blurry':brightness<35?'photo is too dark':brightness>235?'photo is over-exposed':'photo has low contrast';
+      resolve({blur:Math.round(blur),brightness:Math.round(brightness),contrast:Math.round(contrast),fail,message:fail?`AI Vision quality check failed: ${reason}. Retake a closer, steady, well-lit photo.`:''});
+    };
+    img.onerror=()=>resolve({fail:true,message:'AI Vision could not inspect this image. Retake the photo.'});
+    img.src=URL.createObjectURL(file);
+  });
 }
 function ckPrepOcrImage(file){
   return new Promise((resolve,reject)=>{
@@ -357,7 +660,7 @@ function ckRecordTemp(i,temp){
   State.tempReadings=State.tempReadings||[];
   State.tempReadings.unshift({
     item:i,session:State.chk.session,store:State.branch,dept:r.meta.dept,equipment:r.meta.equipment,type:r.meta.type,
-    value:temp.value,inRange:temp.inRange,defrosting:!!temp.defrosting,range:ckTempRange(r.meta.type).text,source:temp.source||'',confidence:temp.confidence||null,at:new Date().toISOString()
+    value:temp.value,inRange:temp.inRange,defrosting:!!temp.defrosting,range:ckTempRange(r.meta.type).text,source:temp.source||'',confidence:temp.confidence||null,manual:!!temp.manual,confirmedBy:temp.confirmedBy||'',suggestedValue:temp.suggestedValue??null,rawReading:temp.rawReading||'',at:new Date().toISOString()
   });
 }
 function ckQueueTempAlert(i,temp){
@@ -374,12 +677,20 @@ function ckQueueTempAlert(i,temp){
 }
 function ckTempBox(r,st){
   const range=ckTempRange(r.meta.type), temp=st.temp;
-  const status=st.defrosting?'defrost':(temp?(temp.inRange?'ok':'bad'):(st.aiStatus==='scanning'?'scan':(st.aiStatus==='error'?'error':'idle')));
-  const reading=st.defrosting?'DEFROSTING':(temp?`${temp.value.toFixed(1)} C`:(st.aiStatus==='scanning'?'Scanning photo...':(st.aiStatus==='error'?'Retake photo':'Waiting for photo')));
+  const needsConfirm=st.aiStatus==='confirm';
+  const status=st.defrosting?'defrost':(temp?(temp.inRange?'ok':'bad'):(st.aiStatus==='scanning'?'scan':(needsConfirm?'confirm':(st.aiStatus==='error'?'error':'idle'))));
+  const reading=st.defrosting?'DEFROSTING':(temp?`${temp.value.toFixed(1)} C`:(st.aiStatus==='scanning'?'Scanning photo...':(needsConfirm?'Confirm temperature':(st.aiStatus==='error'?'Retake or confirm':'Waiting for photo'))));
   const source=temp?` · ${temp.source||'AI Vision'}${temp.confidence?` ${temp.confidence}%`:''}`:'';
-  const detail=temp?`${temp.inRange?'Within safety range':'Outside safety range - Gmail alert queued'}${source}`:(st.aiStatus==='error'?'AI Vision could not read the number clearly':`Safety range ${range.text}`);
+  const detail=temp?`${temp.inRange?'Within safety range':'Outside safety range - Gmail alert queued'}${source}`:((st.aiStatus==='error'||needsConfirm)?(st.aiError||'AI Vision could not read the number clearly'):`Safety range ${range.text}`);
+  const manualValue=Number.isFinite(Number(st.aiSuggestion?.value))?Number(st.aiSuggestion.value).toFixed(1):'';
+  const showRetake=!temp&&!st.defrosting&&(st.aiStatus==='error'||needsConfirm);
+  const manual=showRetake?`<div class="ck-temp-manual">
+      ${st.aiManualAllowed?`<input id="ck-temp-manual-${r.i}" type="number" step="0.1" min="-45" max="35" value="${esc(manualValue)}" placeholder="Enter °C">
+      <button class="mini good" type="button" onclick="ckManualTemp(${r.i})">Confirm</button>`:''}
+      <button class="mini" type="button" onclick="ckRetakeTemp(${r.i})">Retake</button>
+    </div>`:'';
   return `<div class="ck-temp-box ${status}">
-    <div class="ck-temp-main"><span class="ck-temp-label">${esc(range.label)}</span><b>${esc(reading)}</b><small>${esc(detail)}</small></div>
+    <div class="ck-temp-main"><span class="ck-temp-label">${esc(range.label)}</span><b>${esc(reading)}</b><small>${esc(detail)}</small>${manual}</div>
     <label class="ck-defrost"><input type="checkbox" ${st.defrosting?'checked':''} onchange="ckDefrost(${r.i},this.checked)"> Defrosting</label>
   </div>`;
 }
@@ -445,15 +756,16 @@ function chkSubmit(){
   // ---- persist a REAL submission (Manager verify / Performance / records all read this) ----
   const allRows=DB.checklist.items.map(ckItem).filter(r=>r.dept===State.chk.dept && ckInSession(r,State.chk.session));
   const items=allRows.map(r=>{ const st=State.chk.state[r.i]||{};
-    return {task:r.task, area:r.area, done:!!st.done, note:st.note||'', photos:(st.photos||[]).slice(), temp: st.temp?{value:st.temp.value,inRange:!!st.temp.inRange,defrosting:!!st.defrosting}:null }; });
+    return {task:r.task, area:r.area, done:!!st.done, note:st.note||'', photos:(st.photos||[]).slice(), temp: st.temp?{value:st.temp.value,inRange:!!st.temp.inRange,defrosting:!!st.defrosting,source:st.temp.source||'',manual:!!st.temp.manual,confirmedBy:st.temp.confirmedBy||'',suggestedValue:st.temp.suggestedValue??null,rawReading:st.temp.rawReading||''}:null }; });
   const doneN=items.filter(i=>i.done).length, totalN=items.length;
   const resp=(State.chk.resp||{})[State.chk.dept]||{};
   const ymd=new Date().toISOString().slice(0,10);
-  const sub={ id:`CKS-${ymd.replace(/-/g,'')}-${String(State.chk.dept).replace(/[^A-Z]/gi,'').slice(0,3).toUpperCase()}-${State.chk.session[0]}-${Math.floor(1000+Math.random()*9000)}`,
+  const sub={ id:makeRecordId('CKS',State.branch),
     store:State.branch, dept:State.chk.dept, session:State.chk.session, date:ymd, dayName:new Date().toLocaleDateString(undefined,{weekday:'long'}),
     by:resp.submittedBy||'', responsible:resp.p1||'', created:new Date().toISOString().slice(0,16).replace('T',' '),
     progress: totalN?Math.round(doneN/totalN*100):0, done:doneN, total:totalN, status:'Submitted', tempAlerts:out, items };
   DB.checklistSubs=DB.checklistSubs||[]; DB.checklistSubs.unshift(sub);
+  auditLog('create','checklistSubmission',sub.id,sub.store,null,sub,`${sub.dept} ${sub.session}`);
   if(window.persist) window.persist();
   if(window.mcqEmail) mcqEmail.notify('checklist', `Checklist submitted · ${sub.dept} ${sub.session} · ${State.branch}`,
     `Department: ${sub.dept}\nSession: ${sub.session}\nStore: ${State.branch}\nProgress: ${doneN}/${totalN} (${sub.progress}%)\nSubmitted by: ${sub.by||'—'}\nResponsible: ${sub.responsible||'—'}${out?`\n⚠️ ${out} temperature alert(s)`:''}`, {dept:sub.dept});
@@ -494,7 +806,7 @@ function ckMarkTempMissing(rows){
 function renderIssue(){
   setAccent('#e53935'); setCrumb('🚩','Report an Issue','Report anything that needs management attention');
   if(!State.iss) State.iss={cat:'',photo:null,prio:'Normal',tab:'report'};
-  if(State.iss.tab==='analytics') return renderIssueAnalytics();
+  if(State.iss.tab==='analytics') return isAdmin()?renderIssueAnalytics():(State.iss.tab='records',renderIssueRecords());
   if(State.iss.tab==='records') return renderIssueRecords();
   const cats=DB.issueCategories;
   const card=(k,c)=>`<button type="button" class="cat-card ${State.iss.cat===k?'selected':''}" data-k="${k}" style="--cc:${c.color}" onclick="issCat('${k}')"><i class="fas ${c.icon} cat-ic" style="color:${c.color}"></i><span class="cat-label">${esc(c.label)}</span></button>`;
@@ -525,18 +837,16 @@ function renderIssue(){
 }
 /* dynamic form body by category mod */
 function issFormBody(c,mod){
-  const staffNames=DB.staff.filter(x=>isAdmin()||x.store===State.branch).map(x=>x.name);
-  const nameOpts=['— Select your name —',...staffNames];
   const selName=State.iss.name||'', selStore=State.iss.store||State.branch;
-  const stores=isAdmin()?DB.stores:[State.branch];
+  const stores=isSuper()?DB.stores:[State.branch];
   const depts=(DB.checklist&&DB.checklist.depts)||[];
-  const deptSel=id=>`<select id="${id}"><option value="">— Select —</option>${depts.map(d=>`<option>${esc(d)}</option>`).join('')}<option>Front of store / Checkout</option><option>Loading dock</option><option>Coolroom / Freezer</option><option>Online</option><option>Other</option></select>`;
+  const deptSel=id=>`<select id="${id}" onchange="issDeptChanged()"><option value="">— Select —</option>${depts.map(d=>`<option>${esc(d)}</option>`).join('')}<option>Front of store / Checkout</option><option>Loading dock</option><option>Coolroom / Freezer</option><option>Online</option><option>Other</option></select>`;
   const prio=[['Low','mute'],['Normal','info'],['High','warn'],['Urgent','bad']];
   const prioLbl=mod==='complaint'||mod==='incident'?'Severity':'Priority';
   const prioHint=mod==='complaint'?'<div class="fhint">Low → Minor · Normal → Moderate · High / Urgent → Major</div>':'';
   const nameStore=`<div class="grid2">
-       <div class="field"><label>${mod==='incident'||mod==='complaint'?'Submitted by':'Your name'} <span class="req">*</span></label><select id="iss-name">${nameOpts.map(n=>`<option ${n===selName?'selected':''}>${esc(n)}</option>`).join('')}</select></div>
-       <div class="field"><label>Store</label><select id="iss-store">${stores.map(s=>`<option ${s===selStore?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
+       <div class="field"><label>${mod==='incident'||mod==='complaint'?'Submitted by':'Your name'} <span class="req">*</span></label><select id="iss-name">${staffSelectOptions('',selName,'— Select your name —',{fallbackAll:true})}</select></div>
+       <div class="field"><label>Store</label><select id="iss-store" ${isSuper()?'':'disabled'}>${stores.map(s=>`<option ${s===selStore?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
      </div>`;
   const prioRow=`<div class="field" style="margin-top:14px"><label>${prioLbl}</label><div class="prio-pills" id="iss-prio">${prio.map(p=>`<button type="button" class="prio-pill ${p[1]} ${p[0]===State.iss.prio?'on':''}" data-v="${p[0]}" onclick="issPrio(this)">${p[0]}</button>`).join('')}</div>${prioHint}</div>`;
   let body;
@@ -549,7 +859,7 @@ function issFormBody(c,mod){
      <div class="field" style="margin-top:14px"><label>Location detail</label><input id="iss-loc" maxlength="120" placeholder="e.g. Till 2, Coolroom 1, Loading dock…"></div>
      <div class="field" style="margin-top:14px"><label>What's wrong? <span class="req">*</span></label><textarea id="iss-desc" placeholder="Describe the fault — when it started, noises, leaks, error codes, what stopped working…"></textarea></div>`;
   } else if(mod==='complaint'){
-    const staff2=`<select id="iss-staff2"><option value="">— N/A / Unknown —</option>${staffNames.map(n=>`<option>${esc(n)}</option>`).join('')}</select>`;
+    const staff2=`<select id="iss-staff2">${staffSelectOptions('','','— N/A / Unknown —',{fallbackAll:true})}</select>`;
     const channels=['In-store','Phone','Email','Social Media','Google Review','Other'];
     const actions=['Refund / exchange processed','Product replaced','Voucher / goodwill given','Apology only (no transaction)','None (information only)','Acknowledged & escalated to Store Manager'];
     body=`${nameStore}${prioRow}
@@ -589,6 +899,11 @@ function issFormBody(c,mod){
   }
   return body+issPhotoBox();
 }
+function issDeptChanged(){
+  const dept=$('#iss-dept')?.value||'';
+  const name=$('#iss-name'); if(name) name.innerHTML=staffSelectOptions(dept,name.value,'— Select your name —',{fallbackAll:true});
+  const staff2=$('#iss-staff2'); if(staff2) staff2.innerHTML=staffSelectOptions(dept,staff2.value,'— N/A / Unknown —',{fallbackAll:true});
+}
 function issPhotoBox(){ const has=!!State.iss.photo;
   return `<div class="field" style="margin-top:14px"><label>Photo <span class="opt">(optional)</span></label>
      <label class="photo-box" id="iss-photobox"><input type="file" accept="image/*" capture="environment" onchange="issPhoto(this)" style="display:none">
@@ -608,7 +923,7 @@ function issRailTip(mod){
   return `<div class="card rail-card"><h4>Tips for this report</h4><ul>${t.map(x=>`<li>${esc(x)}</li>`).join('')}</ul></div>`;
 }
 function issCat(k){
-  if(State.iss){ const n=$('#iss-name'),s=$('#iss-store'); if(n)State.iss.name=n.value; if(s)State.iss.store=s.value; }
+  if(State.iss){ const n=$('#iss-name'),s=$('#iss-store'); if(n)State.iss.name=n.value; if(s)State.iss.store=isSuper()?s.value:State.branch; }
   State.iss.cat=k; renderIssue();
   const fc=$('#iss-formcard'); if(fc) fc.scrollIntoView({behavior:'smooth',block:'start'});
 }
@@ -635,25 +950,26 @@ function issSubmit(){
   req.forEach(id=>{const e=$('#'+id); if(!e) return; const empty=(id==='iss-name')?(e.value.startsWith('—')||!e.value.trim()):!e.value.trim();
     if(empty){ e.classList.add('invalid','shake'); setTimeout(()=>e.classList.remove('shake'),450); bad=bad||e; }});
   if(bad){ toast('Please complete the required fields'); bad.scrollIntoView({behavior:'smooth',block:'center'}); return; }
-  const name=val('iss-name'), desc=val('iss-desc'), store=$('#iss-store').value, prio=State.iss.prio||'Normal';
-  const now=new Date().toISOString().slice(0,16).replace('T',' '), ymd=new Date().toISOString().slice(0,10).replace(/-/g,''), rnd=()=>Math.floor(1000+Math.random()*9000);
+  const name=val('iss-name'), desc=val('iss-desc'), store=storeForWrite($('#iss-store')?.value), prio=State.iss.prio||'Normal';
+  const now=new Date().toISOString().slice(0,16).replace('T',' ');
   const sev=DB.prioToSeverity[prio]; const photo=State.iss.photo||''; let modOut=mod, ref, rec;
   if(mod==='maintenance'){
     const dept=val('iss-dept'), loc=val('iss-loc'), equip=val('iss-equip');
-    ref=`MTN-${ymd}-${rnd()}`;
+    ref=makeRecordId('MTN',store);
     rec={id:ref,created:now,store,equipment:equip,category:c.label,department:dept,location:loc,priority:sev,severity:sev,status:'New',issue:desc,reportedBy:name,photo};
   } else if(mod==='incident'){
     const loc=val('iss-loc'), when=(val('iss-when')||'').replace('T',' '), injury=radio('iss-injury'), medical=radio('iss-medical'), action=val('iss-action'), url=val('iss-url');
-    ref=`INC-${ymd}-${rnd()}`;
+    ref=makeRecordId('INC',store);
     rec={id:ref,created:now,store,type:c.label,category:c.label,severity:sev,status:'New',location:loc,occurredAt:when,injury,medicalAttention:medical,summary:desc,actionTaken:action,reportedBy:name,evidenceUrl:url,photo};
   } else if(mod==='complaint'){
     const channel=radio('iss-channel'), dept=val('iss-dept'), staff2=val('iss-staff2'), actions=checks('iss-actions'), custName=val('iss-cust-name'), custContact=val('iss-cust-contact'), followup=radio('iss-followup'), url=val('iss-url');
-    ref=`CCL-${ymd}-${rnd()}`;
+    ref=makeRecordId('CCL',store);
     rec={id:ref,created:now,store,severity:DB.prioToComplaint[prio],category:c.label,channel,department:dept,staffComplained:staff2,shortDescription:desc,actionTaken:actions.join(', '),customerName:custName,customerContact:custContact,followup,status:'Open',reportedBy:name,evidenceUrl:url,age:0,photo};
   } else {
-    modOut='issue'; const title=val('iss-title'); ref=`ISS-${ymd}-${rnd()}`;
+    modOut='issue'; const title=val('iss-title'); ref=makeRecordId('ISS',store);
     rec={id:ref,created:now,store,title,category:c.label,priority:prio,status:'Open',reportedBy:name,description:desc,photo};
   }
+  auditLog('create',modOut,rec.id,rec.store,null,rec);
   DB.modules[modOut].records.unshift(rec);
   const cat=State.iss.cat;
   const names=(DB.issueEmailRoutes[cat]||[]).map(k=>(DB.emailRecipients.find(x=>x.key===k)||{}).name).filter(Boolean);
@@ -673,7 +989,7 @@ function issGroupOf(r){
 }
 function issTab(t){ if(!State.iss)State.iss={cat:'',photo:null,prio:'Normal'}; State.iss.tab=t; renderIssue(); }
 function issDrill(cat){ if(!State.iss)State.iss={}; State.iss.drillCat = State.iss.drillCat===cat?null:cat; renderIssueAnalytics(); }
-function issSeg(active){ return `<div class="seg seg-light"><button class="seg-btn ${active==='report'?'active':''}" onclick="issTab('report')">➕ New</button><button class="seg-btn ${active==='records'?'active':''}" onclick="issTab('records')">📋 Records</button><button class="seg-btn ${active==='analytics'?'active':''}" onclick="issTab('analytics')">📊 Analytics</button></div>`; }
+function issSeg(active){ return `<div class="seg seg-light"><button class="seg-btn ${active==='report'?'active':''}" onclick="issTab('report')">➕ New</button><button class="seg-btn ${active==='records'?'active':''}" onclick="issTab('records')">📋 Records</button>${isAdmin()?`<button class="seg-btn ${active==='analytics'?'active':''}" onclick="issTab('analytics')">📊 Analytics</button>`:''}</div>`; }
 function issRecDate(which,val){ State.iss=State.iss||{}; State.iss[which]=val; renderIssueRecords(); }
 function renderIssueRecords(){
   setAccent('#e53935'); setCrumb('🚩','Report an Issue · Records','All reports across registers');
@@ -692,7 +1008,7 @@ function renderIssueRecords(){
       ${from||to?`<button class="btn sm" onclick="issRecDate('recFrom','');State.iss.recTo='';renderIssueRecords()">✕ Clear</button>`:''}
       <div class="tb-spacer"></div>${exportBtns('iss-rec-table','Report Issue Records')}</div>
     <div class="card"><div class="card-head"><h3>${isSuper()?'All stores':esc(State.branch)} · ${all.length} reports</h3></div><div class="table-wrap"><table class="grid" id="iss-rec-table"><thead><tr><th>Ref</th><th>Register</th><th>Title</th><th>Store</th><th>Priority</th><th>Status</th><th>Date</th></tr></thead><tbody>
-    ${all.length?all.map(r=>`<tr onclick='openDetail("${r.mod}","${esc(r.id)}")'><td class="cell-id">${esc(r.id)}</td><td><span class="reg-tag">${r.icon} ${esc(r.short)}</span></td><td><div class="wrap">${esc(r.title||r.equipment||r.summary||r.shortDescription||r.category||'')}</div></td><td>${esc(r.store||'')}</td><td>${(r.priority||r.severity)?badge(r.priority||r.severity):''}</td><td>${r.status?badge(r.status):''}</td><td>${esc((r.created||r.date||'').slice(0,16))}</td></tr>`).join(''):'<tr><td colspan="7"><div class="empty">No reports in this range.</div></td></tr>'}
+    ${all.length?all.map(r=>`<tr onclick='openDetail("${r.mod}","${esc(r.id)}","${ckJS(r.store||'')}")'><td class="cell-id">${esc(r.id)}</td><td><span class="reg-tag">${r.icon} ${esc(r.short)}</span></td><td><div class="wrap">${esc(r.title||r.equipment||r.summary||r.shortDescription||r.category||'')}</div></td><td>${esc(r.store||'')}</td><td>${(r.priority||r.severity)?badge(r.priority||r.severity):''}</td><td>${r.status?badge(r.status):''}</td><td>${esc((r.created||r.date||'').slice(0,16))}</td></tr>`).join(''):'<tr><td colspan="7"><div class="empty">No reports in this range.</div></td></tr>'}
     </tbody></table></div></div>`;
 }
 function renderIssueEmail(){
@@ -712,17 +1028,17 @@ function renderIssueEmail(){
 }
 function issEmailToggle(cat,rk,on){ const a=DB.issueEmailRoutes[cat]=DB.issueEmailRoutes[cat]||[]; const i=a.indexOf(rk); if(on&&i<0)a.push(rk); if(!on&&i>=0)a.splice(i,1); }
 function renderIssueAnalytics(){
-  setAccent('#e53935'); setCrumb('🚩','Report an Issue · Analytics','By category & branch comparison');
+  setAccent('#e53935'); setCrumb('🚩','Report an Issue · Analytics',isSuper()?'By category & branch comparison':'By category within '+State.branch);
   const regMods=['issue','maintenance','incident','complaint'];
   let all=[]; regMods.forEach(id=>DB.modules[id].records.forEach(r=>all.push({mod:id,...r})));
-  if(!isAdmin()) all=all.filter(r=>r.store===State.branch);
+  if(!isSuper()) all=all.filter(r=>r.store===State.branch);
   const open=all.filter(r=>!['Closed','Cancelled','Resolved','Store Confirmed'].includes(r.status)).length;
   const catCount={}; all.forEach(r=>{const c=r.category||'Other';catCount[c]=(catCount[c]||0)+1;});
   const catEnt=Object.entries(catCount).sort((a,b)=>b[1]-a[1]);
-  const groups=DB.issueGroups, stores=isAdmin()?DB.stores:[State.branch];
+  const groups=DB.issueGroups, stores=isSuper()?DB.stores:[State.branch];
   const matrix={}; stores.forEach(s=>matrix[s]=Object.fromEntries(groups.map(g=>[g,0])));
   all.forEach(r=>{const g=issGroupOf(r); if(matrix[r.store]) matrix[r.store][g]++;});
-  const kpis=[['📋',all.length,'Total reports','info'],['🔴',open,'Open','bad'],['🗂️',catEnt.length,'Categories','warn'],['🏪',stores.length,'Branches','ok']];
+  const kpis=[['📋',all.length,'Total reports','info'],['🔴',open,'Open','bad'],['🗂️',catEnt.length,'Categories','warn'],['🏪',isSuper()?stores.length:State.branch,isSuper()?'Branches':'Store','ok']];
   const matRows=stores.map(s=>{const row=matrix[s],tot=groups.reduce((n,g)=>n+row[g],0);
     return `<tr><td><b>${esc(s)}</b></td>${groups.map(g=>`<td class="num">${row[g]?`<span class="mx" style="background:${ISS_GROUP_COLOR[g]};opacity:${(0.5+Math.min(0.5,row[g]/8)).toFixed(2)}">${row[g]}</span>`:'<span class="mx0">·</span>'}</td>`).join('')}<td class="num"><b>${tot}</b></td></tr>`;}).join('');
   const totRow=`<tr class="mx-tot"><td><b>All branches</b></td>${groups.map(g=>`<td class="num"><b>${stores.reduce((n,s)=>n+matrix[s][g],0)}</b></td>`).join('')}<td class="num"><b>${all.length}</b></td></tr>`;
@@ -732,17 +1048,17 @@ function renderIssueAnalytics(){
   if(dc){ const dRecs=all.filter(r=>(r.category||'Other')===dc), dOpen=dRecs.filter(r=>!['Closed','Cancelled','Resolved','Store Confirmed'].includes(r.status)).length;
     const topStore=stores.map(s=>[s,dRecs.filter(r=>r.store===s).length]).sort((a,b)=>b[1]-a[1])[0];
     drillHtml=`<div class="card drill-card"><div class="card-head"><h3>🔎 ${esc(dc)}</h3><span class="ch-sub">${dRecs.length} reports · ${dOpen} open${isSuper()&&topStore&&topStore[1]?` · most at ${esc(topStore[0])}`:''}</span><button class="btn sm" style="margin-left:auto" onclick="issDrill('${dc}')">✕ Close</button></div>
-      <div class="card-pad"><div class="chart-grid cols-2"><div><div class="mini-h">By store</div><div class="chart-box"><canvas id="iad-store"></canvas></div></div><div><div class="mini-h">By status</div><div class="chart-box"><canvas id="iad-status"></canvas></div></div></div></div></div>`; }
+      <div class="card-pad"><div class="chart-grid cols-2"><div><div class="mini-h">${isSuper()?'By store':'This store'}</div><div class="chart-box"><canvas id="iad-store"></canvas></div></div><div><div class="mini-h">By status</div><div class="chart-box"><canvas id="iad-status"></canvas></div></div></div></div></div>`; }
   $('#content').innerHTML=`
-    <div class="page-head"><div class="ph-ic" style="background:#fdeaea">🚩</div><div><h2>Report an Issue · Analytics</h2><p>Breakdown by category, with a side-by-side comparison across branches.</p></div>
+    <div class="page-head"><div class="ph-ic" style="background:#fdeaea">🚩</div><div><h2>Report an Issue · Analytics</h2><p>${isSuper()?'Breakdown by category, with a side-by-side comparison across branches.':'Breakdown by category for MCQ '+esc(State.branch)+'.'}</p></div>
       <div class="ph-actions">${issSeg('analytics')}</div></div>
     <div class="kpi-grid">${kpis.map(k=>`<div class="kpi tone-${k[3]}"><div class="k-top"><div class="k-ic">${k[0]}</div></div><div class="k-val">${k[1]}</div><div class="k-lbl">${esc(k[2])}</div></div>`).join('')}</div>
     <div class="chart-grid cols-2">
       <div class="card"><div class="card-head"><h3>Reports by category</h3></div><div class="card-pad"><div class="chart-box"><canvas id="ia-cat"></canvas></div></div></div>
-      <div class="card"><div class="card-head"><h3>Branch comparison</h3><span class="ch-sub">stacked by type</span></div><div class="card-pad"><div class="chart-box"><canvas id="ia-branch"></canvas></div></div></div>
+      <div class="card"><div class="card-head"><h3>${isSuper()?'Branch comparison':'Store category mix'}</h3><span class="ch-sub">stacked by type</span></div><div class="card-pad"><div class="chart-box"><canvas id="ia-branch"></canvas></div></div></div>
     </div>
-    <div class="section-title">Branch × category matrix</div>
-    <div class="card"><div class="table-wrap"><table class="grid mx-table"><thead><tr><th>Store</th>${groups.map(g=>`<th>${esc(g.split(' & ')[0].replace('Maintenance','Maint.'))}</th>`).join('')}<th>Total</th></tr></thead><tbody>${matRows}${totRow}</tbody></table></div></div>
+    <div class="section-title">${isSuper()?'Branch × category matrix':'Store category matrix'}</div>
+    <div class="card"><div class="table-wrap"><table class="grid mx-table"><thead><tr><th>Store</th>${groups.map(g=>`<th>${esc(g.split(' & ')[0].replace('Maintenance','Maint.'))}</th>`).join('')}<th>Total</th></tr></thead><tbody>${matRows}${isSuper()?totRow:''}</tbody></table></div></div>
     <div class="section-title">Per-category analytics — click a category to drill in</div>
     <div class="drill-chips">${catChips||'<span class="text-muted" style="color:var(--muted)">No data.</span>'}</div>
     ${drillHtml}`;
@@ -780,11 +1096,14 @@ function renderStaff(){
   const ed=State.staffEdit, roles=DB.staffRoles||['Staff'];
   let editForm='';
   if(ed){ const s = ed==='new'?{id:'',name:'',role:roles[4]||roles[0],store:State.branch,phone:'',dob:'',start:new Date().toISOString().slice(0,10),active:1} : (DB.staff.find(x=>x.id===ed)||{});
+    const storeField=isSuper()
+      ? `<select id="st-store">${DB.stores.map(x=>`<option ${x===s.store?'selected':''}>${esc(x)}</option>`).join('')}</select>`
+      : `<input type="hidden" id="st-store" value="${esc(State.branch)}"><input value="${esc(State.branch)}" disabled>`;
     editForm=`<div class="card" style="margin-bottom:16px;border:2px solid var(--accent-soft)"><div class="card-head"><h3>${ed==='new'?'➕ Add staff member':'✎ Edit '+esc(s.name)}</h3><button class="btn sm" style="margin-left:auto" onclick="staffCancel()">✕ Cancel</button></div>
       <div class="card-pad"><div class="grid2">
         <div class="field"><label>Full name <span class="req">*</span></label><input id="st-name" value="${esc(s.name||'')}"></div>
         <div class="field"><label>Role</label><select id="st-role">${roles.map(r=>`<option ${r===s.role?'selected':''}>${esc(r)}</option>`).join('')}</select></div>
-        <div class="field"><label>Store</label><select id="st-store">${DB.stores.map(x=>`<option ${x===s.store?'selected':''}>${esc(x)}</option>`).join('')}</select></div>
+        <div class="field"><label>Store</label>${storeField}</div>
         <div class="field"><label>Phone</label><input id="st-phone" value="${esc(s.phone||'')}" placeholder="0400 000 000"></div>
         <div class="field"><label>Date of birth</label><input type="date" id="st-dob" value="${esc(s.dob||'')}"></div>
         <div class="field"><label>Start date</label><input type="date" id="st-start" value="${esc(s.start||'')}"></div>
@@ -805,17 +1124,19 @@ function renderStaff(){
       </tbody></table></div></div>`;
 }
 function staffNew(){ State.staffEdit='new'; renderStaff(); window.scrollTo({top:0,behavior:'smooth'}); }
-function staffEditOpen(id){ State.staffEdit=id; renderStaff(); window.scrollTo({top:0,behavior:'smooth'}); }
+function staffEditOpen(id){ const s=DB.staff.find(x=>x.id===id); if(!recordInScope(s)){ toast('This staff member belongs to another store'); return; } State.staffEdit=id; renderStaff(); window.scrollTo({top:0,behavior:'smooth'}); }
 function staffCancel(){ State.staffEdit=null; renderStaff(); }
 function staffSave(ed){
   const g=id=>(document.getElementById(id)?.value||'');
   const name=g('st-name').trim(); if(!name){ toast('Enter a name'); return; }
-  const rec={name,role:g('st-role'),store:g('st-store'),phone:g('st-phone'),dob:g('st-dob'),start:g('st-start'),active:g('st-active')==='1'?1:0};
-  if(ed==='new'){ rec.id=String(20000+Math.floor(Math.random()*9000)); DB.staff.unshift(rec); }
-  else { const s=DB.staff.find(x=>x.id===ed); if(s) Object.assign(s,rec); }
+  const store=isSuper()?g('st-store'):State.branch;
+  const rec={name,role:g('st-role'),store,phone:g('st-phone'),dob:g('st-dob'),start:g('st-start'),active:g('st-active')==='1'?1:0};
+  if(ed==='new'){ rec.id=storeCode(store)+'-'+String(20000+Math.floor(Math.random()*9000)); auditLog('create','staff',rec.id,rec.store,null,rec); DB.staff.unshift(rec); }
+  else { const s=DB.staff.find(x=>x.id===ed); if(!recordInScope(s)){ toast('This staff member belongs to another store'); return; } if(s){ const before=JSON.parse(JSON.stringify(s)); Object.assign(s,rec); auditLog('update','staff',s.id,s.store,before,s); } }
+  if(window.persist) window.persist();
   State.staffEdit=null; toast('✓ Staff saved'); renderStaff();
 }
-function staffDelete(id){ if(!confirm('Delete this staff member permanently?')) return; const i=DB.staff.findIndex(x=>x.id===id); if(i>=0) DB.staff.splice(i,1); State.staffEdit=null; toast('🗑 Staff deleted'); renderStaff(); }
+function staffDelete(id){ if(!confirm('Delete this staff member permanently?')) return; const i=DB.staff.findIndex(x=>x.id===id); if(i>=0 && !recordInScope(DB.staff[i])){ toast('This staff member belongs to another store'); return; } if(i>=0){ const before=JSON.parse(JSON.stringify(DB.staff[i])); auditLog('delete','staff',before.id,before.store,before,null); DB.staff.splice(i,1); } if(window.persist) window.persist(); State.staffEdit=null; toast('🗑 Staff deleted'); renderStaff(); }
 
 /* ============================================================ JOB SCHEDULE — duties per department + weekly roster */
 const JOB_DUTIES={
@@ -828,27 +1149,64 @@ const JOB_DUTIES={
   'Office':{icon:'fa-file-invoice-dollar',color:'#64748b',kw:'manager',tasks:['Keep desks & tables clean and organised','Sort, file & check invoices against deliveries','Update price changes & print shelf labels','Send invoice batch to Head Office (Mon & Thu)','Count petty cash & back up daily sales report']},
   'Café':{icon:'fa-mug-hot',color:'#b45309',kw:'caf',tasks:['Set up café & check homemade / supplier fridge temps','Prep & display fresh items with correct labels','Keep counter, machine & seating clean','Descale coffee machine weekly','Cash-up & switch off appliances at close']},
 };
+function jobDuties(){
+  if(!DB.jobDuties) DB.jobDuties=JSON.parse(JSON.stringify(JOB_DUTIES));
+  return DB.jobDuties;
+}
+function jobRoster(){
+  if(!DB.jobRoster) DB.jobRoster={};
+  return DB.jobRoster;
+}
+function jobPersist(){ if(window.persist) window.persist(); }
+function jobEditToggle(){ State.job=State.job||{}; State.job.edit=!State.job.edit; renderSchedule(); }
+function jobSave(){ jobPersist(); toast('✓ Job schedule saved'); }
+function jobSetDept(oldName,field,value){
+  const d=jobDuties()[oldName]; if(!d) return;
+  if(field==='name'){
+    const name=String(value||'').trim(); if(!name||name===oldName) return;
+    if(jobDuties()[name]){ toast('Department already exists'); return; }
+    jobDuties()[name]=d; delete jobDuties()[oldName];
+  }else d[field]=value;
+  jobPersist(); renderSchedule();
+}
+function jobSetTasks(dept,value){ const d=jobDuties()[dept]; if(d){ d.tasks=String(value||'').split('\n').map(s=>s.trim()).filter(Boolean); jobPersist(); } }
+function jobSetTeam(dept,value){ const d=jobDuties()[dept]; if(d){ d.team=String(value||'').split(',').map(s=>s.trim()).filter(Boolean); jobPersist(); renderSchedule(); } }
+function jobAddDept(){ const name=(prompt('New department name:')||'').trim(); if(!name) return;
+  if(jobDuties()[name]){ toast('Department already exists'); return; }
+  jobDuties()[name]={icon:'fa-briefcase',color:'#0e9f6e',kw:name.toLowerCase(),team:[],tasks:['New duty']};
+  jobPersist(); renderSchedule();
+}
+function jobDelDept(name){ if(!confirm('Delete this department from Job Schedule?')) return; delete jobDuties()[name]; jobPersist(); renderSchedule(); }
+function jobRosterKey(si,di){ return si+'-'+di; }
+function jobSetRoster(si,di,value){ jobRoster()[jobRosterKey(si,di)]=value; jobPersist(); }
 function renderSchedule(){
   setAccent('#6a1b9a'); setCrumb('🗓️','Job Schedule','Daily duties by department & weekly roster');
+  State.job=State.job||{edit:false};
+  const edit=isAdmin()&&State.job.edit;
   const staff=DB.staff.filter(x=>x.active&&(isSuper()||x.store===State.branch));
   const pickFor=(d)=>{ let m=staff.filter(s=>String(s.role||'').toLowerCase().includes(d.kw)); if(!m.length) m=staff.filter(s=>/manager|supervisor/i.test(s.role||'')); if(!m.length) m=staff.slice(0,2); return m.slice(0,3); };
-  const depts=Object.keys(JOB_DUTIES);
-  const dutyRows=depts.map(dept=>{ const d=JOB_DUTIES[dept]; const team=pickFor(d); const names=team.length?team.map(s=>esc(s.name)).join(', '):'—';
-    return `<tr><td><span class="jd-dept" style="--c:${d.color}"><i class="fas ${d.icon}"></i> ${esc(dept)}</span></td><td>${names}</td><td><ul class="jd-tasks">${d.tasks.map(t=>`<li>${esc(t)}</li>`).join('')}</ul></td></tr>`;}).join('');
+  const duties=jobDuties();
+  const depts=Object.keys(duties);
+  const dutyRows=depts.map(dept=>{ const d=duties[dept]; const team=(d.team&&d.team.length)?d.team:pickFor(d).map(s=>s.name); const names=team.length?team.map(s=>esc(s)).join(', '):'—';
+    if(edit) return `<tr><td><div class="jd-edit-stack"><input value="${esc(dept)}" onchange="jobSetDept('${ckJS(dept)}','name',this.value)"><input value="${esc(d.icon||'fa-briefcase')}" onchange="jobSetDept('${ckJS(dept)}','icon',this.value)" placeholder="FontAwesome icon"><input type="color" value="${esc(d.color||'#0e9f6e')}" onchange="jobSetDept('${ckJS(dept)}','color',this.value)"><input value="${esc(d.kw||'')}" onchange="jobSetDept('${ckJS(dept)}','kw',this.value)" placeholder="staff role keyword"><button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="jobDelDept('${ckJS(dept)}')"><i class="fas fa-trash"></i></button></div></td><td><textarea rows="4" onchange="jobSetTeam('${ckJS(dept)}',this.value)" placeholder="Comma separated names">${esc(team.join(', '))}</textarea></td><td><textarea rows="6" onchange="jobSetTasks('${ckJS(dept)}',this.value)">${esc((d.tasks||[]).join('\n'))}</textarea></td></tr>`;
+    return `<tr><td><span class="jd-dept" style="--c:${d.color}"><i class="fas ${d.icon||'fa-briefcase'}"></i> ${esc(dept)}</span></td><td>${names}</td><td><ul class="jd-tasks">${(d.tasks||[]).map(t=>`<li>${esc(t)}</li>`).join('')}</ul></td></tr>`;}).join('');
   const days=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
   const shifts=[['Open','06:00–14:00'],['Mid','09:00–17:00'],['Close','13:00–21:00']];
   let rnames=staff.map(s=>s.name); if(!rnames.length) rnames=['Anna B.','Sarah N.','Kim H.','David T.','Mai L.','Tuan N.','James P.','Lucy T.'];
-  const cellName=(d,i)=>rnames[(d+i)%rnames.length];
+  const roster=jobRoster();
+  const cellName=(d,i)=>roster[jobRosterKey(i,d)]||rnames[(d+i)%rnames.length];
+  const staffOptions=`<datalist id="job-staff-list">${rnames.map(n=>`<option value="${esc(n)}"></option>`).join('')}</datalist>`;
   $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🗓️</div><div><h2>Job Schedule</h2><p>Concrete daily duties per department${isSuper()?' (all stores)':' · '+esc(State.branch)} and this week's roster.</p></div>
-    <div class="ph-actions">${exportBtns('sched-duty-table','Job Schedule — Daily Duties')}</div></div>
+    <div class="ph-actions">${exportBtns('sched-duty-table','Job Schedule — Daily Duties')}${isAdmin()?`<button class="btn sm ${edit?'primary':''}" onclick="jobEditToggle()"><i class="fas fa-pen"></i>&nbsp; ${edit?'Done':'Edit'}</button><button class="btn sm primary" onclick="jobSave()"><i class="fas fa-save"></i>&nbsp; Save</button>`:''}</div></div>
+    ${staffOptions}
     <div class="section-title">Daily duties by department</div>
-    <div class="card"><div class="table-wrap"><table class="grid jobduty" id="sched-duty-table"><thead><tr><th>Department</th><th>Team on shift</th><th>Key daily duties</th></tr></thead><tbody>${dutyRows}</tbody></table></div></div>
+    <div class="card"><div class="table-wrap"><table class="grid jobduty" id="sched-duty-table"><thead><tr><th>Department</th><th>Team on shift</th><th>Key daily duties</th></tr></thead><tbody>${dutyRows}</tbody></table></div>${edit?`<div class="card-pad"><button class="btn" onclick="jobAddDept()">＋ Add department</button></div>`:''}</div>
     <div class="section-title">This week's roster</div>
     <div class="card"><div class="table-wrap"><table class="grid sched"><thead><tr><th>Shift</th>${days.map(d=>`<th class="ctr">${d}</th>`).join('')}</tr></thead><tbody>
-    ${shifts.map((sh,si)=>`<tr><td><b>${sh[0]}</b><div class="cell-sub">${sh[1]}</div></td>${days.map((d,di)=>`<td class="ctr"><span class="shift-pill s${si}">${esc(cellName(di,si))}</span></td>`).join('')}</tr>`).join('')}
+    ${shifts.map((sh,si)=>`<tr><td><b>${sh[0]}</b><div class="cell-sub">${sh[1]}</div></td>${days.map((d,di)=>`<td class="ctr">${edit?`<input class="job-roster-input" list="job-staff-list" value="${esc(cellName(di,si))}" onchange="jobSetRoster(${si},${di},this.value)">`:`<span class="shift-pill s${si}">${esc(cellName(di,si))}</span>`}</td>`).join('')}</tr>`).join('')}
     </tbody></table></div></div>
     <div class="section-title">Coverage by department</div><div class="card"><div class="card-pad"><div class="chart-box"><canvas id="sched-chart"></canvas></div></div></div>`;
-  mkChart('sched-chart',{type:'bar',data:{labels:depts,datasets:[{label:'Shifts',data:depts.map((_,i)=>5+((i*3+4)%9)),backgroundColor:depts.map(d=>JOB_DUTIES[d].color),borderRadius:8,maxBarThickness:38}]},options:baseOpts({legend:false})});
+  mkChart('sched-chart',{type:'bar',data:{labels:depts,datasets:[{label:'Shifts',data:depts.map((_,i)=>5+((i*3+4)%9)),backgroundColor:depts.map(d=>(duties[d]||{}).color||'#0e9f6e'),borderRadius:8,maxBarThickness:38}]},options:baseOpts({legend:false})});
 }
 
 /* ============================================================ EXPORT — branded Print / PDF / Excel / Word (dropdown) */
@@ -882,10 +1240,17 @@ const EXP_CSS=`*{box-sizing:border-box}body{font-family:'Segoe UI',Arial,sans-se
   tr:nth-child(even) td{background:#f8fafc}
   .badge{display:inline-block;padding:2px 8px;border-radius:20px;font-size:10px;font-weight:700;background:#eef2f7;color:#475569}
   .cbx{font-size:16px}.cbx.on{color:#0e9f6e}.cbx.off{color:#cbd5e1}
+  .sched-dept td{background:#ecfdf5!important;color:#047857;font-weight:800;text-transform:uppercase;letter-spacing:.03em;border-top:2px solid #a7f3d0}
+  .sched-cbx{display:inline-block;width:22px;height:22px;line-height:20px;border:2px solid #94a3b8;border-radius:6px;font-size:15px;font-weight:900;color:#94a3b8;background:#fff}
+  .sched-cbx.done{border-color:#16a34a;background:#dcfce7;color:#15803d}
+  .sched-cbx.todo{border-color:#f59e0b;background:#fffbeb;color:#a16207}
+  .sched-day{min-width:44px;text-align:center}.sched-day small{display:block;margin-top:3px;font-size:8.5px;font-weight:700;color:#64748b;text-transform:uppercase}
+  .sign-line{display:block;min-width:84px;border-bottom:1px solid #94a3b8;height:18px}
+  .note-line{display:block;min-width:100px;border-bottom:1px solid #cbd5e1;height:18px}
   ul{margin:0;padding-left:16px}li{margin:2px 0}
   .rpt-foot{margin-top:22px;color:#9ca3af;font-size:10px;text-align:center;border-top:1px solid #e5e7eb;padding-top:10px}
   @page{margin:13mm}`;
-const EXP_DOC_CSS=`table{border-collapse:collapse;width:100%;font-family:Calibri,Arial,sans-serif;font-size:11pt}th{background:#0e9f6e;color:#fff;border:1px solid #0b8f63;padding:6px 9px;text-align:left}td{border:1px solid #d9e2ec;padding:6px 9px;vertical-align:top}.cbx.on{color:#0e9f6e}`;
+const EXP_DOC_CSS=`table{border-collapse:collapse;width:100%;font-family:Calibri,Arial,sans-serif;font-size:11pt}th{background:#0e9f6e;color:#fff;border:1px solid #0b8f63;padding:6px 9px;text-align:left}td{border:1px solid #d9e2ec;padding:6px 9px;vertical-align:top}.cbx.on{color:#0e9f6e}.sched-dept td{background:#ecfdf5;color:#047857;font-weight:bold}.sched-cbx{font-size:16pt;font-weight:bold}.sched-cbx.done{color:#15803d}.sched-cbx.todo{color:#a16207}.sched-day{text-align:center}.sched-day small{display:block;font-size:8pt;color:#64748b}.sign-line,.note-line{display:block;border-bottom:1px solid #94a3b8;height:16px;min-width:80px}`;
 function expPrintReport(title,inner,meta){
   const w=window.open('','_blank'); if(!w){ toast('Allow pop-ups to print / export'); return; }
   const when=new Date().toLocaleString(), role=isSuper()?'Super Admin':isAdmin()?'Admin':'Staff';
@@ -908,7 +1273,7 @@ function expDocBlob(title,inner,meta){
 }
 function expXlsBlob(title,inner,meta){
   const when=new Date().toLocaleString(), cols=expColsOf(inner);
-  const style='<style>table{border-collapse:collapse;font-family:Calibri,Arial}th{background:#0e9f6e;color:#fff;border:1px solid #cbd5e1;padding:7px 10px;text-align:left;font-size:12px}td{border:1px solid #e2e8f0;padding:6px 10px;font-size:12px}</style>';
+  const style='<style>table{border-collapse:collapse;font-family:Calibri,Arial}th{background:#0e9f6e;color:#fff;border:1px solid #cbd5e1;padding:7px 10px;text-align:left;font-size:12px}td{border:1px solid #e2e8f0;padding:6px 10px;font-size:12px}.sched-dept td{background:#ecfdf5;color:#047857;font-weight:bold}.sched-cbx{font-size:16px;font-weight:bold}.sched-cbx.done{color:#15803d}.sched-cbx.todo{color:#a16207}.sched-day{text-align:center}.sched-day small{display:block;color:#64748b;font-size:9px}.sign-line,.note-line{display:block;border-bottom:1px solid #94a3b8;height:16px;min-width:80px}</style>';
   const head=`<tr><td colspan="${cols}" style="font-size:17px;font-weight:bold;color:#0e9f6e;padding:8px 10px">MCQ Supermarket — ${esc(title)}</td></tr><tr><td colspan="${cols}" style="color:#64748b;padding:0 10px 10px">${esc(expScope())} · Generated ${esc(when)}${meta?' · '+meta.replace(/<[^>]+>/g,''):''}</td></tr>`;
   const html='<html><head><meta charset="utf-8">'+style+'</head><body><table>'+head+inner+'</table></body></html>';
   expDownload(new Blob(['﻿'+html],{type:'application/vnd.ms-excel'}), expFileName(title,'xls')); toast('⬇️ Excel exported');
@@ -980,16 +1345,80 @@ function schedTick(id,day){ const k=schedTickKey(id,day,(State.sched||{}).week||
   if(DB.scheduleTicks[k]) delete DB.scheduleTicks[k]; else DB.scheduleTicks[k]=true; if(window.persist)window.persist(); renderSchedules(); }
 function schedDay(id,day){ const t=(DB.scheduleTasks||[]).find(x=>x.id===id); if(!t)return; t.days=t.days||[];
   const i=t.days.indexOf(day); if(i>=0)t.days.splice(i,1); else t.days.push(day); if(window.persist)window.persist(); renderSchedules(); }
-function schedAddTask(type,dept){ const name=prompt('New task description:'); if(!name)return; const who=prompt('Responsible (person / team):','')||'';
+function schedAddTask(type,dept){
   if(!dept) dept=prompt('Department / area:','Whole store')||'Whole store';
-  DB.scheduleTasks=DB.scheduleTasks||[]; DB.scheduleTasks.push({id:'sch'+Date.now(),type:type,dept:dept,task:name,days:[],who:who,freq:''}); if(window.persist)window.persist(); renderSchedules(); }
-function schedEditTask(id){ const t=(DB.scheduleTasks||[]).find(x=>x.id===id); if(!t)return; const n=prompt('Edit task:',t.task); if(n!=null&&n.trim())t.task=n.trim(); const w=prompt('Responsible:',t.who||''); if(w!=null)t.who=w; if(window.persist)window.persist(); renderSchedules(); }
-function schedDelTask(id){ if(!confirm('Delete this scheduled task?'))return; DB.scheduleTasks=(DB.scheduleTasks||[]).filter(x=>x.id!==id);
+  const task={id:'sch'+Date.now(),type:type,dept:dept,task:'New task',days:[],who:'',staffIds:[],freq:''};
+  DB.scheduleTasks=DB.scheduleTasks||[]; DB.scheduleTasks.push(task);
+  auditLog('create','scheduleTask',task.id,State.branch,null,task);
+  if(window.persist)window.persist(); State.sched=State.sched||{}; State.sched.edit=true; renderSchedules();
+}
+function schedSetTask(id,field,value){
+  const t=(DB.scheduleTasks||[]).find(x=>x.id===id); if(!t)return;
+  const before=JSON.parse(JSON.stringify(t));
+  t[field]=String(value||'').trim();
+  if(field==='who'||field==='dept') t.staffIds=staffIdsForNames(t.who,t.dept);
+  auditLog('update','scheduleTask',t.id,State.branch,before,t);
+  if(window.persist)window.persist();
+  if(field==='dept'||field==='type') renderSchedules();
+}
+function schedAssignStaff(id){
+  const t=(DB.scheduleTasks||[]).find(x=>x.id===id); if(!t)return;
+  const staff=staffForDept(t.dept,{fallbackAll:true});
+  if(!staff.length){ toast('No active staff found for this store'); return; }
+  const current=String(t.who||'').split(',').map(s=>s.trim()).filter(Boolean);
+  const list=staff.map((s,i)=>`${i+1}. ${s.name} — ${s.role||'Staff'}`).join('\n');
+  const ans=prompt(`Assign staff for ${t.dept || 'this task'}:\n${list}\n\nEnter number(s), e.g. 1 or 1,3`, current.join(', '));
+  if(ans==null) return;
+  const before=JSON.parse(JSON.stringify(t));
+  const pickedStaff=String(ans).split(',').map(x=>x.trim()).filter(Boolean).map(x=>{
+    const n=Number(x);
+    if(Number.isInteger(n)&&n>=1&&n<=staff.length) return staff[n-1];
+    return staff.find(s=>s.name===x)||{name:x,id:null};
+  }).filter(Boolean);
+  t.who=[...new Set(pickedStaff.map(s=>s.name).filter(Boolean))].join(', ');
+  t.staffIds=[...new Set(pickedStaff.map(s=>s.id).filter(Boolean))];
+  auditLog('assign','scheduleTask',t.id,State.branch,before,t);
+  if(window.persist)window.persist();
+  renderSchedules();
+}
+function schedClearStaff(id){ const t=(DB.scheduleTasks||[]).find(x=>x.id===id); if(!t)return; const before=JSON.parse(JSON.stringify(t)); t.who=''; t.staffIds=[]; auditLog('assign','scheduleTask',t.id,State.branch,before,t); if(window.persist)window.persist(); renderSchedules(); }
+function schedEditTask(id){ const t=(DB.scheduleTasks||[]).find(x=>x.id===id); if(!t)return; State.sched=State.sched||{}; State.sched.edit=true; renderSchedules(); }
+function schedDelTask(id){ if(!confirm('Delete this scheduled task?'))return; const before=(DB.scheduleTasks||[]).find(x=>x.id===id); if(before) auditLog('delete','scheduleTask',id,State.branch,before,null); DB.scheduleTasks=(DB.scheduleTasks||[]).filter(x=>x.id!==id);
   Object.keys(DB.scheduleTicks||{}).forEach(k=>{ if(k.indexOf('|'+id+'|')>=0) delete DB.scheduleTicks[k]; }); if(window.persist)window.persist(); renderSchedules(); }
-function schedExport(fmt){ const type=(State.sched||{}).tab||'cleaning';
-  const rows=(DB.scheduleTasks||[]).filter(t=>t.type===type);
-  const cols=[{label:'Department',get:t=>t.dept},{label:'Task',get:t=>t.task},{label:'Responsible',get:t=>t.who},{label:'Frequency',get:t=>t.freq||''},{label:'Scheduled days',get:t=>(t.days||[]).join(', ')}];
-  expRecords((type==='cleaning'?'Cleaning':'Maintenance')+' Weekly Schedule',cols,rows,fmt);
+function schedSave(){ if(window.MCQDB && MCQDB.enabled && MCQDB.saveAll){ MCQDB.saveAll(); } else if(window.persist){ window.persist(); } toast('✓ Schedule saved'); }
+/* responsible = assigned staff and/or external technician (name + phone + location) */
+function schedRespText(t){ const parts=[]; const s=staffDisplayForTask(t); if(s&&s!=='—') parts.push(s);
+  if(t.techName||t.techPhone){ parts.push('🔧 '+[t.techName,t.techPhone,t.techNote].filter(Boolean).join(' · ')); }
+  return parts.join('  ·  ')||'—'; }
+function schedRespHTML(t){ const s=staffDisplayForTask(t); let h = (s&&s!=='—')?`👤 <span class="sc-who-name">${esc(s)}</span>`:'';
+  if(t.techName||t.techPhone){ h += (h?'<br>':'') + `<span class="sc-tech-line">🔧 ${esc(t.techName||'Technician')}${t.techPhone?` · 📞 <a href="tel:${esc(t.techPhone)}">${esc(t.techPhone)}</a>`:''}${t.techNote?` · 📍 ${esc(t.techNote)}`:''}</span>`; }
+  return h||'—'; }
+/* export the weekly grid with checkbox cells for PDF / Excel sign-off */
+function schedGridInner(type,off){
+  const tasks=(DB.scheduleTasks||[]).filter(t=>t.type===type), ticks=DB.scheduleTicks||{};
+  const depts=[...new Set(tasks.map(t=>t.dept))];
+  const cols=12;
+  const head='<thead><tr><th style="width:27%">Task</th><th>Responsible</th><th>Frequency</th>'+SCHED_DAYS.map(d=>`<th style="text-align:center">${d}</th>`).join('')+'<th>Checked by</th><th>Notes</th></tr></thead>';
+  let body='<tbody>';
+  depts.forEach(dep=>{
+    body+=`<tr class="sched-dept"><td colspan="${cols}">${esc(dep)}</td></tr>`;
+    tasks.filter(t=>t.dept===dep).forEach(t=>{
+      const cells=SCHED_DAYS.map(d=>{ if(!(t.days||[]).includes(d)) return '<td class="sched-day" style="text-align:center;color:#cbd5e1">—</td>';
+        const ticked=!!ticks[schedTickKey(t.id,d,off)];
+        return `<td class="sched-day" style="text-align:center;background:${ticked?'#dcfce7':'#fffbeb'}"><span class="sched-cbx ${ticked?'done':'todo'}">${ticked?'✓':'□'}</span><small>${ticked?'Done':'Tick'}</small></td>`; }).join('');
+      body+=`<tr><td>${esc(t.task)}</td><td>${esc(schedRespText(t))}</td><td>${esc(t.freq||'')}</td>${cells}<td><span class="sign-line"></span></td><td><span class="note-line"></span></td></tr>`;
+    });
+  });
+  return head+body+'</tbody>';
+}
+function schedExport(fmt){ const type=(State.sched||{}).tab||'cleaning', off=(State.sched||{}).week||0;
+  const ws=schedWeekStart(off), wk=ws.toLocaleDateString(undefined,{day:'numeric',month:'short'})+' – '+new Date(ws.getTime()+6*864e5).toLocaleDateString(undefined,{day:'numeric',month:'short'});
+  const title=(type==='cleaning'?'Cleaning':'Maintenance')+' Weekly Schedule';
+  const meta=`<b>Week:</b> ${esc(wk)} &nbsp; <b>Scope:</b> ${esc(expScope())} &nbsp; <b>Legend:</b> □ scheduled · ✓ completed`;
+  const inner=schedGridInner(type,off);
+  if(fmt==='excel') return expXlsBlob(title,inner,meta);
+  if(fmt==='word') return expDocBlob(title,inner,meta);
+  return expPrintReport(title,inner,meta);
 }
 function renderSchedules(){
   if(!State.sched) State.sched={tab:'cleaning',week:0,edit:false};
@@ -1010,9 +1439,25 @@ function renderSchedules(){
         if(on) return `<td class="sc-cell sch-on ${ticked?'sch-done':''} ${di===todayIdx&&off===0?'sch-today':''}" onclick="schedTick('${t.id}','${d}')">${ticked?'✓':''}</td>`;
         return `<td class="sc-cell sch-off">·</td>`;
       }).join('');
+      const listId='sc-staff-'+String(t.id).replace(/[^a-z0-9_-]/gi,'-');
+      const resp=staffDisplayForTask(t);
       const nameCell = edit
-        ? `<td class="sc-task"><b>${esc(t.task)}</b><div class="sc-who">${esc(t.who||'')}</div><div class="sc-actions"><button onclick="schedEditTask('${t.id}')">✎</button><button onclick="schedDelTask('${t.id}')">🗑</button></div></td>`
-        : `<td class="sc-task"><b>${esc(t.task)}</b><div class="sc-who">👤 ${esc(t.who||'—')}${t.freq?' · '+esc(t.freq):''}</div></td>`;
+        ? `<td class="sc-task">${staffDataList(listId,t.dept,t.who)}
+            <select class="sc-type-select" onchange="schedSetTask('${ckJS(t.id)}','type',this.value)"><option value="cleaning" ${t.type==='cleaning'?'selected':''}>Cleaning</option><option value="maintenance" ${t.type==='maintenance'?'selected':''}>Maintenance</option></select>
+            <input class="sc-task-input" value="${esc(t.task)}" onchange="schedSetTask('${ckJS(t.id)}','task',this.value)" placeholder="Task">
+            <div class="sc-edit-row">
+              <input class="sc-dept-input" value="${esc(t.dept||'')}" onchange="schedSetTask('${ckJS(t.id)}','dept',this.value)" placeholder="Department">
+              <input class="sc-who-input" list="${listId}" value="${esc(t.who||'')}" onchange="schedSetTask('${ckJS(t.id)}','who',this.value)" placeholder="Staff">
+              <input class="sc-freq-input" value="${esc(t.freq||'')}" onchange="schedSetTask('${ckJS(t.id)}','freq',this.value)" placeholder="Frequency">
+            </div>
+            <div class="sc-tech-edit"><span class="sc-tech-h">🔧 External technician (if a tradesperson comes to fix)</span>
+              <div class="sc-edit-row">
+                <input class="sc-tech-input" value="${esc(t.techName||'')}" onchange="schedSetTask('${ckJS(t.id)}','techName',this.value)" placeholder="Technician / company name">
+                <input class="sc-tech-input" type="tel" value="${esc(t.techPhone||'')}" onchange="schedSetTask('${ckJS(t.id)}','techPhone',this.value)" placeholder="📞 Phone number">
+                <input class="sc-tech-input" value="${esc(t.techNote||'')}" onchange="schedSetTask('${ckJS(t.id)}','techNote',this.value)" placeholder="📍 Location / what to fix">
+              </div></div>
+            <div class="sc-actions"><button onclick="schedAssignStaff('${ckJS(t.id)}')">👤 Assign staff</button><button onclick="schedClearStaff('${ckJS(t.id)}')">Clear staff</button><button class="danger" onclick="schedDelTask('${ckJS(t.id)}')">🗑 Delete</button></div></td>`
+        : `<td class="sc-task"><b>${esc(t.task)}</b><div class="sc-who">${schedRespHTML(t)}${t.freq?' · '+esc(t.freq):''}</div></td>`;
       return `<tr>${nameCell}${cells}</tr>`;
     }).join('');
     return `<div class="card sc-card"><div class="card-head" style="--dc:${meta.color}"><h3><span class="chk-dot" style="background:${meta.color}"></span>${esc(dep)}</h3>${edit?`<button class="btn sm" style="margin-left:auto" onclick="schedAddTask('${type}','${ckJS(dep)}')">＋ Add task</button>`:''}</div>
@@ -1020,7 +1465,7 @@ function renderSchedules(){
   }).join('');
   $('#content').innerHTML=`
     <div class="page-head"><div class="ph-ic" style="background:${accent}1f">${icon}</div><div><h2>Cleaning &amp; Maintenance</h2><p>Weekly schedule by department — managers tick off each scheduled day.${edit?' <b>Edit mode:</b> click a day to schedule/unschedule.':''}</p></div>
-      <div class="ph-actions">${seg} ${expMenu('schedExport')}${isAdmin()?`<button class="btn sm ${edit?'primary':''}" onclick="schedEditToggle()"><i class="fas fa-pen"></i>&nbsp; ${edit?'Done':'Edit'}</button>`:''}</div></div>
+      <div class="ph-actions">${seg} ${expMenu('schedExport')}<button class="btn sm primary" onclick="schedSave()"><i class="fas fa-save"></i>&nbsp; Save</button>${isAdmin()?`<button class="btn sm ${edit?'primary':''}" onclick="schedEditToggle()"><i class="fas fa-pen"></i>&nbsp; ${edit?'Done':'Edit'}</button>`:''}</div></div>
     <div class="sc-weekbar"><button class="btn sm" onclick="schedWeek(-1)">‹ Prev</button><div class="sc-week"><b>Week of ${esc(wkLabel)}</b>${off===0?'<span class="badge ok">This week</span>':`<button class="btn sm" onclick="schedWeek(${-off})">This week</button>`}</div><button class="btn sm" onclick="schedWeek(1)">Next ›</button></div>
     <div class="kpi-grid">
       <div class="kpi tone-info"><div class="k-top"><div class="k-ic">🗓️</div></div><div class="k-val">${tasks.length}</div><div class="k-lbl">Tasks</div></div>
@@ -1053,17 +1498,56 @@ function mgrSynthSubs(){
 function mgrSubs(){
   const real=(DB.checklistSubs||[]).map(s=>({ id:s.id, date:s.date, dayName:s.dayName||new Date(s.date+'T00:00').toLocaleDateString(undefined,{weekday:'long'}),
     store:s.store, department:s.dept, session:s.session, by:s.by||s.responsible||'Staff',
-    total:s.total, done:s.done, progress:s.progress, status:s.status||'Submitted', real:true, items:s.items }));
+    total:s.total, done:s.done, progress:s.progress, status:s.status||'Submitted', real:true, items:s.items,
+    verifyNote:s.verifyNote||'', verifiedAt:s.verifiedAt||'', verifiedBy:s.verifiedBy||'' }));
   return real.concat(mgrSynthSubs());
 }
-function mgrActivity(){
+function mgrActivity(storeScope){
   const mods=['issue','maintenance','incident','complaint','violation','reward']; let items=[];
-  mods.forEach(id=>{const m=DB.modules[id]; (m.records||[]).forEach(r=>{ if(isSuper()||r.store===State.branch) items.push({accent:m.accent,icon:m.icon,sortKey:r.created||r.date||'',title:`${m.short}: ${r.id}`,sub:`${r.store||''} · ${(r.title||r.summary||r.shortDescription||r.category||r.staffName||r.equipment||'').slice(0,60)}`,time:relTime(r.created||r.date)}); });});
+  const inScope=store=>isSuper()?(!storeScope||storeScope==='ALL'||store===storeScope):store===State.branch;
+  mods.forEach(id=>{const m=DB.modules[id]; (m.records||[]).forEach(r=>{ if(inScope(r.store)) items.push({accent:m.accent,icon:m.icon,sortKey:r.created||r.date||'',title:`${m.short}: ${r.id}`,sub:`${r.store||''} · ${(r.title||r.summary||r.shortDescription||r.category||r.staffName||r.equipment||'').slice(0,60)}`,time:relTime(r.created||r.date)}); });});
   return items.sort((a,b)=>String(b.sortKey).localeCompare(String(a.sortKey))).slice(0,12);
 }
-function mgrVerify(id){ const s=mgrSubs().find(x=>x.id===id); if(s) s.status='Verified';
-  const real=(DB.checklistSubs||[]).find(x=>x.id===id); if(real){ real.status='Verified'; if(window.persist) window.persist(); }
-  closeDrawer&&closeDrawer(); toast('✓ Checklist verified'); renderManager(); }
+function mgrStore(store){ if(!State.mgr) State.mgr={}; State.mgr.store=store||'ALL'; renderManager(); }
+function mgrSubInScope(s){ return isSuper() || !!(s && s.store===State.branch); }
+function mgrStoreRecipients(store){
+  const out=[], seen={};
+  const add=(r)=>{ if(!r||!r.email||seen[String(r.email).toLowerCase()]) return; seen[String(r.email).toLowerCase()]=1; out.push(r); };
+  const map=DB.storeManagerEmails||DB.managerEmails||{};
+  const fromMap=map&&map[store];
+  if(Array.isArray(fromMap)) fromMap.forEach((r,i)=>add(typeof r==='string'?{key:'mgr-'+store+'-'+i,name:store+' Store Manager',email:r}:r));
+  else if(typeof fromMap==='string') add({key:'mgr-'+store,name:store+' Store Manager',email:fromMap});
+  else add(fromMap);
+  (DB.staff||[]).filter(x=>x.store===store && /manager|supervisor/i.test(x.role||'') && x.email)
+    .forEach(x=>add({key:'staff-'+x.id,name:x.name,email:x.email}));
+  add((DB.emailRecipients||[]).find(r=>r.key==='mgr'));
+  return out;
+}
+function mgrEmailVerifyNote(s,note){
+  const to=mgrStoreRecipients(s.store);
+  if(!to.length){ toast('No manager email configured for '+s.store); return false; }
+  const subject=`MCQ ${s.store} · Checklist verified · ${s.department} ${s.session}`;
+  const body=`Store: ${s.store}
+Department: ${s.department}
+Session: ${s.session}
+Date: ${s.date}
+Verified by: ${(State.account&&State.account.name)||'Manager'}
+Progress: ${s.done}/${s.total} (${s.progress}%)
+
+Assessment note:
+${note}`;
+  if(window.mcqEmail && mcqEmail._gmail) mcqEmail._gmail(to,subject,body);
+  else window.open('https://mail.google.com/mail/?view=cm&fs=1&to='+encodeURIComponent(to.map(r=>r.email).join(','))+'&su='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body),'_blank');
+  return true;
+}
+function mgrVerify(id){
+  const note=($('#mgr-note')&&$('#mgr-note').value||'').trim();
+  const s=mgrSubs().find(x=>x.id===id); if(s){ s.status='Verified'; s.verifyNote=note; s.verifiedAt=new Date().toISOString(); s.verifiedBy=(State.account&&State.account.name)||'Manager'; }
+  if(!mgrSubInScope(s)){ toast('This checklist belongs to another store'); return; }
+  const real=(DB.checklistSubs||[]).find(x=>x.id===id && x.store===s.store);
+  if(real){ const before=JSON.parse(JSON.stringify(real)); real.status='Verified'; real.verifyNote=note; real.verifiedAt=new Date().toISOString(); real.verifiedBy=(State.account&&State.account.name)||'Manager'; auditLog('verify','checklistSubmission',real.id,real.store,before,real,note); if(window.persist) window.persist(); }
+  const emailed=note&&s&&mgrEmailVerifyNote(s,note);
+  closeDrawer&&closeDrawer(); toast(emailed?'✓ Checklist verified · Gmail opened to store manager':'✓ Checklist verified'); renderManager(); }
 function mgrDate(v){ if(!State.mgr) State.mgr={}; State.mgr.date=v; renderManager(); }
 /* derive the actual checklist (items, done state, notes, evidence photos) for a submission */
 function mgrSubTasks(s){
@@ -1088,9 +1572,11 @@ function mgrPhotoStub(label,color){
 }
 function mgrReview(id){
   const s=mgrSubs().find(x=>x.id===id); if(!s) return;
+  if(!mgrSubInScope(s)){ toast('This checklist belongs to another store'); return; }
   const tasks=mgrSubTasks(s);
   const meta=(((DB.checklist&&DB.checklist.deptMeta)||{})[s.department])||{color:'#0f766e'};
   const doneN=tasks.filter(t=>t.done).length, outN=tasks.length-doneN, photoN=tasks.reduce((n,t)=>n+t.photos.length,0);
+  const existingNote=s.verifyNote||'';
   const rows=tasks.map(t=>`<div class="mr-task ${t.done?'done':'todo'}">
       <div class="mr-tk"><span class="mr-check">${t.done?'✓':'○'}</span><div class="mr-name">${esc(t.task)}<small>${esc(t.area)}</small></div>${t.temp?`<span class="badge ${t.temp.ok?'ok':'warn'}">${esc(t.temp.label)}</span>`:''}</div>
       ${t.note?`<div class="mr-note">📝 ${esc(t.note)}</div>`:''}
@@ -1104,6 +1590,10 @@ function mgrReview(id){
     <div class="drawer-body">
       <div class="mr-prog"><span class="pbar" style="flex:1"><i style="width:${s.progress}%;background:${meta.color}"></i></span><b>${s.progress}%</b></div>
       <div class="mr-list">${rows||'<div class="empty">No tasks for this session.</div>'}</div>
+      <div class="mr-eval">
+        <label>Manager assessment note</label>
+        <textarea id="mgr-note" ${s.status==='Verified'?'disabled':''} placeholder="Assessment note for the store manager">${esc(existingNote)}</textarea>
+      </div>
       ${s.status==='Verified'
         ? `<div class="rail-tip" style="margin-top:16px">✅ This checklist is already verified.</div>`
         : `<button class="btn primary block lg" style="margin-top:16px" onclick="mgrVerify('${s.id}')"><i class="fas fa-check-double"></i>&nbsp; Verify this checklist</button>
@@ -1116,16 +1606,34 @@ function renderManager(){
   const todayStr=new Date().toISOString().slice(0,10);
   if(!State.mgr) State.mgr={sort:'newest',date:todayStr};
   if(!State.mgr.date) State.mgr.date=todayStr;
-  const subs=mgrSubs().filter(s=>isSuper()||s.store===State.branch);
+  if(isSuper()&&!State.mgr.store) State.mgr.store='ALL';
+  const storeScope=isSuper()?(State.mgr.store||'ALL'):State.branch;
+  const inStore=store=>isSuper()?(storeScope==='ALL'||store===storeScope):store===State.branch;
+  const allSubs=mgrSubs();
+  const subs=allSubs.filter(s=>inStore(s.store));
   const allPending=subs.filter(s=>s.status==='Submitted');
   const pending=allPending.filter(s=>s.date===State.mgr.date).sort((a,b)=>State.mgr.sort==='newest'?b.id.localeCompare(a.id):a.id.localeCompare(b.id));
   const doneStat=['Closed','Cancelled','Resolved','Store Confirmed','Completed'];
-  let issues=[]; ['maintenance','incident','complaint','violation','issue'].forEach(id=>{const m=DB.modules[id]; (m.records||[]).forEach(r=>{ if((isSuper()||r.store===State.branch)&&!doneStat.includes(r.status)) issues.push({mod:id,icon:m.icon,short:m.short,...r}); });});
+  let issues=[]; ['maintenance','incident','complaint','violation','issue'].forEach(id=>{const m=DB.modules[id]; (m.records||[]).forEach(r=>{ if(inStore(r.store)&&!doneStat.includes(r.status)) issues.push({mod:id,icon:m.icon,short:m.short,...r}); });});
   issues.sort((a,b)=>String(b.created||b.date||'').localeCompare(String(a.created||a.date||'')));
   const verifiedToday=subs.filter(s=>s.date===todayStr&&s.status==='Verified').length;
   const critical=issues.filter(r=>['Critical','Major'].includes(r.severity)||['Critical','Urgent'].includes(r.priority)||r.step==='Final Warning').length;
   const stats=[['🕒',allPending.length,'Awaiting verification','warn'],['✅',verifiedToday,'Verified today','ok'],['🚩',issues.length,'Open issues','info'],['🔴',critical,'Critical / urgent','bad']];
   const dm=(DB.checklist&&DB.checklist.deptMeta)||{}; const capN=18, shown=pending.slice(0,capN);
+  const storeTitle=isSuper()?(storeScope==='ALL'?'all stores':storeScope):State.branch;
+  const storeCards=isSuper()?`<div class="mgr-store-grid">
+    <button class="mgr-store-card ${storeScope==='ALL'?'active':''}" onclick="mgrStore('ALL')">
+      <span class="ms-ic">🏪</span><b>All stores</b><small>${allSubs.filter(s=>s.status==='Submitted'&&s.date===State.mgr.date).length} pending today</small>
+    </button>
+    ${DB.stores.map((st,i)=>{
+      const stSubs=allSubs.filter(s=>s.store===st), stPending=stSubs.filter(s=>s.status==='Submitted'&&s.date===State.mgr.date).length;
+      const stAllPending=stSubs.filter(s=>s.status==='Submitted').length;
+      let stIssues=0; ['maintenance','incident','complaint','violation','issue'].forEach(id=>{const m=DB.modules[id]; (m.records||[]).forEach(r=>{ if(r.store===st&&!doneStat.includes(r.status)) stIssues++; });});
+      return `<button class="mgr-store-card ${storeScope===st?'active':''}" style="--c:${PALETTE[i%PALETTE.length]}" onclick="mgrStore('${ckJS(st)}')">
+        <span class="ms-ic">🏬</span><b>${esc(st)}</b><small>${stPending} pending today · ${stAllPending} total · ${stIssues} issues</small>
+      </button>`;
+    }).join('')}
+  </div>`:'';
   const cards=shown.map(s=>{const meta=dm[s.department]||{color:'#0f766e'}, isToday=s.date===todayStr;
     return `<div class="pv-card" style="--c:${meta.color}"><span class="pv-stripe"></span>
       <div class="pv-head"><b>${esc(s.department)}</b><span class="badge ${s.session==='Opening'?'warn':'info'}">${s.session}</span>${isToday?'<span class="badge ok">Today</span>':''}</div>
@@ -1133,57 +1641,110 @@ function renderManager(){
       <div class="pv-prog"><span class="pbar" style="flex:1"><i style="width:${s.progress}%"></i></span><b>${s.done}/${s.total}</b></div>
       <button class="btn primary block sm" onclick="mgrReview('${s.id}')"><i class="fas fa-eye"></i>&nbsp; Review &amp; Verify</button></div>`;}).join('');
   $('#content').innerHTML=`
-    <div class="page-head"><div class="ph-ic">🛡️</div><div><h2>Manager Panel</h2><p>Verify today’s checklists and action open issues across ${isSuper()?'all stores':esc(State.branch)}.</p></div>
+    <div class="page-head"><div class="ph-ic">🛡️</div><div><h2>Manager Panel</h2><p>Verify today’s checklists and action open issues across ${esc(storeTitle)}.</p></div>
       <div class="ph-actions"><input type="date" class="mgr-date" value="${esc(State.mgr.date)}" max="${todayStr}" onchange="mgrDate(this.value)"><button class="btn sm" onclick="mgrSort()"><i class="fas fa-arrow-down-wide-short"></i>&nbsp; ${State.mgr.sort==='newest'?'Newest first':'Oldest first'}</button></div></div>
     <div class="kpi-grid">${stats.map(s=>`<div class="kpi tone-${s[3]}"><div class="k-top"><div class="k-ic">${s[0]}</div></div><div class="k-val">${s[1]}</div><div class="k-lbl">${esc(s[2])}</div></div>`).join('')}</div>
-    <div class="section-title"><i class="fas fa-clock" style="color:#f59e0b"></i> Pending Verification · ${esc(State.mgr.date)}${State.mgr.date===todayStr?' (Today)':''} · ${pending.length}${pending.length>capN?` (showing ${capN})`:''}</div>
+    ${storeCards}
+    <div class="section-title"><i class="fas fa-clock" style="color:#f59e0b"></i> Pending Verification · ${esc(storeTitle)} · ${esc(State.mgr.date)}${State.mgr.date===todayStr?' (Today)':''} · ${pending.length}${pending.length>capN?` (showing ${capN})`:''}</div>
     <div class="pv-grid">${cards||`<div class="empty">🎉 Nothing pending for ${esc(State.mgr.date)}.${allPending.length?` <b>${allPending.length}</b> still pending on other dates — change the date above.`:''}</div>`}</div>
     <div class="section-title"><i class="fas fa-triangle-exclamation" style="color:#ef4444"></i> Open issues today · ${issues.length}</div>
     <div class="card"><div class="table-wrap"><table class="grid"><thead><tr><th>Ref</th><th>Register</th><th>Store</th><th>Summary</th><th>Priority</th><th>Status</th><th></th></tr></thead><tbody>
-      ${issues.length?issues.slice(0,20).map(r=>`<tr onclick='openDetail("${r.mod}","${esc(r.id)}")'><td class="cell-id">${esc(r.id)}</td><td><span class="reg-tag">${r.icon} ${esc(r.short)}</span></td><td>${esc(r.store||'')}</td><td><div class="wrap">${esc(r.title||r.equipment||r.summary||r.shortDescription||r.staffName||r.category||'')}</div></td><td>${(r.priority||r.severity||r.step)?badge(r.priority||r.severity||r.step):''}</td><td>${badge(r.status)}</td><td><button class="btn sm primary" onclick='event.stopPropagation();openDetail("${r.mod}","${esc(r.id)}")'>Review</button></td></tr>`).join(''):'<tr><td colspan="7"><div class="empty">No open issues 🎉</div></td></tr>'}
+      ${issues.length?issues.slice(0,20).map(r=>`<tr onclick='openDetail("${r.mod}","${esc(r.id)}","${ckJS(r.store||'')}")'><td class="cell-id">${esc(r.id)}</td><td><span class="reg-tag">${r.icon} ${esc(r.short)}</span></td><td>${esc(r.store||'')}</td><td><div class="wrap">${esc(r.title||r.equipment||r.summary||r.shortDescription||r.staffName||r.category||'')}</div></td><td>${(r.priority||r.severity||r.step)?badge(r.priority||r.severity||r.step):''}</td><td>${badge(r.status)}</td><td><button class="btn sm primary" onclick='event.stopPropagation();openDetail("${r.mod}","${esc(r.id)}","${ckJS(r.store||'')}")'>Review</button></td></tr>`).join(''):'<tr><td colspan="7"><div class="empty">No open issues 🎉</div></td></tr>'}
     </tbody></table></div></div>
     <div class="section-title">📋 Activity Log — ${todayStr}</div>
-    <div class="card"><div class="feed">${mgrActivity().map(f=>`<div class="feed-row"><div class="feed-ic" style="background:${soft(f.accent)};color:${f.accent}">${f.icon}</div><div class="feed-main"><div class="fm-t">${esc(f.title)}</div><div class="fm-s">${esc(f.sub)}</div></div><div class="feed-time">${esc(f.time)}</div></div>`).join('')||'<div class="empty">No recent activity.</div>'}</div></div>`;
+    <div class="card"><div class="feed">${mgrActivity(storeScope).map(f=>`<div class="feed-row"><div class="feed-ic" style="background:${soft(f.accent)};color:${f.accent}">${f.icon}</div><div class="feed-main"><div class="fm-t">${esc(f.title)}</div><div class="fm-s">${esc(f.sub)}</div></div><div class="feed-time">${esc(f.time)}</div></div>`).join('')||'<div class="empty">No recent activity.</div>'}</div></div>`;
 }
 function mgrSort(){ State.mgr.sort=State.mgr.sort==='newest'?'oldest':'newest'; renderManager(); }
 
 /* ============================================================ ANALYTICS */
 function renderAnalytics(){
-  setAccent('#6a1b9a'); setCrumb('📈','Analytics','Cross-store, cross-module insights');
-  const totals=DB.order.map(id=>({m:DB.modules[id],n:DB.modules[id].records.length}));
-  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">📈</div><div><h2>Analytics</h2><p>Volume, severity and store comparison across all operations.</p></div></div>
+  setAccent('#6a1b9a'); setCrumb('📈','Analytics',isSuper()?'Cross-store, cross-module insights':'MCQ '+State.branch+' insights');
+  const analysisMods=[...DB.order,'violation','reward','training','raise','birthday','issue'].filter((id,i,a)=>DB.modules[id]&&a.indexOf(id)===i);
+  const recsOf=id=>isSuper()?((DB.modules[id]&&DB.modules[id].records)||[]):scopedRecords(id);
+  const totals=analysisMods.map(id=>({m:DB.modules[id],n:recsOf(id).length})).filter(t=>t.n||['issue','violation'].includes(t.m.id));
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">📈</div><div><h2>Analytics</h2><p>${isSuper()?'Volume, severity and store comparison across all operations.':'Within-store analysis for MCQ '+esc(State.branch)+' across issues, violations and operations.'}</p></div></div>
     <div class="chart-grid cols-2">
       <div class="card"><div class="card-head"><h3>Records by module</h3></div><div class="card-pad"><div class="chart-box"><canvas id="an1"></canvas></div></div></div>
       <div class="card"><div class="card-head"><h3>Open vs closed</h3></div><div class="card-pad"><div class="chart-box"><canvas id="an2"></canvas></div></div></div>
-      <div class="card"><div class="card-head"><h3>Activity by store</h3></div><div class="card-pad"><div class="chart-box"><canvas id="an3"></canvas></div></div></div>
+      <div class="card"><div class="card-head"><h3>${isSuper()?'Activity by store':'Activity by register'}</h3></div><div class="card-pad"><div class="chart-box"><canvas id="an3"></canvas></div></div></div>
       <div class="card"><div class="card-head"><h3>Severity mix</h3></div><div class="card-pad"><div class="chart-box"><canvas id="an4"></canvas></div></div></div>
     </div>`;
   mkChart('an1',{type:'bar',data:{labels:totals.map(t=>t.m.short),datasets:[{data:totals.map(t=>t.n),backgroundColor:totals.map(t=>t.m.accent),borderRadius:8,maxBarThickness:40}]},options:baseOpts({legend:false})});
   const closed=['Closed','Cancelled','Store Confirmed','Resolved'];
-  let open=0,cl=0; DB.order.forEach(id=>DB.modules[id].records.forEach(r=>closed.includes(r.status)?cl++:open++));
+  let open=0,cl=0; analysisMods.forEach(id=>recsOf(id).forEach(r=>closed.includes(r.status)?cl++:open++));
   mkChart('an2',{type:'doughnut',data:{labels:['Open','Closed'],datasets:[{data:[open,cl],backgroundColor:['#3b82f6','#10b981'],borderColor:'#fff',borderWidth:3}]},options:baseOpts({legend:true,donut:true})});
-  const byStore={}; DB.order.forEach(id=>DB.modules[id].records.forEach(r=>{if(r.store)byStore[r.store]=(byStore[r.store]||0)+1;}));
-  const sl=Object.entries(byStore).sort((a,b)=>b[1]-a[1]);
+  const activity={};
+  if(isSuper()) analysisMods.forEach(id=>recsOf(id).forEach(r=>{if(r.store)activity[r.store]=(activity[r.store]||0)+1;}));
+  else analysisMods.forEach(id=>{ const m=DB.modules[id]; activity[m.short||m.label]=(activity[m.short||m.label]||0)+recsOf(id).length; });
+  const sl=Object.entries(activity).sort((a,b)=>b[1]-a[1]);
   mkChart('an3',{type:'bar',data:{labels:sl.map(x=>x[0]),datasets:[{data:sl.map(x=>x[1]),backgroundColor:'#0e9f6e',borderRadius:8,maxBarThickness:30}]},options:baseOpts({indexAxis:'y',legend:false})});
-  const sev={}; DB.order.forEach(id=>DB.modules[id].records.forEach(r=>{const v=r.severity;if(v)sev[v]=(sev[v]||0)+1;}));
+  const sev={}; analysisMods.forEach(id=>recsOf(id).forEach(r=>{const v=r.severity||r.priority||r.step;if(v)sev[v]=(sev[v]||0)+1;}));
   const se=Object.entries(sev);
   mkChart('an4',{type:'doughnut',data:{labels:se.map(x=>x[0]),datasets:[{data:se.map(x=>x[1]),backgroundColor:se.map(x=>toneHex(x[0])),borderColor:'#fff',borderWidth:3}]},options:baseOpts({legend:true,donut:true})});
 }
 
 /* ============================================================ PHOTO GALLERY */
+function pgState(){ State.pg=State.pg||{store:isSuper()?'All stores':State.branch,dept:'All departments',area:'All sections'}; return State.pg; }
+function pgSet(field,value){ const pg=pgState(); pg[field]=value; if(field==='dept') pg.area='All sections'; renderPhotos(); }
+function pgPhotos(){
+  const rows=[], today=new Date().toISOString().slice(0,10);
+  (DB.checklistSubs||[]).forEach(sub=>{
+    if(!isSuper()&&sub.store!==State.branch) return;
+    (sub.items||[]).forEach(it=>(it.photos||[]).forEach((src,idx)=>rows.push({
+      src, store:sub.store||State.branch, dept:sub.dept||'Checklist', area:it.area||'General', task:it.task||'Checklist photo',
+      session:sub.session||'', date:sub.date||'', by:sub.by||sub.responsible||'', source:'Checklist', idx
+    })));
+  });
+  if(State.chk&&State.chk.state){
+    (DB.checklist.items||[]).map(ckItem).forEach(r=>{
+      const st=State.chk.state[r.i]||{};
+      (st.photos||[]).forEach((src,idx)=>rows.push({
+        src, store:State.branch, dept:r.dept, area:r.area||'General', task:r.task, session:State.chk.session||'', date:today, by:'Draft checklist', source:'Draft', idx
+      }));
+    });
+  }
+  ['maintenance','incident','complaint','issue'].forEach(id=>{
+    const m=DB.modules[id]; if(!m) return;
+    (m.records||[]).forEach(r=>{
+      if(!r.photo||(!isSuper()&&r.store!==State.branch)) return;
+      rows.push({src:r.photo,store:r.store||State.branch,dept:r.department||r.category||m.short,area:r.location||r.category||m.short,task:r.title||r.equipment||r.summary||r.shortDescription||r.issue||r.description||m.label,session:'',date:String(r.created||r.date||'').slice(0,10),by:r.reportedBy||'',source:m.short,idx:0});
+    });
+  });
+  return rows.sort((a,b)=>String(b.date).localeCompare(String(a.date)));
+}
 function renderPhotos(){
   setAccent('#0891b2'); setCrumb('🖼️','Photo Gallery','Evidence photos from checklists & reports');
-  const cats=['Bin area','Fridge temp','Cutting area','Coldroom','Cabinets','Aisles','Crates','Cleaning'];
-  const tiles=Array.from({length:12}).map((_,i)=>{ const c=cats[i%cats.length],col=PALETTE[i%PALETTE.length];
-    return `<div class="photo-tile" style="background:linear-gradient(135deg,${col},${col}99)" onclick="toast('Photo preview (demo)')"><span class="pt-ic">📷</span><div class="pt-cap">${esc(c)}<small>${esc(DB.stores[i%5])} · ${i+1}d ago</small></div></div>`;}).join('');
+  const pg=pgState(), all=pgPhotos();
+  const stores=isSuper()?['All stores',...DB.stores]:[State.branch];
+  if(!stores.includes(pg.store)) pg.store=stores[0];
+  let scoped=all.filter(p=>(pg.store==='All stores'||p.store===pg.store));
+  const depts=['All departments',...[...new Set(scoped.map(p=>p.dept).filter(Boolean))].sort()];
+  if(!depts.includes(pg.dept)) pg.dept='All departments';
+  scoped=scoped.filter(p=>pg.dept==='All departments'||p.dept===pg.dept);
+  const areas=['All sections',...[...new Set(scoped.map(p=>p.area).filter(Boolean))].sort()];
+  if(!areas.includes(pg.area)) pg.area='All sections';
+  scoped=scoped.filter(p=>pg.area==='All sections'||p.area===pg.area);
+  const groups={};
+  scoped.forEach(p=>{ const k=`${p.dept}||${p.area}`; (groups[k]=groups[k]||[]).push(p); });
+  const html=Object.entries(groups).map(([k,photos])=>{
+    const [dept,area]=k.split('||'), meta=(DB.checklist.deptMeta||{})[dept]||{};
+    return `<div class="pg-section card"><div class="card-head"><h3><span class="chk-dot" style="background:${meta.color||'#0891b2'}"></span>${esc(dept)} · ${esc(area)}</h3><span class="ch-sub">${photos.length} photo${photos.length!==1?'s':''}</span></div>
+      <div class="photo-grid">${photos.map(p=>`<a class="photo-tile real" href="${imgSrc(p.src)}" target="_blank" rel="noopener" style="background-image:linear-gradient(transparent,rgba(0,0,0,.62)),url('${imgSrc(p.src)}')">
+        <span class="pt-ic">📷</span><div class="pt-cap">${esc(p.task)}<small>${esc(p.store)} · ${esc(p.session||p.source)} · ${esc(p.date||'')}</small>${p.by?`<small>By ${esc(p.by)}</small>`:''}</div></a>`).join('')}</div></div>`;
+  }).join('');
   $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🖼️</div><div><h2>Photo Gallery</h2><p>Browse photo evidence captured against checklist tasks and issue reports.</p></div>
-    <div class="ph-actions"><select class="login-input" style="width:auto"><option>All stores</option>${DB.stores.map(s=>`<option>${esc(s)}</option>`).join('')}</select></div></div>
-    <div class="photo-grid">${tiles}</div>`;
+    <div class="ph-actions">
+      <select class="login-input" style="width:auto" onchange="pgSet('store',this.value)">${stores.map(s=>`<option ${s===pg.store?'selected':''}>${esc(s)}</option>`).join('')}</select>
+      <select class="login-input" style="width:auto" onchange="pgSet('dept',this.value)">${depts.map(d=>`<option ${d===pg.dept?'selected':''}>${esc(d)}</option>`).join('')}</select>
+      <select class="login-input" style="width:auto" onchange="pgSet('area',this.value)">${areas.map(a=>`<option ${a===pg.area?'selected':''}>${esc(a)}</option>`).join('')}</select>
+    </div></div>
+    <div class="kpi-grid"><div class="kpi tone-info"><div class="k-top"><div class="k-ic">📷</div></div><div class="k-val">${scoped.length}</div><div class="k-lbl">Photos shown</div></div><div class="kpi tone-ok"><div class="k-top"><div class="k-ic">✅</div></div><div class="k-val">${all.filter(p=>p.source==='Checklist'||p.source==='Draft').length}</div><div class="k-lbl">Checklist photos</div></div><div class="kpi tone-warn"><div class="k-top"><div class="k-ic">🚩</div></div><div class="k-val">${all.filter(p=>p.source!=='Checklist'&&p.source!=='Draft').length}</div><div class="k-lbl">Report photos</div></div></div>
+    ${html||'<div class="empty">No photos found for this store / department / section yet.</div>'}`;
 }
 
 /* ============================================================ WHATSAPP DAILY SHARE */
 function renderWhatsapp(){
-  setAccent('#128C7E'); setCrumb('💬','Daily Share',`${isAdmin()?'All stores':State.branch} · WhatsApp report`);
+  setAccent('#128C7E'); setCrumb('💬','Daily Share',`${isSuper()?'All stores':State.branch} · WhatsApp report`);
   if(!State.wa) State.wa={period:'Opening'};
   const period=State.wa.period, C=DB.checklist;
   const byDept={};
@@ -1317,11 +1878,87 @@ function emailToggleChk(k){ State.emailOpenChk=State.emailOpenChk===k?null:k; re
 function emailRefreshChkCount(k){ const depts=(DB.checklist&&DB.checklist.depts)||[]; const n=depts.filter(d=>(DB.checklistEmailRoutes[d]||[]).includes(k)).length; const el=document.getElementById('chkmail-cnt-'+k); if(el) el.textContent=n+' checklists'; }
 function chkEmailToggle(dept,rk,on){ const a=DB.checklistEmailRoutes[dept]=DB.checklistEmailRoutes[dept]||[]; const i=a.indexOf(rk); if(on&&i<0)a.push(rk); if(!on&&i>=0)a.splice(i,1); if(window.persist) window.persist(); }
 
+/* ============================================================ SUPER ADMIN — STORE CONFIG */
+function cfgClone(v){ return JSON.parse(JSON.stringify(v==null?null:v)); }
+function cfgState(){ State.cfg=State.cfg||{store:DB.stores[0],tab:'staff',loading:false,error:'',data:null}; if(!State.cfg.store) State.cfg.store=DB.stores[0]; if(!State.cfg.tab) State.cfg.tab='staff'; return State.cfg; }
+function cfgLocalData(store){ return {store,staff:(DB.staff||[]).filter(s=>s.store===store).map(cfgClone),checklistItems:cfgClone((DB.checklist&&DB.checklist.items)||[]),scheduleTasks:cfgClone(DB.scheduleTasks||[]),auditLogs:(DB.auditLogs||[]).filter(a=>a.store===store).map(cfgClone)}; }
+function cfgSelectStore(store){ const c=cfgState(); c.store=store; c.data=null; c.error=''; cfgLoad(store); renderStoreConfig(); }
+function cfgTab(tab){ cfgState().tab=tab; renderStoreConfig(); }
+async function cfgLoad(store){ const c=cfgState(); c.loading=true; c.error=''; renderStoreConfig(); try{ c.data=(window.MCQDB&&MCQDB.fetchStoreConfig)?await MCQDB.fetchStoreConfig(store):cfgLocalData(store); }catch(e){ c.error=(e&&e.message)||'Could not load store config'; c.data=cfgLocalData(store); } c.loading=false; renderStoreConfig(); }
+function cfgAudit(action,entity,id,before,after,note){ const c=cfgState(); if(!c.data)return; const u=auditUser(); c.data.auditLogs=c.data.auditLogs||[]; c.data.auditLogs.unshift({id:makeRecordId('AUD',c.store),created:new Date().toISOString(),store:c.store,user:u.name,role:u.role,action,entity,entityId:id,note:note||'',changes:auditDiff(before,after)}); }
+function cfgDirty(){ cfgState().dirty=true; }
+function cfgStaffSet(i,k,v){ const c=cfgState(), row=c.data.staff[i]; if(!row)return; const before=cfgClone(row); row[k]=k==='active'?(v==='1'?1:0):v; row.store=c.store; cfgAudit('update','staff',row.id,before,row); cfgDirty(); }
+function cfgStaffAdd(){ const c=cfgState(); c.data.staff.unshift({id:storeCode(c.store)+'-'+String(20000+Math.floor(Math.random()*9000)),name:'New staff',role:'Staff',store:c.store,phone:'',dob:'',start:new Date().toISOString().slice(0,10),active:1}); cfgAudit('create','staff',c.data.staff[0].id,null,c.data.staff[0]); cfgDirty(); renderStoreConfig(); }
+function cfgStaffDel(i){ const c=cfgState(), row=c.data.staff[i]; if(!row||!confirm('Delete this staff member from '+c.store+'?'))return; cfgAudit('delete','staff',row.id,row,null); c.data.staff.splice(i,1); cfgDirty(); renderStoreConfig(); }
+function cfgCkSet(i,pos,v){ const c=cfgState(), row=c.data.checklistItems[i]; if(!row)return; const before=cfgClone(row); row[pos]=v; cfgAudit('update','checklistItem',String(i),before,row); cfgDirty(); }
+function cfgCkAdd(){ const c=cfgState(); c.data.checklistItems.unshift(['MANAGER','General','New checklist task','A','']); cfgAudit('create','checklistItem','new',null,c.data.checklistItems[0]); cfgDirty(); renderStoreConfig(); }
+function cfgCkDel(i){ const c=cfgState(), row=c.data.checklistItems[i]; if(!row||!confirm('Delete this checklist item?'))return; cfgAudit('delete','checklistItem',String(i),row,null); c.data.checklistItems.splice(i,1); cfgDirty(); renderStoreConfig(); }
+function cfgStaffIdsFromNames(names){ const c=cfgState(), vals=String(names||'').split(',').map(s=>s.trim()).filter(Boolean); return vals.map(n=>(c.data.staff||[]).find(s=>s.name===n)).filter(Boolean).map(s=>s.id); }
+function cfgSchedSet(i,k,v){ const c=cfgState(), row=c.data.scheduleTasks[i]; if(!row)return; const before=cfgClone(row); row[k]=v; if(k==='who') row.staffIds=cfgStaffIdsFromNames(v); cfgAudit('update','scheduleTask',row.id,before,row); cfgDirty(); }
+function cfgSchedAdd(){ const c=cfgState(); c.data.scheduleTasks.unshift({id:'sch'+Date.now(),type:'cleaning',dept:'Whole store',task:'New task',days:[],who:'',staffIds:[],freq:''}); cfgAudit('create','scheduleTask',c.data.scheduleTasks[0].id,null,c.data.scheduleTasks[0]); cfgDirty(); renderStoreConfig(); }
+function cfgSchedDel(i){ const c=cfgState(), row=c.data.scheduleTasks[i]; if(!row||!confirm('Delete this schedule task?'))return; cfgAudit('delete','scheduleTask',row.id,row,null); c.data.scheduleTasks.splice(i,1); cfgDirty(); renderStoreConfig(); }
+function cfgSchedDay(i,d){ const c=cfgState(), row=c.data.scheduleTasks[i]; if(!row)return; const before=cfgClone(row); row.days=row.days||[]; const idx=row.days.indexOf(d); if(idx>=0)row.days.splice(idx,1); else row.days.push(d); cfgAudit('update','scheduleTask',row.id,before,row); cfgDirty(); renderStoreConfig(); }
+async function cfgSave(){ const c=cfgState(); if(!c.data||c.loading)return; c.loading=true; renderStoreConfig(); try{ if(window.MCQDB&&MCQDB.saveStoreConfig) await MCQDB.saveStoreConfig(c.store,c.data); c.dirty=false; toast('✓ '+c.store+' config saved'); }catch(e){ c.error=(e&&e.message)||'Could not save store config'; toast('Could not save store config'); } c.loading=false; renderStoreConfig(); }
+function cfgRowsStaff(c){ const roles=DB.staffRoles||['Staff']; return `<div class="card"><div class="card-head"><h3>Staff · ${c.data.staff.length}</h3><button class="btn sm" style="margin-left:auto" onclick="cfgStaffAdd()">＋ Add staff</button></div><div class="table-wrap"><table class="grid cfg-table"><thead><tr><th>ID</th><th>Name</th><th>Role</th><th>Phone</th><th>Active</th><th></th></tr></thead><tbody>${c.data.staff.map((s,i)=>`<tr><td class="cell-id">${esc(s.id)}</td><td><input value="${esc(s.name||'')}" onchange="cfgStaffSet(${i},'name',this.value)"></td><td><select onchange="cfgStaffSet(${i},'role',this.value)">${roles.map(r=>`<option ${r===s.role?'selected':''}>${esc(r)}</option>`).join('')}</select></td><td><input value="${esc(s.phone||'')}" onchange="cfgStaffSet(${i},'phone',this.value)"></td><td><select onchange="cfgStaffSet(${i},'active',this.value)"><option value="1" ${s.active!==0?'selected':''}>Active</option><option value="0" ${s.active===0?'selected':''}>Inactive</option></select></td><td><button class="btn sm" onclick="cfgStaffDel(${i})"><i class="fas fa-trash"></i></button></td></tr>`).join('')||'<tr><td colspan="6"><div class="empty">No staff in this store.</div></td></tr>'}</tbody></table></div></div>`; }
+function cfgRowsChecklist(c){ return `<div class="card"><div class="card-head"><h3>Checklist template · ${c.data.checklistItems.length}</h3><button class="btn sm" style="margin-left:auto" onclick="cfgCkAdd()">＋ Add task</button></div><div class="table-wrap"><table class="grid cfg-table"><thead><tr><th>Dept</th><th>Area</th><th>Task</th><th>When</th><th></th></tr></thead><tbody>${c.data.checklistItems.map((r,i)=>`<tr><td><input value="${esc(r[0]||'')}" onchange="cfgCkSet(${i},0,this.value)"></td><td><input value="${esc(r[1]||'')}" onchange="cfgCkSet(${i},1,this.value)"></td><td><input value="${esc(r[2]||'')}" onchange="cfgCkSet(${i},2,this.value)"></td><td><select onchange="cfgCkSet(${i},3,this.value)"><option value="O" ${r[3]==='O'?'selected':''}>Opening</option><option value="C" ${r[3]==='C'?'selected':''}>Closing</option><option value="A" ${r[3]==='A'?'selected':''}>Both</option></select></td><td><button class="btn sm" onclick="cfgCkDel(${i})"><i class="fas fa-trash"></i></button></td></tr>`).join('')||'<tr><td colspan="5"><div class="empty">No checklist items.</div></td></tr>'}</tbody></table></div></div>`; }
+function cfgRowsSchedules(c){ const staffList=`<datalist id="cfg-staff-list">${(c.data.staff||[]).map(s=>`<option value="${esc(s.name)}" label="${esc(s.id+' · '+(s.role||''))}"></option>`).join('')}</datalist>`; return `${staffList}<div class="card"><div class="card-head"><h3>Cleaning & maintenance schedule · ${c.data.scheduleTasks.length}</h3><button class="btn sm" style="margin-left:auto" onclick="cfgSchedAdd()">＋ Add task</button></div><div class="table-wrap"><table class="grid cfg-table"><thead><tr><th>Type</th><th>Dept</th><th>Task</th><th>Staff</th><th>Days</th><th></th></tr></thead><tbody>${c.data.scheduleTasks.map((t,i)=>`<tr><td><select onchange="cfgSchedSet(${i},'type',this.value)"><option value="cleaning" ${t.type==='cleaning'?'selected':''}>Cleaning</option><option value="maintenance" ${t.type==='maintenance'?'selected':''}>Maintenance</option></select></td><td><input value="${esc(t.dept||'')}" onchange="cfgSchedSet(${i},'dept',this.value)"></td><td><input value="${esc(t.task||'')}" onchange="cfgSchedSet(${i},'task',this.value)"></td><td><input list="cfg-staff-list" value="${esc(t.who||'')}" onchange="cfgSchedSet(${i},'who',this.value)"><div class="cell-sub">IDs: ${esc((t.staffIds||[]).join(', ')||'—')}</div></td><td class="cfg-days">${SCHED_DAYS.map(d=>`<button class="${(t.days||[]).includes(d)?'on':''}" onclick="cfgSchedDay(${i},'${d}')">${d}</button>`).join('')}</td><td><button class="btn sm" onclick="cfgSchedDel(${i})"><i class="fas fa-trash"></i></button></td></tr>`).join('')||'<tr><td colspan="6"><div class="empty">No schedule tasks.</div></td></tr>'}</tbody></table></div></div>`; }
+function renderStoreConfig(){ if(!isSuper()){ $('#content').innerHTML='<div class="empty">Super Admin only.</div>'; return; } const c=cfgState(); setAccent('#0f766e'); setCrumb('🏪','Store Config','Super Admin · edit one store workspace'); if(!c.data&&!c.loading&&!c.error) setTimeout(()=>cfgLoad(c.store),0); const storeSel=`<select class="login-input" style="width:auto" onchange="cfgSelectStore(this.value)">${DB.stores.map(s=>`<option ${s===c.store?'selected':''}>${esc(s)}</option>`).join('')}</select>`; const tabs=['staff','checklist','schedules'].map(t=>`<button class="seg-btn ${c.tab===t?'active':''}" onclick="cfgTab('${t}')">${t==='staff'?'Staff':t==='checklist'?'Checklist':'Schedules'}</button>`).join(''); const body=c.loading?`<div class="card card-pad loading-state"><i class="fas fa-spinner fa-spin"></i><b>Loading ${esc(c.store)} config...</b><span>Fetching the store document safely.</span></div>`:c.error?`<div class="card card-pad error-state"><b>Could not load cloud config</b><span>${esc(c.error)}</span><button class="btn sm" onclick="cfgLoad('${ckJS(c.store)}')">Retry</button></div>`:c.data?(c.tab==='staff'?cfgRowsStaff(c):c.tab==='checklist'?cfgRowsChecklist(c):cfgRowsSchedules(c)):''; $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🏪</div><div><h2>Manage Store Config</h2><p>Choose one branch and edit its staff, checklist template, and cleaning/maintenance schedule without changing other stores.</p></div><div class="ph-actions">${storeSel}<div class="seg seg-light">${tabs}</div><button class="btn primary" onclick="cfgSave()"><i class="fas fa-save"></i>&nbsp; Save ${esc(c.store)}</button></div></div><div class="kpi-grid"><div class="kpi tone-info"><div class="k-top"><div class="k-ic">👥</div></div><div class="k-val">${c.data?(c.data.staff||[]).length:'—'}</div><div class="k-lbl">Staff</div></div><div class="kpi tone-ok"><div class="k-top"><div class="k-ic">✅</div></div><div class="k-val">${c.data?(c.data.checklistItems||[]).length:'—'}</div><div class="k-lbl">Checklist tasks</div></div><div class="kpi tone-warn"><div class="k-top"><div class="k-ic">🧽</div></div><div class="k-val">${c.data?(c.data.scheduleTasks||[]).length:'—'}</div><div class="k-lbl">Schedule tasks</div></div><div class="kpi tone-mute"><div class="k-top"><div class="k-ic">🧾</div></div><div class="k-val">${c.data?(c.data.auditLogs||[]).length:'—'}</div><div class="k-lbl">Audit events</div></div></div>${c.dirty?'<div class="rail-tip" style="margin-bottom:14px">Unsaved changes in this store config.</div>':''}${body}`; }
+
 /* ============================================================ DATA MANAGEMENT */
+function dataStoreId(store){ return String(store||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'unknown-store'; }
 function renderData(){
   setAccent('#b45309'); setCrumb('🗄️','Data Management','Export, back up & maintain records');
-  const counts=Object.values(DB.modules).map(m=>({l:m.label,n:(m.records||[]).length,i:m.icon}));
+  const counts=Object.values(DB.modules).map(m=>({l:m.label,n:isSuper()?(m.records||[]).length:(m.records||[]).filter(r=>r.store===State.branch).length,i:m.icon}));
+  const scope=isSuper()?'Super Admin · aggregate view':'Store workspace · '+State.branch;
+  const doc=isSuper()?'mcq_store_states/{each-store}':'mcq_store_states/'+dataStoreId(State.branch);
+  const auditRows=(DB.auditLogs||[]).filter(a=>isSuper()||a.store===State.branch).slice(0,8);
+  const smallCollections=[
+    ['stores/{storeId}/staff','Staff profile documents keyed by staff ID'],
+    ['stores/{storeId}/checklistTemplates','Opening/closing template sections and tasks'],
+    ['stores/{storeId}/checklistSubs','Submitted checklists, verification notes and evidence'],
+    ['stores/{storeId}/records','Operational records with prefixed IDs'],
+    ['stores/{storeId}/photos','Photo evidence metadata by checklist section and area'],
+    ['stores/{storeId}/schedules','Cleaning, maintenance and job schedule tasks'],
+    ['stores/{storeId}/auditLogs','Immutable audit events for create/update/delete/verify']
+  ];
+  const isolationRows=[
+    ['Staff members','Per-store staff list only'],
+    ['Checklist template','Per-store opening/closing checklist'],
+    ['Checklist submissions','Per-store evidence, notes and verification'],
+    ['Photo evidence','Photo docs carry store metadata and only resolve inside the allowed store scope'],
+    ['Cleaning & maintenance','Per-store tasks, ticks and assigned staff'],
+    ['Job schedule','Per-store duties and roster'],
+    ['Operations records','Complaint, incident, delivery, maintenance and issue records scoped by store'],
+    ['Record identity','New IDs include store prefix, module prefix and date for audit clarity'],
+    ['Audit trail','Create, edit, delete and verify actions store user, role, time and changed fields']
+  ];
   $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🗄️</div><div><h2>Data Management</h2><p>Export data, run backups and clean up old records.</p></div></div>
+    <div class="card store-isolation-card">
+      <div class="card-head"><h3>Store data isolation</h3><span class="ch-sub">${esc(scope)}</span></div>
+      <div class="card-pad">
+        <div class="iso-grid">
+          <div><b>Active document</b><span>${esc(doc)}</span></div>
+          <div><b>Write boundary</b><span>${isSuper()?'Split back into each store document':'This store document only'}</span></div>
+          <div><b>Login scope</b><span>${isSuper()?'Can compare all stores':'Cannot load or save another store'}</span></div>
+        </div>
+        <table class="grid iso-table"><tbody>${isolationRows.map(r=>`<tr><td><b>${esc(r[0])}</b></td><td>${esc(r[1])}</td></tr>`).join('')}</tbody></table>
+      </div>
+    </div>
+    <div class="split-2 data-admin-grid">
+      <div class="card">
+        <div class="card-head"><h3>Audit log</h3><span class="ch-sub">${auditRows.length} recent events</span></div>
+        <div class="table-wrap"><table class="grid audit-table"><thead><tr><th>Time</th><th>User</th><th>Action</th><th>Entity</th></tr></thead><tbody>
+          ${auditRows.map(a=>`<tr><td><b>${esc((a.created||'').slice(0,16).replace('T',' '))}</b><div class="cell-sub">${esc(a.store||'')}</div></td><td>${esc(a.user||'System')}<div class="cell-sub">${esc(a.role||'')}</div></td><td><span class="badge info">${esc(a.action||'update')}</span></td><td>${esc(a.entity||'record')}<div class="cell-sub">${esc(a.entityId||'')}</div></td></tr>`).join('')||'<tr><td colspan="4"><div class="empty compact"><div class="e-ic">🧾</div>No audit events yet.</div></td></tr>'}
+        </tbody></table></div>
+      </div>
+      <div class="card">
+        <div class="card-head"><h3>Collection migration plan</h3><span class="ch-sub">ready when data grows</span></div>
+        <div class="card-pad small-collection-list">
+          <div class="migration-note"><b>Current prototype:</b> one safe per-store document. <b>Long term:</b> split heavy data into smaller collections so saves stay fast and conflicts are easier to audit.</div>
+          ${smallCollections.map(r=>`<div class="collection-row"><code>${esc(r[0])}</code><span>${esc(r[1])}</span></div>`).join('')}
+        </div>
+      </div>
+    </div>
     <div class="card"><div class="card-head"><h3>Record counts</h3></div><div class="table-wrap"><table class="grid"><thead><tr><th>Module</th><th>Records</th><th>Export</th></tr></thead><tbody>
       ${counts.map(c=>`<tr><td>${c.i} <b>${esc(c.l)}</b></td><td class="num">${c.n}</td><td><button class="btn sm" onclick="toast('Exported ${esc(c.l)} (demo CSV)')">⬇ CSV</button></td></tr>`).join('')}
     </tbody></table></div></div>
