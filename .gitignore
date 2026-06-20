@@ -14,3 +14,8 @@ node_modules/
 # Employee master file — contains PII, never commit
 EMPLOYEE MASTER FILE*.xlsx
 *.xlsx
+
+# backend runtime data
+server/data/
+server/uploads/
+server/__pycache__/
