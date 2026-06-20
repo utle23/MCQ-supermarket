@@ -727,7 +727,7 @@ DB.modules.issue = {
 
 /* ---------- navigation groups (sidebar) ---------- */
 DB.navGroups = [
-  { id:'ops',    label:'Operations', icon:'fa-clipboard-list', items:['checklist','history','binadmin','schedules','delivery'] },
+  { id:'ops',    label:'Operations', icon:'fa-clipboard-list', items:['checklist','handover','history','binadmin','schedules','delivery'] },
   { id:'hr',     label:'Staff & HR', icon:'fa-users',          items:['structure','staff','schedule','performance','training','reward','raise','birthday'], admin:true },
   { id:'mgmt',   label:'Management', icon:'fa-user-shield',     items:['manager','storeconfig','analytics','photos','whatsapp','email','data'], admin:true },
   { id:'reports',label:'Reports & Rules', icon:'fa-flag',       items:['rules'] },
@@ -809,6 +809,7 @@ DB.customPages = {
   staff:    { label:'Staff Members',   icon:'🧑‍🤝‍🧑', render:'renderStaff' },
   schedule: { label:'Job Schedule',    icon:'🗓️', render:'renderSchedule' },
   schedules:{ label:'Cleaning & Maintenance', icon:'🧽', render:'renderSchedules' },
+  handover: { label:'Shift Handover', icon:'🔁', render:'renderHandover' },
   history:  { label:'Checklist History', icon:'🧾', render:'renderHistory' },
   binadmin: { label:'Bin Admin', icon:'🗑️', render:'renderBinAdmin' },
   performance:{ label:'Performance & Scoring', icon:'📊', render:'renderPerformance', admin:true },

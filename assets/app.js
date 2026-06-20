@@ -429,6 +429,7 @@ function buildTopbar(){
     <span class="tb-badge"><i class="fas fa-store"></i> ${esc(scopeLabel)}</span>
     <span class="tb-badge"><i class="fas fa-clock"></i> idle <b id="idle-ind">30m</b></span>
     <span class="tb-badge ${isAdmin()?'badge-admin':''}"><i class="fas ${isAdmin()?'fa-shield-halved':'fa-user'}"></i> ${roleLabel}</span>
+    <button class="tb-bell" onclick="cmdK()" title="Search (⌘K / Ctrl-K)"><i class="fas fa-magnifying-glass"></i></button>
     <button class="tb-bell" id="tb-bell" onclick="if(window.renderAttention)renderAttention()" title="Needs attention"><i class="fas fa-bell"></i><span class="tb-bell-n" id="tb-bell-n" style="display:none">0</span></button>
     <span class="tb-badge sync-top" id="sync-pill">${syncBadge()}</span>
     <div class="user-chip"><div class="avatar">${esc(u.initials)}</div>
@@ -766,6 +767,42 @@ function recDelete(modId,id,store){
 }
 function closeDrawer(){ $('#drawer')?.classList.remove('open'); $('#drawer-mask')?.classList.remove('open'); }
 function refreshBell(){ try{ const n=(window.ckAttentionCount?ckAttentionCount():0); const el=$('#tb-bell-n'); if(el){ el.textContent=n>99?'99+':n; el.style.display=n?'':'none'; } const b=$('#tb-bell'); if(b) b.classList.toggle('has',n>0); }catch(e){} }
+
+/* ---------- command palette (Cmd/Ctrl-K) ---------- */
+function cmdKResults(q){
+  q=(q||'').trim().toLowerCase(); const out=[];
+  const vis=m=>!((m.admin&&!isAdmin())||(m.super&&!isSuper()));
+  const inScope=store=>isSuper()||store===State.branch;
+  const pages=[['home','fa-gauge-high','Dashboard'],['checklist','fa-clipboard-check','Store Checklist']];
+  Object.entries(DB.customPages||{}).forEach(([id,p])=>{ if(vis(p)) pages.push([id,'fa-file-lines',p.label]); });
+  Object.entries(DB.modules||{}).forEach(([id,m])=>{ if(vis(m)) pages.push([id,'fa-folder-open',m.label||m.short]); });
+  pages.filter(p=>!q||p[2].toLowerCase().includes(q)).slice(0,q?5:8).forEach(p=>out.push({icon:p[1],title:p[2],sub:'Open page',onclick:`go('${p[0]}')`}));
+  if(q){
+    (DB.staff||[]).filter(s=>inScope(s.store)&&String(s.name||'').toLowerCase().includes(q)).slice(0,6)
+      .forEach(s=>out.push({icon:'fa-user',title:s.name,sub:'Staff'+(s.role?' · '+s.role:'')+(isSuper()?' · '+s.store:''),onclick:`go('staff');setTimeout(function(){if(window.staffEditOpen)staffEditOpen('${String(s.id).replace(/'/g,'')}');},80)`}));
+    Object.entries(DB.modules||{}).forEach(([id,m])=>{ if(!vis(m))return; (m.records||[]).filter(r=>inScope(r.store)&&JSON.stringify(r).toLowerCase().includes(q)).slice(0,4)
+      .forEach(r=>out.push({icon:'fa-file-lines',title:(r.id||m.short||id)+' · '+String(r.title||r.summary||r.equipment||r.category||r.staffName||'').slice(0,38),sub:m.label||id,onclick:`go('${id}')`})); });
+    (((DB.checklist||{}).items)||[]).map(ckItem).filter(r=>ckStoreOk(r)&&String(r.task).toLowerCase().includes(q)).slice(0,5)
+      .forEach(r=>out.push({icon:'fa-square-check',title:r.task,sub:'Checklist · '+r.dept,onclick:`go('checklist')`}));
+  }
+  return out.slice(0,20);
+}
+function cmdKRender(q){ const res=$('#cmdk-res'); if(!res) return; const items=cmdKResults(q);
+  res.innerHTML=items.length?items.map(a=>`<button class="cmdk-row" onclick="cmdKClose();${a.onclick}"><span class="cmdk-ic"><i class="fas ${a.icon}"></i></span><span class="cmdk-main"><b>${esc(a.title)}</b><small>${esc(a.sub)}</small></span></button>`).join(''):'<div class="cmdk-empty">No matches.</div>'; }
+function cmdK(){
+  if(!State.account) return;
+  let ov=$('#cmdk');
+  if(!ov){ ov=document.createElement('div'); ov.id='cmdk'; ov.className='cmdk-ov'; ov.onclick=e=>{ if(e.target===ov) cmdKClose(); };
+    ov.innerHTML=`<div class="cmdk-box"><div class="cmdk-in"><i class="fas fa-magnifying-glass"></i><input id="cmdk-input" placeholder="Search staff, records, tasks, pages…" autocomplete="off"><kbd>Esc</kbd></div><div class="cmdk-res" id="cmdk-res"></div></div>`;
+    document.body.appendChild(ov);
+    const inp=$('#cmdk-input',ov);
+    inp.addEventListener('input',()=>cmdKRender(inp.value));
+    inp.addEventListener('keydown',e=>{ if(e.key==='Escape')cmdKClose(); else if(e.key==='Enter'){ const f=ov.querySelector('.cmdk-row'); if(f)f.click(); } });
+  }
+  ov.classList.add('show'); const inp=$('#cmdk-input',ov); inp.value=''; cmdKRender(''); setTimeout(()=>inp.focus(),30);
+}
+function cmdKClose(){ const ov=$('#cmdk'); if(ov) ov.classList.remove('show'); }
+document.addEventListener('keydown',function(e){ if((e.metaKey||e.ctrlKey)&&(e.key==='k'||e.key==='K')){ if(!State.account) return; e.preventDefault(); cmdK(); } });
 
 /* ============================================================ CHARTS */
 function destroyCharts(){ State.charts.forEach(c=>{try{c.destroy()}catch(e){}}); State.charts=[]; }

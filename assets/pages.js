@@ -23,6 +23,7 @@ function renderStaffHome(){
   const actions=[
     ['✅','Store Checklist','Opening & closing checks','#10b981',"go('checklist')"],
     ['🗑️','Bin Checklist','Tue, Thu & Fri evidence','#64748b',"go('binadmin')"],
+    ['🔁','Shift Handover','Who is on + pass notes','#0891b2',"go('handover')"],
     ['🚩','Report an Issue','Maintenance, safety, stock…','#e53935',"go('issue')"],
     ['🚚','Log Delivery','Truck & crate return','#3b82f6',"go('delivery','new')"],
     ['📖','Store Rules','Handbook & standards','#8b5cf6',"go('rules')"],
@@ -967,6 +968,13 @@ function ckQueueTempAlert(i,temp){
   if(endpoint){
     fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(State.tempAlerts[0])}).catch(e=>console.warn('Gmail alert endpoint failed',e));
   }
+  // email the store admin + temp-alert recipients (silent via Brevo if configured)
+  if(window.mcqEmail && mcqEmail.alert){
+    const subject=`🌡️ TEMP ALERT · ${State.branch} · ${r.meta.equipment||r.task||r.dept}`;
+    const body=`Temperature OUT OF RANGE\n\nStore: ${State.branch}\nDepartment: ${r.dept}\nEquipment: ${r.meta.equipment||r.task||'—'}\nReading: ${temp.value!=null?temp.value+' °C':'—'}\nSafe range: ${temp.range||''}\nSession: ${State.chk.session}\nTime: ${new Date().toLocaleString()}\n\nPlease check the unit and record the corrective action.`;
+    const res=mcqEmail.alert(subject,body,DB.checklist.tempAlertEmails||[]);
+    if(res==='silent') toast('🌡️ Temp alert emailed to admin');
+  }
 }
 function ckTempBox(r,st){
   const range=ckTempRange(r.meta.type), temp=st.temp;
@@ -1658,6 +1666,7 @@ async function ckSharePDF(session){
   toast('Building '+session+' PDF…');
   const date=new Date().toISOString().slice(0,10);
   const store=isSuper()?'All stores':State.branch;
+  let outCount=0; rows.forEach(r=>{ const st=State.chk.state[r.i]||{}; if(st.temp&&st.temp.inRange===false) outCount++; });
   // preload + downscale photos
   const urls=[]; rows.forEach(r=>{ const st=State.chk.state[r.i]||{}; (st.photos||[]).forEach(u=>urls.push(u)); });
   const pmap={}; await Promise.all([...new Set(urls)].map(async u=>{ const d=await ckImgData(imgSrc(u),900); if(d) pmap[u]=d; }));
@@ -1673,6 +1682,7 @@ async function ckSharePDF(session){
     y=96;
   }
   header();
+  if(outCount>0){ ensure(26); doc.setFillColor(254,242,242); doc.setDrawColor(220,38,38); doc.setLineWidth(0.8); doc.roundedRect(M,y,PW-2*M,22,4,4,'FD'); doc.setLineWidth(0.2); doc.setTextColor(185,28,28); doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text('TEMPERATURE ALERTS: '+outCount+' reading(s) OUT OF SAFE RANGE — see highlighted tasks below',M+12,y+15); y+=32; }
   const groups={}; rows.forEach(r=>{(groups[r.dept]=groups[r.dept]||{})[r.area]=(groups[r.dept][r.area]||[]);groups[r.dept][r.area].push(r);});
   let total=0,done=0;
   Object.entries(groups).forEach(([dept,areas])=>{
@@ -1708,7 +1718,7 @@ async function ckSharePDF(session){
   for(let i=1;i<=n;i++){ doc.setPage(i); doc.setFontSize(8); doc.setTextColor(150); doc.text('MCQ Supermarket — '+store+' · '+session+' · Confidential',M,PH-18); doc.text('Page '+i+' / '+n,PW-M,PH-18,{align:'right'}); }
   const fileName='MCQ_'+store.replace(/\s+/g,'_')+'_'+session.replace(/\s+/g,'')+'_'+date+'.pdf';
   const blob=doc.output('blob'); const file=new File([blob],fileName,{type:'application/pdf'});
-  const caption='*MCQ '+store+' — '+session+' Checklist*\n'+date+' · '+done+'/'+total+' tasks done';
+  const caption='*MCQ '+store+' — '+session+' Checklist*\n'+date+' · '+done+'/'+total+' tasks done'+(outCount?'\n⚠️ '+outCount+' temperature alert(s) — out of range':'');
   try{
     if(navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file],title:fileName,text:caption}); toast('Shared ✓'); return; }
   }catch(e){ if(e&&e.name==='AbortError') return; }
@@ -2078,10 +2088,12 @@ function renderBinAdmin(){
 
 /* ============================================================ CHECKLIST HISTORY */
 function histState(){
-  State.hist=State.hist||{tab:'checklist',store:isSuper()?'All stores':State.branch,dept:'All departments',q:''};
+  State.hist=State.hist||{tab:'checklist',store:isSuper()?'All stores':State.branch,dept:'All departments',q:'',date:''};
+  if(State.hist.date===undefined) State.hist.date='';
   if(!isSuper()) State.hist.store=State.branch;
   return State.hist;
 }
+function histDateOk(r){ const d=histState().date; return !d||String(r.date||'').slice(0,10)===d; }
 function histTab(tab){ const h=histState(); h.tab=tab; h.dept='All departments'; renderHistory(); }
 function histSet(k,v){ const h=histState(); h[k]=v; renderHistory(); }
 function histStoreOk(r){ const h=histState(); return h.store==='All stores'||r.store===h.store; }
@@ -2102,7 +2114,7 @@ function histBinRows(){
 }
 function histScheduleRows(){
   const h=histState();
-  return (DB.scheduleHistory||[]).filter(r=>histStoreOk(r)&&histTextOk(r)&&(h.dept==='All departments'||r.dept===h.dept))
+  return (DB.scheduleHistory||[]).filter(r=>r.type!=='handover'&&histStoreOk(r)&&histTextOk(r)&&(h.dept==='All departments'||r.dept===h.dept))
     .sort((a,b)=>String(b.created||b.date||'').localeCompare(String(a.created||a.date||'')));
 }
 function histOpenChecklist(id){
@@ -2134,7 +2146,8 @@ function renderHistory(){
   const h=histState(); setAccent('#0f766e'); setCrumb('🧾','Checklist History','Checklist, bin and cleaning evidence records');
   const tabs=[['checklist','Checklist'],['bin','Bin'],['schedule','Cleaning & Maintenance']].map(t=>`<button class="seg-btn ${h.tab===t[0]?'active':''}" onclick="histTab('${t[0]}')">${t[1]}</button>`).join('');
   const storePick=isSuper()?`<select class="login-input" style="width:auto" onchange="histSet('store',this.value)">${['All stores',...DB.stores].map(s=>`<option ${s===h.store?'selected':''}>${esc(s)}</option>`).join('')}</select>`:'';
-  const rows=h.tab==='checklist'?histChecklistRows():h.tab==='bin'?histBinRows():histScheduleRows();
+  const rows=(h.tab==='checklist'?histChecklistRows():h.tab==='bin'?histBinRows():histScheduleRows()).filter(histDateOk);
+  const datePick=`<input type="date" class="login-input" style="width:auto" value="${esc(h.date||'')}" title="Filter by date" onchange="histSet('date',this.value)">${h.date?`<button class="btn sm" onclick="histSet('date','')">✕ All dates</button>`:''}`;
   const deptList=h.tab==='checklist'?[...new Set((DB.checklistSubs||[]).filter(histStoreOk).map(r=>r.dept).filter(Boolean))]:h.tab==='schedule'?[...new Set((DB.scheduleHistory||[]).filter(histStoreOk).map(r=>r.dept).filter(Boolean))]:[];
   const deptPick=deptList.length?`<select class="login-input" style="width:auto" onchange="histSet('dept',this.value)">${['All departments',...deptList.sort()].map(d=>`<option ${d===h.dept?'selected':''}>${esc(d)}</option>`).join('')}</select>`:'';
   const cards=rows.map(r=>{
@@ -2145,11 +2158,55 @@ function renderHistory(){
     if(h.tab==='bin') return `<button class="hist-card" onclick="histOpenBin('${ckJS(r.id)}')"><div class="hist-top"><b>Bin · ${esc(r.day)}</b><span>${esc(r.binQty)} bins</span></div><p>${esc(r.store)} · ${esc(r.date)} · ${esc(r.staffName||'—')}</p>${histStrip([r.photo])}<small>${esc(r.id)}</small></button>`;
     return `<button class="hist-card" onclick="histOpenSchedule('${ckJS(r.id)}')"><div class="hist-top"><b>${esc(r.type==='maintenance'?'Maintenance':'Cleaning')}</b><span>${esc(r.day)}</span></div><p>${esc(r.store)} · ${esc(r.date)} · ${esc(r.dept||'')}</p><strong>${esc(r.task)}</strong>${histStrip([r.photo])}<small>Completed by ${esc(r.staffName||'—')}</small></button>`;
   }).join('');
-  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🧾</div><div><h2>Checklist History</h2><p>Review submitted checklist records, bin evidence, and completed cleaning/maintenance tasks with photos.</p></div><div class="ph-actions">${storePick}${deptPick}<div class="seg seg-light">${tabs}</div></div></div>
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🧾</div><div><h2>Checklist History</h2><p>Review submitted checklist records, bin evidence, and completed cleaning/maintenance tasks with photos.</p></div><div class="ph-actions">${storePick}${deptPick}${datePick}<div class="seg seg-light">${tabs}</div></div></div>
     <div class="toolbar"><span class="count-chip">${rows.length} record${rows.length!==1?'s':''}</span><div class="search"><input value="${esc(h.q||'')}" oninput="State.hist.q=this.value;renderHistory()" placeholder="Search staff, task, area, ID..."></div></div>
     <div class="hist-grid">${cards||'<div class="card card-pad empty compact">No history records yet.</div>'}</div>`;
 }
 
+/* ============================================================ SHIFT HANDOVER */
+function hoKey(store,date){ return 'HO-'+dataStoreId(store)+'-'+date; }
+function hoEntry(store,date){ return (DB.scheduleHistory||[]).find(r=>r.type==='handover'&&r.store===store&&r.date===date); }
+function hoSet(k,v){ State.ho=State.ho||{}; State.ho[k]=v; renderHandover(); }
+function renderHandover(){
+  setAccent('#0891b2'); setCrumb('🔁','Shift Handover','Who is on duty + end-of-shift notes');
+  if(!State.ho) State.ho={date:ckTodayStr()};
+  const store=isSuper()?((State.ho.store)||DB.stores[0]):State.branch;
+  if(isSuper()) State.ho.store=store;
+  const date=State.ho.date||ckTodayStr();
+  const e=hoEntry(store,date)||{};
+  const staffNames=(DB.staff||[]).filter(s=>s.store===store&&s.active!==0).map(s=>s.name);
+  const recent=(DB.scheduleHistory||[]).filter(r=>r.type==='handover'&&(isSuper()||r.store===State.branch)).sort((a,b)=>String(b.date).localeCompare(String(a.date))).slice(0,8);
+  const storeSel=isSuper()?`<select class="login-input" style="width:auto" onchange="hoSet('store',this.value)">${DB.stores.map(s=>`<option ${s===store?'selected':''}>${esc(s)}</option>`).join('')}</select>`:'';
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🔁</div><div><h2>Shift Handover</h2><p>Log who's on duty and pass clear notes to the next shift.</p></div>
+    <div class="ph-actions">${storeSel}<input type="date" class="login-input" style="width:auto" value="${esc(date)}" max="${ckTodayStr()}" onchange="hoSet('date',this.value)"></div></div>
+    <div class="card"><div class="card-pad">
+      <datalist id="ho-staff">${staffNames.map(n=>`<option value="${esc(n)}">`).join('')}</datalist>
+      <div class="field"><label>👥 On duty · ${esc(store)} · ${esc(date)}</label><input id="ho-onduty" list="ho-staff" value="${esc(e.onDuty||'')}" placeholder="Type names, comma-separated"></div>
+      <div class="grid2" style="margin-top:12px">
+        <div class="field"><label>☀️ Start-of-shift note</label><textarea id="ho-start" placeholder="Anything the team should know at the start of the day…">${esc(e.startNote||'')}</textarea></div>
+        <div class="field"><label>🌙 End-of-shift handover</label><textarea id="ho-end" placeholder="Pass to the next shift — pending tasks, issues, deliveries, stock…">${esc(e.endNote||'')}</textarea></div>
+      </div>
+      <div style="margin-top:14px"><button class="btn primary lg" onclick="hoSave('${ckJS(store)}','${date}')"><i class="fas fa-floppy-disk"></i>&nbsp; Save handover</button>${e.by?`<span class="ch-sub" style="margin-left:12px">Last saved by ${esc(e.by)}</span>`:''}</div>
+    </div></div>
+    <div class="section-title">Recent handovers</div>
+    <div class="card"><div class="table-wrap"><table class="grid"><thead><tr><th>Date</th>${isSuper()?'<th>Store</th>':''}<th>On duty</th><th>Handover note</th><th>By</th></tr></thead><tbody>
+      ${recent.length?recent.map(r=>`<tr><td><b>${esc(r.date)}</b></td>${isSuper()?`<td>${esc(r.store)}</td>`:''}<td>${esc(r.onDuty||'—')}</td><td>${esc(r.endNote||r.startNote||'—')}</td><td>${esc(r.by||'')}</td></tr>`).join(''):`<tr><td colspan="${isSuper()?5:4}"><div class="empty compact"><div class="e-ic">🔁</div>No handovers logged yet.</div></td></tr>`}
+    </tbody></table></div></div>`;
+}
+function hoSave(store,date){
+  const onDuty=(document.getElementById('ho-onduty')||{}).value||'';
+  const startNote=(document.getElementById('ho-start')||{}).value||'';
+  const endNote=(document.getElementById('ho-end')||{}).value||'';
+  const by=(State.account&&State.account.name)||State.role||'Staff';
+  DB.scheduleHistory=DB.scheduleHistory||[];
+  const id=hoKey(store,date);
+  let e=DB.scheduleHistory.find(r=>r.id===id); const before=e?JSON.parse(JSON.stringify(e)):null;
+  if(!e){ e={id,type:'handover',store,date,created:new Date().toISOString()}; DB.scheduleHistory.unshift(e); }
+  Object.assign(e,{onDuty,startNote,endNote,by,at:new Date().toISOString()});
+  if(window.auditLog) auditLog(before?'update':'create','handover',id,store,before,e);
+  if(window.persist) window.persist();
+  toast('✓ Shift handover saved'); renderHandover();
+}
 /* ============================================================ MANAGER PANEL */
 function mgrSynthSubs(){
   if(State._synthSubs) return State._synthSubs;
@@ -2502,8 +2559,9 @@ function renderWhatsapp(){
   const byDept={};
   C.items.forEach((it,i)=>{ const r=ckItem(it,i); if(!ckStoreOk(r)) return; const when=it[3], inP=period==='Opening'?(when==='O'||when==='A'):(when==='C'||when==='A'); if(!inP) return;
     const dept=it[0], ps=photoSpec(it[4]), st=(State.chk&&State.chk.state[i])||{};
-    const d=byDept[dept]=byDept[dept]||{total:0,done:0,photos:[],reqMissing:0,meta:C.deptMeta[dept]||{}};
-    d.total++; if(st.done)d.done++; (st.photos||[]).forEach(u=>d.photos.push(u)); if(ps&&ps.req&&!(st.photos||[]).length)d.reqMissing++; });
+    const d=byDept[dept]=byDept[dept]||{total:0,done:0,photos:[],reqMissing:0,tempBad:0,meta:C.deptMeta[dept]||{}};
+    d.total++; if(st.done)d.done++; (st.photos||[]).forEach(u=>d.photos.push(u)); if(ps&&ps.req&&!(st.photos||[]).length)d.reqMissing++; if(st.temp&&st.temp.inRange===false)d.tempBad++; });
+  const tempBadTotal=Object.values(byDept).reduce((n,d)=>n+(d.tempBad||0),0);
   const snap=[
     ['💬','Complaints',DB.modules.complaint.records.filter(r=>r.status==='Open').length,'open','#ec4899'],
     ['🛠️','Maintenance',DB.modules.maintenance.records.filter(r=>!['Closed','Cancelled','Store Confirmed'].includes(r.status)).length,'open','#f59e0b'],
@@ -2522,7 +2580,8 @@ function renderWhatsapp(){
         <span class="wa-pill" style="background:#1A1A2E">📷 ${d.photos.length||d.reqMissing} photos</span></div>
         <div class="wa-thumbs">${realThumbs}${ph}</div></div></div>`;
   }).join('');
-  const msg=`*MCQ ${State.branch} — ${period} Report (${date})*\n`+Object.entries(byDept).map(([dept,d])=>`• ${dept}: ${d.done}/${d.total} done`).join('\n')+
+  const msg=`*MCQ ${State.branch} — ${period} Report (${date})*\n`+Object.entries(byDept).map(([dept,d])=>`• ${dept}: ${d.done}/${d.total} done${d.tempBad?` · 🌡️ ${d.tempBad} temp alert`:''}`).join('\n')+
+    (tempBadTotal?`\n\n⚠️ TEMPERATURE ALERTS: ${tempBadTotal} reading(s) OUT OF RANGE`:'')+
     `\n\n💬 Complaints open: ${snap[0][2]}\n🛠️ Maintenance open: ${snap[1][2]}\n⚠️ Incidents open: ${snap[2][2]}\n🚚 Deliveries: ${snap[3][2]}\n📷 Photos attached: ${allPhotos.length}\n\n_Sent from MCQ Supermarket_`;
   $('#content').innerHTML=`
     <div class="wa-hero">
@@ -2533,6 +2592,7 @@ function renderWhatsapp(){
       <div class="wa-actions"><button class="wa-share" onclick="waShare()"><i class="fab fa-whatsapp"></i>&nbsp; Share to WhatsApp</button>
         <button class="wa-dl" onclick="waCopy()"><i class="fas fa-copy"></i>&nbsp; Copy summary</button></div>
     </div>
+    ${tempBadTotal?`<div class="rail-tip" style="margin-top:14px;background:#fef2f2;border-color:#f3c9c9;color:#b91c1c">⚠️ <b>${tempBadTotal} temperature reading(s) out of range</b> today — included in the report.</div>`:''}
     <div class="section-title">What's in the ${period} report</div>
     <div class="wa-cards">${deptCards||'<div class="empty">No checklist tasks for this period.</div>'}</div>
     <div class="section-title">Operations snapshot</div>
@@ -2563,6 +2623,15 @@ window.mcqEmail={
     if(cfg.channel==='gmail'){ this._gmail(to,subject,body); toast(`📧 Gmail compose opened · ${to.length} recipient(s)`); return; }
     if(cfg.channel==='mailto'){ window.location.href=this._mailto(to,subject,body); return; }
     toast(`📧 ${to.length} recipient(s) would be notified (demo) — enable real sending in Email settings`); },
+  alert(subject,body,extraEmails){
+    const cfg=this.cfg(), to=[], seen={};
+    (extraEmails||[]).forEach(e=>{ e=String(e||'').trim(); if(e&&!seen[e.toLowerCase()]){ seen[e.toLowerCase()]=1; to.push({email:e,name:e}); } });
+    try{ (window.mgrStoreRecipients?mgrStoreRecipients(State.branch):[]).forEach(r=>{ if(r.email&&!seen[r.email.toLowerCase()]){ seen[r.email.toLowerCase()]=1; to.push(r); } }); }catch(e){}
+    if(!to.length) return false;
+    if(cfg.channel==='brevo'&&cfg.apiKey&&cfg.fromEmail){ this._brevo(to,subject,body,cfg); return 'silent'; }   // background, no window
+    if(cfg.channel==='gmail'){ this._gmail(to,subject,body); return 'compose'; }
+    return 'queued';
+  },
   _brevo(to,subject,body,cfg){
     fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'accept':'application/json','content-type':'application/json','api-key':cfg.apiKey},
       body:JSON.stringify({sender:{name:cfg.fromName||'MCQ Supermarket',email:cfg.fromEmail},to:to.map(r=>({email:r.email,name:r.name})),subject,htmlContent:this._html(subject,body)})})
