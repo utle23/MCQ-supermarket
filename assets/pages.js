@@ -174,12 +174,14 @@ function ckList(){
   return ckRows(false);
 }
 function ckAreaChips(){
-  const s=State.chk;
+  const s=State.chk, admin=isAdmin();
   const areas=[...new Set(ckRows(true).map(r=>r.area))];
-  if(areas.length<=1){ s.area='ALL'; return ''; }
-  if(!areas.includes(s.area)) s.area=areas[0];
-  const chips=areas.map(a=>`<button class="area-chip ${a===s.area?'active':''}" onclick="ckArea('${ckJS(a)}')">${esc(a)}</button>`).join('');
-  return `<div class="ck-subtoolbar"><span>Sections</span><div class="area-chips">${chips}</div></div>`;
+  if(areas.length<=1 && !admin){ s.area='ALL'; return ''; }            // staff: nothing to switch
+  if(areas.length>1 && !areas.includes(s.area)) s.area=areas[0];
+  if(areas.length<=1) s.area='ALL';
+  const chips=areas.map(a=>`<button class="area-chip ${a===s.area?'active':''}" ${admin?`ondblclick="ckSectionEdit('${ckJS(s.dept)}','${ckJS(a)}')" title="Double-click to rename / delete"`:''} onclick="ckArea('${ckJS(a)}')">${esc(a)}</button>`).join('')
+    + (admin?`<button class="area-chip ghost" onclick="ckAddSection('${ckJS(s.dept)}')" title="Add a section"><i class="fas fa-plus"></i>&nbsp;Section</button>`:'');
+  return `<div class="ck-subtoolbar"><span>Sections</span><div class="area-chips">${chips}</div>${admin?'<span class="ck-sub-hint">double-click a section to rename / delete</span>':''}</div>`;
 }
 function ckCurrentArea(){
   const areas=[...new Set(ckRows(true).map(r=>r.area))];
@@ -259,7 +261,6 @@ function ckDraw(){
       });
       if(isAdmin()) html+=`<button class="ck-add-ghost" onclick="ckAddTask('${ckJS(dept)}','${ckJS(area)}')"><i class="fas fa-plus"></i> Add task</button>`;
     });
-    if(isAdmin()) html+=`<button class="ck-add-ghost section" onclick="ckAddSection('${ckJS(dept)}')"><i class="fas fa-plus"></i> Add section</button>`;
     html+=`</div>`;
   });
   $('#chk-body').innerHTML=html||'<div class="empty">No tasks for this filter.</div>';
@@ -433,7 +434,7 @@ function ckDelDept(dept){
   State.chk.dept=(DB.checklist.depts||[])[0]||''; State.chk.area='ALL';
   ckPersistTemplate(); renderChecklist(); toast('🗑 Department deleted');
 }
-function ckSectionEdit(dept,area){ State.chk.editArea=dept+'::'+area; State.chk.editDeptH=null; State.chk.editing=null; ckDraw(); setTimeout(()=>{const el=document.getElementById('ckh-area'); if(el){el.focus();el.select();}},30); }
+function ckSectionEdit(dept,area){ State.chk.dept=dept; State.chk.area=area; State.chk.editArea=dept+'::'+area; State.chk.editDeptH=null; State.chk.editing=null; renderChecklist(); setTimeout(()=>{const el=document.getElementById('ckh-area'); if(el){el.focus();el.select();}},40); }
 function ckSaveSection(dept,area){ const v=((document.getElementById('ckh-area')||{}).value||'').trim(); State.chk.editArea=null;
   if(v&&v!==area){ DB.checklist.items.forEach(it=>{ if(it[0]===dept&&it[1]===area) it[1]=v; }); if(State.chk.area===area) State.chk.area=v; ckPersistTemplate(); toast('✓ Section renamed'); }
   renderChecklist(); }
@@ -1556,6 +1557,7 @@ const EXP_CSS=`*{box-sizing:border-box}body{font-family:'Segoe UI',Arial,sans-se
   .sign-line{display:block;min-width:84px;border-bottom:1px solid #94a3b8;height:18px}
   .note-line{display:block;min-width:100px;border-bottom:1px solid #cbd5e1;height:18px}
   ul{margin:0;padding-left:16px}li{margin:2px 0}
+  td img{max-height:160px;height:auto;border-radius:8px;border:1px solid #e2e8f0;margin:3px}
   .rpt-foot{margin-top:22px;color:#9ca3af;font-size:10px;text-align:center;border-top:1px solid #e5e7eb;padding-top:10px}
   @page{margin:13mm}`;
 const EXP_DOC_CSS=`table{border-collapse:collapse;width:100%;font-family:Calibri,Arial,sans-serif;font-size:11pt}th{background:#0e9f6e;color:#fff;border:1px solid #0b8f63;padding:6px 9px;text-align:left}td{border:1px solid #d9e2ec;padding:6px 9px;vertical-align:top}.cbx.on{color:#0e9f6e}.sched-dept td{background:#ecfdf5;color:#047857;font-weight:bold}.sched-cbx{font-size:16pt;font-weight:bold}.sched-cbx.done{color:#15803d}.sched-cbx.todo{color:#a16207}.sched-day{text-align:center}.sched-day small{display:block;font-size:8pt;color:#64748b}.sign-line,.note-line{display:block;border-bottom:1px solid #94a3b8;height:16px;min-width:80px}`;
@@ -1633,8 +1635,8 @@ async function ckSharePDF(session){
   const store=isSuper()?'All stores':State.branch;
   // preload + downscale photos
   const urls=[]; rows.forEach(r=>{ const st=State.chk.state[r.i]||{}; (st.photos||[]).forEach(u=>urls.push(u)); });
-  const pmap={}; await Promise.all([...new Set(urls)].map(async u=>{ const d=await ckImgData(imgSrc(u),420); if(d) pmap[u]=d; }));
-  const { jsPDF }=window.jspdf; const doc=new jsPDF({unit:'pt',format:'a4'});
+  const pmap={}; await Promise.all([...new Set(urls)].map(async u=>{ const d=await ckImgData(imgSrc(u),900); if(d) pmap[u]=d; }));
+  const { jsPDF }=window.jspdf; const doc=new jsPDF({unit:'pt',format:'a4',orientation:'landscape'});
   const PW=doc.internal.pageSize.getWidth(), PH=doc.internal.pageSize.getHeight(), M=40; let y=96;
   const ensure=h=>{ if(y+h>PH-44){ doc.addPage(); y=44; } };
   function header(){
@@ -1667,9 +1669,11 @@ async function ckSharePDF(session){
         if(noteLines.length){ doc.setTextColor(115); doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.text(noteLines,M+24,yy+10); yy+=noteLines.length*11; }
         y=yy+10;
         const ph=(st.photos||[]).map(u=>pmap[u]).filter(Boolean);
-        if(ph.length){ const tw=82,th=62,gap=6; let x=M+24; ensure(th+8);
-          ph.forEach(d=>{ if(x+tw>PW-M){ x=M+24; y+=th+gap; ensure(th+8); } try{ doc.addImage(d.data,'JPEG',x,y,tw,th); }catch(e){} doc.setDrawColor(222); doc.rect(x,y,tw,th); x+=tw+gap; });
-          y+=th+10;
+        if(ph.length){ const box=200, th=152, gap=10; let x=M+24; ensure(th+12);
+          ph.forEach(d=>{ if(x+box>PW-M){ x=M+24; y+=th+gap; ensure(th+12); }
+            const ar=(d.w&&d.h)?d.w/d.h:4/3; let iw=box, ih=iw/ar; if(ih>th){ ih=th; iw=ih*ar; }
+            try{ doc.addImage(d.data,'JPEG',x,y,iw,ih); }catch(e){} doc.setDrawColor(205); doc.setLineWidth(0.6); doc.rect(x,y,iw,ih); doc.setLineWidth(0.2); x+=box+gap; });
+          y+=th+14;
         }
       });
     });
@@ -1683,7 +1687,8 @@ async function ckSharePDF(session){
   try{
     if(navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file],title:fileName,text:caption}); toast('Shared ✓'); return; }
   }catch(e){ if(e&&e.name==='AbortError') return; }
-  expDownload(blob,fileName); window.open('https://wa.me/?text='+encodeURIComponent(caption),'_blank'); toast('PDF saved · WhatsApp opened — attach the PDF');
+  // device can't share files directly (e.g. desktop) → save the real PDF file so it can be attached
+  expDownload(blob,fileName); toast('📄 PDF saved to your device — open WhatsApp and attach it'); try{ window.open('https://wa.me/?text='+encodeURIComponent(caption),'_blank'); }catch(e){}
 }
 /* fallback (no jsPDF): branded printable report with photos */
 function ckSessionPrint(session,rows){
@@ -1694,14 +1699,14 @@ function ckSessionPrint(session,rows){
     Object.entries(areas).forEach(([area,items])=>{
       body+=`<tr><td colspan="3" style="background:#ecfdf5;color:#047857;font-weight:700">${esc(area)}</td></tr>`;
       items.forEach(r=>{ const st=State.chk.state[r.i]||{}, ok=!!st.done; total++; if(ok)done++;
-        const imgs=(st.photos||[]).map(u=>`<img src="${imgSrc(u)}" style="height:74px;border-radius:6px;margin:2px;border:1px solid #ddd">`).join('');
+        const imgs=(st.photos||[]).map(u=>`<img src="${imgSrc(u)}" style="height:150px;border-radius:8px;margin:3px;border:1px solid #ddd">`).join('');
         const t=st.temp?`<div style="color:${st.temp.inRange===false?'#b91c1c':'#047857'};font-weight:700">Temp: ${st.temp.defrosting?'Defrosting':(st.temp.value!=null?st.temp.value.toFixed(1)+' C':'')}${st.temp.inRange===false?' (OUT OF RANGE)':''}</div>`:'';
         body+=`<tr><td style="text-align:center;font-size:16px">${ok?'☑':'☐'}</td><td>${esc(r.task)}${t}${st.note?`<div style="color:#64748b">${esc(st.note)}</div>`:''}</td><td>${imgs||'—'}</td></tr>`;
       });
     });
   });
   body+='</tbody>';
-  const head='<thead><tr><th style="width:30px">✓</th><th>Task</th><th style="width:210px">Photos</th></tr></thead>';
+  const head='<thead><tr><th style="width:30px">✓</th><th>Task</th><th style="width:360px">Photos</th></tr></thead>';
   expPrintReport(`${session} Checklist`,head+body,`<b>Store:</b> ${esc(expScope())} &nbsp; <b>Session:</b> ${esc(session)} &nbsp; <b>Date:</b> ${new Date().toISOString().slice(0,10)} &nbsp; <b>Done:</b> ${done}/${total}`);
 }
 function exportChecklist(fmt){
@@ -2163,14 +2168,15 @@ function mgrStoreRecipients(store){
   if(Array.isArray(fromMap)) fromMap.forEach((r,i)=>add(typeof r==='string'?{key:'mgr-'+store+'-'+i,name:store+' Store Manager',email:r}:r));
   else if(typeof fromMap==='string') add({key:'mgr-'+store,name:store+' Store Manager',email:fromMap});
   else add(fromMap);
-  (DB.staff||[]).filter(x=>x.store===store && /manager|supervisor/i.test(x.role||'') && x.email)
+  // staff flagged Admin (multi-role) or a manager/supervisor, with an email — store-specific (works for Super too)
+  (DB.staff||[]).filter(x=>x.store===store && x.email && (staffIsAdmin(x) || /manager|supervisor/i.test(x.role||'')))
     .forEach(x=>add({key:'staff-'+x.id,name:x.name,email:x.email}));
   add((DB.emailRecipients||[]).find(r=>r.key==='mgr'));
   return out;
 }
 function mgrEmailVerifyNote(s,note){
   const to=mgrStoreRecipients(s.store);
-  if(!to.length){ toast('No manager email configured for '+s.store); return false; }
+  if(!to.length){ toast('No admin email set for '+s.store+' — add one in Email Notifications'); return false; }
   const subject=`MCQ ${s.store} · Checklist verified · ${s.department} ${s.session}`;
   const body=`Store: ${s.store}
 Department: ${s.department}
@@ -2181,9 +2187,11 @@ Progress: ${s.done}/${s.total} (${s.progress}%)
 
 Assessment note:
 ${note}`;
+  const cfg=(window.mcqEmail&&mcqEmail.cfg&&mcqEmail.cfg())||DB.emailConfig||{};
+  if(cfg.channel==='brevo' && cfg.apiKey && cfg.fromEmail){ mcqEmail._brevo(to,subject,body,cfg); return 'silent'; }   // send in the background, no window
   if(window.mcqEmail && mcqEmail._gmail) mcqEmail._gmail(to,subject,body);
   else window.open('https://mail.google.com/mail/?view=cm&fs=1&to='+encodeURIComponent(to.map(r=>r.email).join(','))+'&su='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body),'_blank');
-  return true;
+  return 'compose';
 }
 function mgrVerify(id){
   const note=($('#mgr-note')&&$('#mgr-note').value||'').trim();
@@ -2191,8 +2199,10 @@ function mgrVerify(id){
   if(!mgrSubInScope(s)){ toast('This checklist belongs to another store'); return; }
   const real=(DB.checklistSubs||[]).find(x=>x.id===id && x.store===s.store);
   if(real){ const before=JSON.parse(JSON.stringify(real)); real.status='Verified'; real.verifyNote=note; real.verifiedAt=new Date().toISOString(); real.verifiedBy=(State.account&&State.account.name)||'Manager'; auditLog('verify','checklistSubmission',real.id,real.store,before,real,note); if(window.persist) window.persist(); }
-  const emailed=note&&s&&mgrEmailVerifyNote(s,note);
-  closeDrawer&&closeDrawer(); toast(emailed?'✓ Checklist verified · Gmail opened to store manager':'✓ Checklist verified'); renderManager(); }
+  const sent=note&&s&&mgrEmailVerifyNote(s,note);
+  closeDrawer&&closeDrawer();
+  toast(sent==='silent'?('✓ Verified · note sent silently to '+s.store+' admin'):sent==='compose'?'✓ Verified · email opened to store admin':'✓ Checklist verified');
+  renderManager(); }
 function mgrDate(v){ if(!State.mgr) State.mgr={}; State.mgr.date=v; renderManager(); }
 /* derive the actual checklist (items, done state, notes, evidence photos) for a submission */
 function mgrSubTasks(s){
@@ -2329,7 +2339,7 @@ function renderAnalytics(){
 }
 
 /* ============================================================ PHOTO GALLERY */
-function pgState(){ State.pg=State.pg||{store:isSuper()?'All stores':State.branch,dept:'All departments',area:'All sections'}; return State.pg; }
+function pgState(){ State.pg=State.pg||{store:isSuper()?'All stores':State.branch,dept:'All departments',area:'All sections',date:''}; if(State.pg.date===undefined) State.pg.date=''; return State.pg; }
 function pgSet(field,value){ const pg=pgState(); pg[field]=value; if(field==='dept') pg.area='All sections'; renderPhotos(); }
 function pgPhotos(){
   const rows=[], today=new Date().toISOString().slice(0,10);
@@ -2377,6 +2387,7 @@ function renderPhotos(){
   const areas=['All sections',...[...new Set(scoped.map(p=>p.area).filter(Boolean))].sort()];
   if(!areas.includes(pg.area)) pg.area='All sections';
   scoped=scoped.filter(p=>pg.area==='All sections'||p.area===pg.area);
+  scoped=scoped.filter(p=>!pg.date||String(p.date||'').slice(0,10)===pg.date);
   const groups={};
   scoped.forEach(p=>{ const k=`${p.dept}||${p.area}`; (groups[k]=groups[k]||[]).push(p); });
   const html=Object.entries(groups).map(([k,photos])=>{
@@ -2390,6 +2401,8 @@ function renderPhotos(){
       <select class="login-input" style="width:auto" onchange="pgSet('store',this.value)">${stores.map(s=>`<option ${s===pg.store?'selected':''}>${esc(s)}</option>`).join('')}</select>
       <select class="login-input" style="width:auto" onchange="pgSet('dept',this.value)">${depts.map(d=>`<option ${d===pg.dept?'selected':''}>${esc(d)}</option>`).join('')}</select>
       <select class="login-input" style="width:auto" onchange="pgSet('area',this.value)">${areas.map(a=>`<option ${a===pg.area?'selected':''}>${esc(a)}</option>`).join('')}</select>
+      <input type="date" class="login-input" style="width:auto" value="${esc(pg.date||'')}" title="Filter by date" onchange="pgSet('date',this.value)">
+      ${pg.date?`<button class="btn sm" onclick="pgSet('date','')" title="Show all dates">✕ All dates</button>`:''}
     </div></div>
     <div class="kpi-grid"><div class="kpi tone-info"><div class="k-top"><div class="k-ic">📷</div></div><div class="k-val">${scoped.length}</div><div class="k-lbl">Photos shown</div></div><div class="kpi tone-ok"><div class="k-top"><div class="k-ic">✅</div></div><div class="k-val">${all.filter(p=>p.source==='Checklist'||p.source==='Draft').length}</div><div class="k-lbl">Checklist photos</div></div><div class="kpi tone-warn"><div class="k-top"><div class="k-ic">🚩</div></div><div class="k-val">${all.filter(p=>p.source!=='Checklist'&&p.source!=='Draft').length}</div><div class="k-lbl">Report photos</div></div></div>
     ${html||'<div class="empty">No photos found for this store / department / section yet.</div>'}`;
@@ -2519,12 +2532,12 @@ function renderEmail(){
       </div>
       <div class="rail-tip" style="margin-top:12px">${cfg.channel==='brevo'?'📨 <b>Brevo</b> auto-sends over HTTPS (300/day free) — paste your API key + a verified sender. If your browser blocks it (CORS), use Gmail compose or relay through a tiny server.':cfg.channel==='gmail'?'✉️ <b>Gmail compose</b> opens a pre-filled Gmail window so you click Send — works everywhere, no setup.':cfg.channel==='mailto'?'📧 <b>Mail app</b> opens your device email client pre-filled.':'🧪 <b>Demo</b> only shows who would be notified. Pick Brevo or Gmail to actually send.'}</div>
       </div></div>
-    <div class="card" style="margin-bottom:16px"><div class="card-head"><h3><i class="fas fa-user-tie"></i>&nbsp; Store Manager · verify-note alerts</h3><span class="ch-sub">${isSuper()?'When Super Admin verifies a store\'s checklist and leaves a note, the note is emailed to that store\'s manager (set per store, or any staff with a Manager role + email).':'When a '+esc(State.branch)+' checklist is verified with a note, the note is emailed to this manager.'}</span></div>
+    <div class="card" style="margin-bottom:16px"><div class="card-head"><h3><i class="fas fa-user-shield"></i>&nbsp; Store Admin · verify-note (silent)</h3><span class="ch-sub">${isSuper()?'When Super Admin verifies a store’s checklist with a note, the note is sent to that store’s admin — silently if Brevo is set up, otherwise via Gmail compose.':'When a '+esc(State.branch)+' checklist is verified with a note, it is emailed to this store admin.'}</span></div>
       <div class="card-pad"><div class="grid2">
-        <div class="field"><label>Manager name</label><input value="${esc(cfg.managerName||'')}" oninput="emailCfgSet('managerName',this.value)" placeholder="Store manager name"></div>
-        <div class="field"><label>Manager email</label><input type="email" value="${esc(cfg.managerEmail||'')}" oninput="emailCfgSet('managerEmail',this.value)" placeholder="manager@store.com"></div>
+        <div class="field"><label>Store admin name</label><input value="${esc(cfg.managerName||'')}" oninput="emailCfgSet('managerName',this.value)" placeholder="Store admin name"></div>
+        <div class="field"><label>Store admin email</label><input type="email" value="${esc(cfg.managerEmail||'')}" oninput="emailCfgSet('managerEmail',this.value)" placeholder="admin@store.com"></div>
       </div>
-      <div class="rail-tip" style="margin-top:12px">🔒 This belongs to <b>${esc(isSuper()?'each store':State.branch)}</b>'s own settings, so every store's email notifications work independently.${isSuper()?' As Super Admin, store submissions also reach you via the Head Office recipient.':''}</div>
+      <div class="rail-tip" style="margin-top:12px">🔒 Per-store setting — every store's notifications work independently. ${cfg.channel==='brevo'&&cfg.apiKey&&cfg.fromEmail?'✅ Brevo is set up — verify notes send <b>silently</b> in the background.':'⚠️ To send <b>silently</b> (no Gmail window), set Channel = <b>Brevo</b> with an API key + verified sender above.'} Staff flagged <b>Admin</b> with an email also receive these.</div>
       </div></div>
     <div class="rail-tip" style="margin-bottom:16px;background:var(--bad-bg);border-color:#f3c9c9">⚠️ <b>Violation alerts</b> are sent to <b>all recipients</b> by default — no per-category opt-out.</div>
     <div class="section-title">Report Issue · who receives which category</div>
@@ -2591,6 +2604,31 @@ function dataClearAll(){
   DB.checklistSubs = isSuper()? [] : (DB.checklistSubs||[]).filter(s=>s.store!==State.branch);
   if(window.auditLog) auditLog('delete','records','ALL',State.branch,null,null);
   if(window.persist) window.persist(); toast('🗑 All records cleared'); renderData();
+}
+function dataDelInRange(d,from,to){ d=String(d||'').slice(0,10); return !!d&&(!from||d>=from)&&(!to||d<=to); }
+function dataRecDate(r){ return String(r.date||r.created||r.at||r.reported||r.createdAt||'').slice(0,10); }
+function dataDeleteRange(){
+  const g=id=>document.getElementById(id);
+  const from=(g('dr-from')||{}).value||'', to=(g('dr-to')||{}).value||'';
+  const doSubs=!!(g('dr-subs')||{}).checked, doPhotos=!!(g('dr-photos')||{}).checked, doRecs=!!(g('dr-records')||{}).checked;
+  State.dataDel={from,to};
+  if(!doSubs&&!doPhotos&&!doRecs){ toast('Pick at least one type to delete'); return; }
+  if(!from&&!to){ toast('Pick a “from” and/or “to” date'); return; }
+  const inScope=store=>isSuper()||store===State.branch;
+  const subs=DB.checklistSubs||[];
+  let nSubs=0,nPhotos=0,nRecs=0;
+  if(doSubs) nSubs=subs.filter(s=>inScope(s.store)&&dataDelInRange(s.date,from,to)).length;
+  if(doPhotos&&!doSubs) subs.forEach(s=>{ if(inScope(s.store)&&dataDelInRange(s.date,from,to)) (s.items||[]).forEach(it=>{ nPhotos+=(it.photos||[]).length; }); });
+  if(doRecs) Object.values(DB.modules).forEach(m=>{ nRecs+=(m.records||[]).filter(r=>inScope(r.store)&&dataDelInRange(dataRecDate(r),from,to)).length; });
+  const parts=[]; if(doSubs)parts.push(nSubs+' submission(s)'); if(doPhotos&&!doSubs)parts.push(nPhotos+' photo(s)'); if(doRecs)parts.push(nRecs+' record(s)');
+  if(!(nSubs+nRecs+nPhotos)){ toast('Nothing matches that date range / scope'); return; }
+  if(!confirm('Delete '+parts.join(' + ')+'\ndated '+(from||'…')+' → '+(to||'…')+(isSuper()?' across ALL stores':' for '+State.branch)+'?\nThis cannot be undone.')) return;
+  if(doPhotos&&!doSubs) subs.forEach(s=>{ if(inScope(s.store)&&dataDelInRange(s.date,from,to)) (s.items||[]).forEach(it=>{ it.photos=[]; }); });
+  if(doSubs) DB.checklistSubs=subs.filter(s=>!(inScope(s.store)&&dataDelInRange(s.date,from,to)));
+  if(doRecs) Object.values(DB.modules).forEach(m=>{ m.records=(m.records||[]).filter(r=>!(inScope(r.store)&&dataDelInRange(dataRecDate(r),from,to))); });
+  if(window.auditLog) auditLog('delete','dateRange',(from||'')+'..'+(to||''),State.branch,{subs:nSubs,photos:nPhotos,records:nRecs},null);
+  if(window.persist) window.persist();
+  toast('🗑 Deleted '+parts.join(' + ')); renderData();
 }
 function dataResetStore(store){ if(!isSuper()) return;
   if(!confirm('RESET all data for '+store+' (records, submitted checklists, schedule history)?\nStaff & templates kept. Cannot be undone.')) return;
@@ -2665,7 +2703,20 @@ function renderData(){
     <div class="card danger-zone" style="margin-top:16px;border:1.5px solid #f3c9c9"><div class="card-head"><h3 style="color:var(--bad)">⚠️ Cleanup &amp; free space</h3><span class="ch-sub">PythonAnywhere databases have size limits — delete old data to stay within them</span></div>
       <div class="card-pad">
         <p style="color:var(--muted);font-size:12.5px;margin:0 0 12px">Deleting clears the data from ${isSuper()?'every store document':'this store’s document'} and frees space. Staff, checklist templates and schedules are kept. <b>Export first if you need a copy.</b></p>
-        <div style="display:flex;gap:10px;flex-wrap:wrap">
+        <div class="data-range">
+          <div class="dr-head"><i class="fas fa-calendar-day"></i> Delete by date range — choose what to remove</div>
+          <div class="dr-row">
+            <label>From <input type="date" id="dr-from" value="${esc((State.dataDel&&State.dataDel.from)||'')}"></label>
+            <label>To <input type="date" id="dr-to" value="${esc((State.dataDel&&State.dataDel.to)||'')}"></label>
+          </div>
+          <div class="dr-targets">
+            <label class="dr-opt"><input type="checkbox" id="dr-subs" checked> Submitted checklists</label>
+            <label class="dr-opt"><input type="checkbox" id="dr-photos"> Photos only (keep checklist rows)</label>
+            <label class="dr-opt"><input type="checkbox" id="dr-records"> Operational records</label>
+          </div>
+          <button class="btn" style="color:var(--bad);border-color:#f3c9c9;margin-top:4px" onclick="dataDeleteRange()"><i class="fas fa-trash"></i>&nbsp; Delete in date range</button>
+        </div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px">
           <button class="btn" style="color:var(--bad);border-color:#f3c9c9" onclick="dataClearSubs()">🗑 Delete submitted checklists</button>
           <button class="btn" style="color:var(--bad);border-color:#f3c9c9" onclick="dataClearAll()">🗑 Delete all records + submissions</button>
         </div>
