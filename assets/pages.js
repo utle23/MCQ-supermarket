@@ -65,10 +65,16 @@ function staffDeptNeedles(dept){
   const hit=rules.find(r=>r[0].test(d));
   return hit?hit[1]:[d];
 }
+function staffIsAdmin(s){ return !!(s&&(s.admin||(Array.isArray(s.roles)&&s.roles.some(r=>staffNorm(r)==='admin')))); }
 function staffForDept(dept,opts){
   const all=staffScopeList(), dn=staffNorm(dept);
-  const byDept = dn ? all.filter(s=>staffNorm(s.dept)===dn) : [];   // explicit department link (from staff record)
-  if(byDept.length) return byDept;
+  if(dn){
+    // explicit links: Admin staff appear in EVERY checklist; multi-role staff appear in each of their roles; plus the legacy single dept field
+    const explicit=all.filter(s=> staffIsAdmin(s)
+      || (Array.isArray(s.roles)&&s.roles.some(r=>staffNorm(r)===dn))
+      || staffNorm(s.dept)===dn );
+    if(explicit.length) return explicit;
+  }
   const needles=staffDeptNeedles(dept);
   if(!needles.length) return all;
   const rows=all.filter(s=>{ const role=staffNorm(s.role), name=staffNorm(s.name); return needles.some(n=>role.includes(n)||name.includes(n)); });
@@ -152,6 +158,7 @@ function renderChecklist(){
    <div class="ck-toolbar"><div class="dept-chips">${chips}</div></div>
    ${areaChips}
    ${isAdmin()?`<div class="ck-build-hint"><i class="fas fa-wand-magic-sparkles"></i> <b>Builder mode</b> — double-click a department, section or task to rename / delete · tap <b>+</b> to add</div>`:''}
+   <div class="ck-bulk"><button class="btn sm ghost" onclick="ckAll(true)"><i class="fas fa-check-double"></i>&nbsp; Check all done</button><button class="btn sm ghost" onclick="ckAll(false)"><i class="fas fa-rotate-left"></i>&nbsp; Uncheck all</button></div>
    <div id="chk-prog" class="ck-progbar"></div>
    <div id="ck-temp-report"></div>
    <div id="chk-body"></div>
@@ -1382,8 +1389,13 @@ function renderStaff(){
     editForm=`<div class="card" style="margin-bottom:16px;border:2px solid var(--accent-soft)"><div class="card-head"><h3>${ed==='new'?'➕ Add staff member':'✎ Edit '+esc(s.name)}</h3><button class="btn sm" style="margin-left:auto" onclick="staffCancel()">✕ Cancel</button></div>
       <div class="card-pad"><div class="grid2">
         <div class="field"><label>Full name <span class="req">*</span></label><input id="st-name" value="${esc(s.name||'')}"></div>
-        <div class="field"><label>Department (checklist)</label><select id="st-dept"><option value="">— Unassigned —</option>${cdepts.map(d=>`<option ${d===s.dept?'selected':''}>${esc(d)}</option>`).join('')}</select></div>
+        <div class="field"><label>Primary department (checklist)</label><select id="st-dept"><option value="">— Unassigned —</option>${cdepts.map(d=>`<option ${d===s.dept?'selected':''}>${esc(d)}</option>`).join('')}</select></div>
         <div class="field"><label>Role / Classification</label><input id="st-role" value="${esc(s.role||s.classification||'')}" placeholder="e.g. CASHIER, FRUIT & VEGGIES"></div>
+        <div class="field span2"><label>Checklist roles — this person appears in these department checklists (Responsible / Submitted by). One person can have several.</label>
+          <div class="role-pick">
+            <label class="role-opt admin"><input type="checkbox" id="st-admin" ${s.admin?'checked':''}> <i class="fas fa-shield-halved"></i> <b>Admin</b> — appears in ALL checklists</label>
+            ${cdepts.map(d=>{ const on=staffIsAdmin(s)||(Array.isArray(s.roles)&&s.roles.includes(d))||s.dept===d; const m=(DB.checklist.deptMeta||{})[d]||{}; return `<label class="role-opt" style="--dc:${m.color||'#0e9f6e'}"><input type="checkbox" class="st-role-cb" value="${esc(d)}" ${on&&!staffIsAdmin(s)?'checked':''}>${m.icon?`<i class="fas ${m.icon}"></i> `:''}${esc(d)}</label>`; }).join('')}
+          </div></div>
         <div class="field"><label>Store</label>${storeField}</div>
         <div class="field"><label>Phone</label><input id="st-phone" value="${esc(s.phone||'')}" placeholder="0400 000 000"></div>
         <div class="field"><label>Email</label><input id="st-email" value="${esc(s.email||'')}"></div>
@@ -1411,7 +1423,7 @@ function renderStaff(){
       <div class="kpi tone-mute"><div class="k-top"><div class="k-ic">🧰</div></div><div class="k-val">${new Set(rows.map(s=>s.role)).size}</div><div class="k-lbl">Roles</div></div></div>
     ${editForm}
     <div class="card" style="margin-top:16px"><div class="card-head"><h3>Directory · ${rows.length}</h3><span class="ch-sub">${exportBtns('staff-table','Staff Directory — '+(isSuper()?'All stores':State.branch))}</span></div><div class="table-wrap"><table class="grid" id="staff-table"><thead><tr><th>Name</th><th>Dept</th><th>Role</th><th>Store</th><th>Phone</th><th>Email</th><th>DOB</th><th>Started</th><th>Type</th><th>Status</th><th></th></tr></thead><tbody>
-      ${rows.map(s=>`<tr><td><b>${esc(s.name)}</b></td><td>${s.dept?`<span class="badge mute">${esc(s.dept)}</span>`:'—'}</td><td>${esc(s.role||s.classification||'')}</td><td>${esc(s.store)}</td><td>${esc(s.phone||'')}</td><td>${esc(s.email||'')}</td><td>${esc(s.dob||'—')}</td><td>${esc(s.start||'')}</td><td>${esc(s.estatus||s.category||'')}</td><td>${s.active?'<span class="badge ok"><span class="bdot"></span>Active</span>':'<span class="badge mute"><span class="bdot"></span>Inactive</span>'}</td><td><span class="ck-task-admin"><button onclick="staffEditOpen('${esc(s.id)}')" title="Edit">✎</button><button onclick="staffDelete('${esc(s.id)}')" title="Delete">🗑</button></span></td></tr>`).join('')}
+      ${rows.map(s=>`<tr><td><b>${esc(s.name)}</b></td><td>${s.admin?'<span class="badge ok">ADMIN · all</span>':((Array.isArray(s.roles)&&s.roles.length)?s.roles.map(r=>`<span class="badge mute">${esc(r)}</span>`).join(' '):(s.dept?`<span class="badge mute">${esc(s.dept)}</span>`:'—'))}</td><td>${esc(s.role||s.classification||'')}</td><td>${esc(s.store)}</td><td>${esc(s.phone||'')}</td><td>${esc(s.email||'')}</td><td>${esc(s.dob||'—')}</td><td>${esc(s.start||'')}</td><td>${esc(s.estatus||s.category||'')}</td><td>${s.active?'<span class="badge ok"><span class="bdot"></span>Active</span>':'<span class="badge mute"><span class="bdot"></span>Inactive</span>'}</td><td><span class="ck-task-admin"><button onclick="staffEditOpen('${esc(s.id)}')" title="Edit">✎</button><button onclick="staffDelete('${esc(s.id)}')" title="Delete">🗑</button></span></td></tr>`).join('')}
       </tbody></table></div></div>`;
 }
 function staffNew(){ State.staffEdit='new'; renderStaff(); window.scrollTo({top:0,behavior:'smooth'}); }
@@ -1422,7 +1434,9 @@ function staffSave(ed){
   const name=g('st-name').trim(); if(!name){ toast('Enter a name'); return; }
   const store=isSuper()?g('st-store'):State.branch;
   const role=g('st-role');
-  const rec={name,dept:g('st-dept'),role,classification:role,store,phone:g('st-phone'),email:g('st-email'),gender:g('st-gender'),
+  const adminRole=document.getElementById('st-admin')?.checked||false;
+  const roles=[...document.querySelectorAll('.st-role-cb:checked')].map(c=>c.value);
+  const rec={name,dept:g('st-dept'),role,classification:role,roles,admin:adminRole,store,phone:g('st-phone'),email:g('st-email'),gender:g('st-gender'),
     dob:g('st-dob'),start:g('st-start'),cardId:g('st-cardid'),tfn:g('st-tfn'),address:g('st-address'),suburb:g('st-suburb'),
     country:g('st-country'),basis:g('st-basis'),category:g('st-cat'),estatus:g('st-estatus'),active:g('st-active')==='1'?1:0};
   if(ed==='new'){ rec.id=storeCode(store)+'-'+String(20000+Math.floor(Math.random()*9000)); auditLog('create','staff',rec.id,rec.store,null,rec); DB.staff.unshift(rec); }
