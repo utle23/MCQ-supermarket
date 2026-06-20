@@ -136,7 +136,8 @@ function renderChecklist(){
   if(!State.chk.area) State.chk.area='ALL';
   if(!State.chk.resp) State.chk.resp={};
   const s=State.chk;
-  setCrumb('✅','Store Operation Checklist',`${isSuper()?'All stores':State.branch} · ${s.session}`);
+  const today=ckTodayStr(); if(!s.date) s.date=today; const viewing=s.date!==today;
+  setCrumb('✅','Store Operation Checklist',`${isSuper()?'All stores':State.branch} · ${s.session}${viewing?' · '+s.date:''}`);
   const chips=C.depts.map(d=>{ const m=C.deptMeta[d]||{}; const col=m.color||'#0e9f6e';
     return `<button class="dept-chip ${d===s.dept?'active':''}" style="--dc:${col}" ${isAdmin()?`ondblclick="ckDeptHEdit('${ckJS(d)}')" title="Double-click to rename / delete"`:''} onclick="ckDept('${ckJS(d)}')">${m.icon?`<i class="fas ${m.icon}"></i> `:''}${esc(d)}</button>`; }).join('')
     + (isAdmin()?`<button class="dept-chip ghost" onclick="ckAddDept()" title="Add department"><i class="fas fa-plus"></i>&nbsp;Add</button>`:'');
@@ -152,18 +153,42 @@ function renderChecklist(){
        <button class="seg-btn ${s.session==='Closing'?'active':''}" onclick="ckSession('Closing')">🌙 Closing</button>
      </div>
      <span class="ck-deadline ${s.session==='Opening'?'am':'pm'}">⏰ Deadline <b>${esc(ckDeadline(s.session))}</b>${isAdmin()?` <button class="ck-dl-edit" onclick="ckEditDeadline('${ckJS(s.session)}')" title="Edit deadline">✎</button>`:''}</span>
+     ${!viewing && ckDeadlinePassed(s.session) && !ckSubmittedFor(s.dept,s.session,today)?'<span class="ck-overdue">⏰ OVERDUE</span>':''}
      <div class="tb-spacer"></div>
-     <div class="filter"><label>Date</label><input type="date" value="${new Date().toISOString().slice(0,10)}"></div>
+     <div class="filter"><label>Date</label><input type="date" max="${today}" value="${esc(s.date)}" onchange="ckSetDate(this.value)">${viewing?`<button class="btn sm" onclick="ckSetDate('${today}')">Today</button>`:''}</div>
    </div>
    <div class="ck-toolbar"><div class="dept-chips">${chips}</div></div>
    ${areaChips}
-   ${isAdmin()?`<div class="ck-build-hint"><i class="fas fa-wand-magic-sparkles"></i> <b>Builder mode</b> — double-click a department, section or task to rename / delete · tap <b>+</b> to add</div>`:''}
-   <div class="ck-bulk"><button class="btn sm ghost" onclick="ckAll(true)"><i class="fas fa-check-double"></i>&nbsp; Check all done</button><button class="btn sm ghost" onclick="ckAll(false)"><i class="fas fa-rotate-left"></i>&nbsp; Uncheck all</button></div>
+   ${viewing?`<div class="ck-build-hint" style="border-color:#bcd; background:#eff6ff; color:#1e40af"><i class="fas fa-clock-rotate-left"></i> Viewing the submitted <b>${esc(s.session)}</b> checklist for <b>${esc(s.date)}</b> (read-only).</div>`:(isAdmin()?`<div class="ck-build-hint"><i class="fas fa-wand-magic-sparkles"></i> <b>Builder mode</b> — double-click a department, section or task to rename / delete · tap <b>+</b> to add</div>`:'')}
+   ${viewing?'':`<div class="ck-bulk"><button class="btn sm ghost" onclick="ckAll(true)"><i class="fas fa-check-double"></i>&nbsp; Check all done</button><button class="btn sm ghost" onclick="ckAll(false)"><i class="fas fa-rotate-left"></i>&nbsp; Uncheck all</button></div>`}
    <div id="chk-prog" class="ck-progbar"></div>
    <div id="ck-temp-report"></div>
    <div id="chk-body"></div>
-   <div class="ck-submit"><button class="btn primary lg" onclick="chkSubmit()">✓ Submit ${s.session} checklist</button></div>`;
-  ckDraw();
+   ${viewing?'':`<div class="ck-submit"><button class="btn primary lg" onclick="chkSubmit()">✓ Submit ${s.session} checklist</button></div>`}`;
+  if(viewing){ const b=$('#chk-body'); if(b) b.innerHTML=ckPastHTML(); } else ckDraw();
+}
+function ckSetDate(v){ State.chk.date=v||ckTodayStr(); State.chk.editing=null; State.chk.editDeptH=null; State.chk.editArea=null; renderChecklist(); }
+function ckSubmittedFor(dept,session,date){ return (DB.checklistSubs||[]).some(x=>(isSuper()||x.store===State.branch)&&x.dept===dept&&x.session===session&&x.date===date); }
+function ckPastHTML(){
+  const s=State.chk;
+  const subs=(DB.checklistSubs||[]).filter(x=>(isSuper()||x.store===State.branch)&&x.dept===s.dept&&x.session===s.session&&x.date===s.date);
+  if(!subs.length) return `<div class="empty"><div class="e-ic">📅</div>No ${esc(s.session)} submission for ${esc(s.dept)} on ${esc(s.date)}.</div>`;
+  let html='';
+  subs.forEach(rec=>{
+    html+=`<div class="ck-dept"><div class="ck-dept-h"><span class="chk-dot" style="background:#0e9f6e"></span>${esc(rec.store)} · ${esc(rec.dept)} · ${esc(rec.session)}<span class="ck-dept-n">${rec.done||0}/${rec.total||0} · ${rec.progress||0}%</span></div>
+      <div class="ck-resp-card" style="margin:6px 0 4px"><span class="badge ${rec.status==='Verified'?'ok':'warn'}">${esc(rec.status||'Submitted')}</span>${rec.by?' · by '+esc(rec.by):''}${rec.verifiedBy?' · verified by '+esc(rec.verifiedBy):''}${rec.verifyNote?`<div style="margin-top:6px;color:#64748b">📝 ${esc(rec.verifyNote)}</div>`:''}</div>`;
+    const byArea={}; (rec.items||[]).forEach(it=>{(byArea[it.area||'General']=byArea[it.area||'General']||[]).push(it);});
+    Object.entries(byArea).forEach(([area,items])=>{
+      html+=`<div class="ck-area-h">${esc(area)}</div>`;
+      items.forEach(it=>{
+        const imgs=(it.photos||[]).map(u=>`<img class="ck-slot-img" src="${imgSrc(u)}" style="height:64px;border-radius:8px;margin:2px">`).join('');
+        const t=it.temp?`<span class="badge ${it.temp.inRange===false?'bad':'ok'}">${it.temp.defrosting?'Defrosting':(it.temp.value!=null?it.temp.value+'°C':'')}</span>`:'';
+        html+=`<div class="ck-task ${it.done?'done':''}"><button class="ck-check" disabled>${it.done?'✓':''}</button><div class="ck-main"><div class="ck-name">${esc(it.task)} ${t}</div>${it.note?`<div style="color:#64748b;font-size:12px">📝 ${esc(it.note)}</div>`:''}${imgs?`<div class="ck-slots">${imgs}</div>`:''}</div></div>`;
+      });
+    });
+    html+=`</div>`;
+  });
+  return html;
 }
 function ckRows(ignoreArea){
   const s=State.chk;
@@ -2141,13 +2166,74 @@ function mgrSynthSubs(){
   });
   State._synthSubs=out; return out;
 }
-/* real submitted checklists FIRST, then synthetic demo history */
+function mcqDemoMode(){ try{ return localStorage.getItem('mcq_demo')==='1'; }catch(e){ return false; } }
+/* REAL submitted checklists only (demo history is opt-in via localStorage.mcq_demo='1') */
 function mgrSubs(){
   const real=(DB.checklistSubs||[]).map(s=>({ id:s.id, date:s.date, dayName:s.dayName||new Date(s.date+'T00:00').toLocaleDateString(undefined,{weekday:'long'}),
     store:s.store, department:s.dept, session:s.session, by:s.by||s.responsible||'Staff',
     total:s.total, done:s.done, progress:s.progress, status:s.status||'Submitted', real:true, items:s.items,
     verifyNote:s.verifyNote||'', verifiedAt:s.verifiedAt||'', verifiedBy:s.verifiedBy||'' }));
-  return real.concat(mgrSynthSubs());
+  return mcqDemoMode() ? real.concat(mgrSynthSubs()) : real;
+}
+/* ---------- daily operations pulse + "needs attention" (real data only) ---------- */
+function ckTodayStr(){ return new Date().toISOString().slice(0,10); }
+function ckDeadlinePassed(session){
+  const t=ckDeadline(session); if(!t) return false;
+  const m=/(\d{1,2}):(\d{2})\s*(AM|PM)?/i.exec(t); if(!m) return false;
+  let h=+m[1]; const mi=+m[2], ap=(m[3]||'').toUpperCase();
+  if(ap==='PM'&&h<12)h+=12; if(ap==='AM'&&h===12)h=0;
+  const now=new Date(); return (now.getHours()*60+now.getMinutes())>(h*60+mi);
+}
+function ckMyScope(s){ return isSuper() || s===State.branch; }
+function ckOpsPulse(){
+  const today=ckTodayStr();
+  const depts=(DB.checklist&&DB.checklist.depts)||[];
+  const stores=isSuper()?(DB.stores||[]):[State.branch];
+  const subs=mgrSubs().filter(s=>ckMyScope(s.store));
+  const todaySubs=subs.filter(s=>s.date===today);
+  const expectedPer=Math.max(1,depts.length*stores.length);
+  const sessions=['Opening','Mid-afternoon','Closing'].map(sess=>{
+    const sub=todaySubs.filter(s=>s.session===sess), submitted=sub.length;
+    return {key:sess, submitted, expected:expectedPer,
+      pct:Math.min(100,Math.round(submitted/expectedPer*100)),
+      overdue: ckDeadlinePassed(sess) && submitted<expectedPer };
+  });
+  const pendingVerify=subs.filter(s=>s.status!=='Verified').length;
+  let tempAlerts=0; todaySubs.forEach(s=>(s.items||[]).forEach(it=>{ if(it.temp&&it.temp.inRange===false) tempAlerts++; }));
+  const overdue=sessions.reduce((n,s)=>n+(s.overdue?(s.expected-s.submitted):0),0);
+  return {sessions, pendingVerify, tempAlerts, overdue, today};
+}
+function ckAttentionItems(){
+  const out=[], today=ckTodayStr(), subs=mgrSubs().filter(s=>ckMyScope(s.store));
+  subs.filter(s=>s.status!=='Verified').slice(0,40).forEach(s=>out.push({icon:'fa-clipboard-check',accent:'#0e9f6e',title:'Verify · '+s.department+' '+s.session,sub:s.store+' · '+s.date+' · '+(s.progress||0)+'%',go:"go('manager')"}));
+  ckOpsPulse().sessions.filter(s=>s.overdue).forEach(s=>out.push({icon:'fa-clock',accent:'#ef4444',title:'Overdue · '+s.key+' checklist',sub:(s.expected-s.submitted)+' of '+s.expected+' not submitted',go:"go('checklist')"}));
+  subs.filter(s=>s.date===today).forEach(s=>(s.items||[]).forEach(it=>{ if(it.temp&&it.temp.inRange===false) out.push({icon:'fa-temperature-half',accent:'#f59e0b',title:'Temp out of range',sub:s.store+' · '+s.department+' · '+(it.temp.value!=null?it.temp.value+'°C':'')+' · '+String(it.task||'').slice(0,40),go:"go('manager')"}); }));
+  ['issue','maintenance','incident','complaint'].forEach(id=>{ const m=DB.modules[id]; if(!m) return;
+    (m.records||[]).filter(r=>ckMyScope(r.store)&&(['Critical','Major'].includes(r.severity)||r.priority==='Critical')&&!['Closed','Cancelled','Resolved','Store Confirmed'].includes(r.status)).slice(0,20)
+      .forEach(r=>out.push({icon:'fa-triangle-exclamation',accent:'#dc2626',title:'Critical · '+(m.short||id)+' '+r.id,sub:(r.store||'')+' · '+String(r.title||r.summary||r.equipment||r.category||'').slice(0,46),go:"go('"+id+"')"})); });
+  return out;
+}
+function ckAttentionCount(){ try{ return ckAttentionItems().length; }catch(e){ return 0; } }
+function renderAttention(){
+  const items=ckAttentionItems();
+  const rows=items.length?items.map(a=>`<button class="att-row" onclick="closeDrawer();${a.go}"><span class="att-ic" style="background:${a.accent}1f;color:${a.accent}"><i class="fas ${a.icon}"></i></span><span class="att-main"><b>${esc(a.title)}</b><small>${esc(a.sub)}</small></span><i class="fas fa-chevron-right att-go"></i></button>`).join('')
+    : '<div class="empty compact"><div class="e-ic">✅</div>All clear — nothing needs attention.</div>';
+  $('#drawer').innerHTML=`<div class="drawer-head"><div class="dh-ic" style="background:#fef2f2;color:#dc2626"><i class="fas fa-bell"></i></div>
+    <div><div style="font-weight:840;font-size:16px">Needs attention</div><div style="color:var(--muted);font-size:12.5px">${esc(isSuper()?'All stores':State.branch)} · ${items.length} item${items.length!==1?'s':''}</div></div>
+    <button class="x-btn" onclick="closeDrawer()">✕</button></div>
+    <div class="drawer-body"><div class="att-list">${rows}</div></div>`;
+  $('#drawer').classList.add('open'); $('#drawer-mask').classList.add('open');
+}
+function ckTodayStripHTML(){
+  const p=ckOpsPulse();
+  const tiles=p.sessions.map(s=>`<button class="today-tile ${s.overdue?'over':''}" onclick="go('checklist')">
+    <span class="tt-h">${s.key}${s.overdue?' · OVERDUE':''}</span>
+    <span class="tt-bar"><i style="width:${s.expected?Math.round(s.submitted/s.expected*100):0}%"></i></span>
+    <span class="tt-n">${s.submitted}/${s.expected} submitted</span></button>`).join('');
+  const chip=(cls,n,label,onclick)=>`<button class="today-chip ${cls}" onclick="${onclick}"><b>${n}</b><span>${label}</span></button>`;
+  return `<div class="section-title">Today · ${esc(isSuper()?'All stores':State.branch)}</div>
+    <div class="today-grid">${tiles}</div>
+    <div class="today-chips">${chip('ok',p.pendingVerify,'Pending verify',"go('manager')")}${chip(p.tempAlerts?'bad':'mute',p.tempAlerts,'Temp alerts today',"go('manager')")}${chip(p.overdue?'bad':'mute',p.overdue,'Overdue checklists',"go('checklist')")}</div>`;
 }
 function mgrActivity(storeScope){
   const mods=['issue','maintenance','incident','complaint','violation','reward']; let items=[];

@@ -48,6 +48,36 @@
     'Team on shift':'Nhân viên trong ca','Key daily duties':'Công việc chính trong ngày','Daily duties by department':'Công việc theo bộ phận',
     "This week's roster":'Lịch tuần này','Coverage by department':'Phân bổ theo bộ phận',
     'Sending method':'Phương thức gửi','Responsible':'Người phụ trách','Status':'Trạng thái','Action':'Hành động',
+    // ---- checklist sessions & builder ----
+    'Mid-afternoon':'Ca chiều','Submit Mid-afternoon checklist':'Gửi checklist ca chiều',
+    'Check all done':'Đánh dấu hoàn tất','Uncheck all':'Bỏ chọn tất cả','Builder mode':'Chế độ chỉnh sửa',
+    'Add department':'Thêm bộ phận','Add section':'Thêm khu vực','Delete section':'Xóa khu vực',
+    'Delete dept':'Xóa bộ phận','Section':'Khu vực','Add':'Thêm','Deadline':'Hạn chót','OVERDUE':'QUÁ HẠN',
+    'Confirm':'Xác nhận','Retake':'Chụp lại','Defrosting':'Đang rã đông','Today':'Hôm nay','Share PDF':'Chia sẻ PDF',
+    'Checklist submitted':'Đã gửi checklist','tasks done':'việc hoàn tất','complete':'hoàn thành',
+    // ---- needs attention + dashboard today ----
+    'Needs attention':'Cần xử lý','All clear — nothing needs attention.':'Mọi thứ ổn — không có việc cần xử lý.',
+    'Pending verify':'Chờ duyệt','Temp alerts today':'Cảnh báo nhiệt độ hôm nay','Overdue checklists':'Checklist quá hạn',
+    // ---- staff home ----
+    'My Store':'Cửa hàng của tôi','What do you need to do?':'Bạn cần làm gì?','Recent at your store':'Gần đây tại cửa hàng',
+    'Store Checklist':'Checklist cửa hàng','Bin Checklist':'Checklist thùng rác','Log Delivery':'Ghi giao hàng',
+    'Store Rules':'Nội quy cửa hàng','Supermarket Rules':'Nội quy siêu thị','open items':'mục đang mở',
+    'Opening & closing checks':'Kiểm tra mở & đóng ca','Bin Admin':'Quản lý thùng rác','Violation':'Vi phạm',
+    // ---- manager panel / verify ----
+    'Verify':'Xác nhận','Submitted':'Đã nộp','Manager assessment note':'Ghi chú đánh giá của quản lý',
+    'done':'hoàn tất','outstanding':'còn lại','Checklist History':'Lịch sử checklist','Bin':'Thùng rác',
+    // ---- gallery / filters ----
+    'All stores':'Tất cả cửa hàng','All departments':'Tất cả bộ phận','All sections':'Tất cả khu vực','All dates':'Tất cả ngày',
+    'Photos shown':'Ảnh hiển thị','Checklist photos':'Ảnh checklist','Report photos':'Ảnh báo cáo',
+    // ---- email ----
+    'From name':'Tên người gửi','Store admin name':'Tên quản trị cửa hàng','Store admin email':'Email quản trị cửa hàng',
+    // ---- data management ----
+    'Records & storage':'Bản ghi & dung lượng','Delete in date range':'Xóa theo khoảng ngày',
+    'Submitted checklists':'Checklist đã nộp','Operational records':'Bản ghi vận hành','From':'Từ','To':'Đến',
+    'Export data, run backups and clean up old records.':'Xuất dữ liệu, sao lưu và dọn dẹp bản ghi cũ.',
+    // ---- common ----
+    'Total staff':'Tổng nhân viên','Active':'Đang làm','Roles':'Vai trò','Edit':'Sửa','Reset':'Đặt lại',
+    'Loading data...':'Đang tải dữ liệu...','No recent activity at your store yet.':'Chưa có hoạt động gần đây tại cửa hàng.',
   };
 
   var LANG = 'en';

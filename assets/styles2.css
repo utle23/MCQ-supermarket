@@ -976,3 +976,34 @@ table.jobduty td{vertical-align:top}
 .data-range .dr-targets{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px}
 .data-range .dr-opt{display:inline-flex;align-items:center;gap:7px;border:1.5px solid var(--line);background:#fff;border-radius:20px;padding:6px 12px;font-size:12.5px;font-weight:700;cursor:pointer}
 .data-range .dr-opt:has(input:checked){border-color:#dc2626;color:#b91c1c;background:#fef2f2}
+
+/* ---- topbar bell ---- */
+.tb-bell{position:relative;border:1px solid var(--line);background:#fff;color:var(--ink-soft);width:38px;height:38px;border-radius:11px;cursor:pointer;font-size:15px;display:inline-flex;align-items:center;justify-content:center}
+.tb-bell:hover{border-color:var(--accent);color:var(--accent)}
+.tb-bell.has{color:#dc2626;border-color:#f3c9c9}
+.tb-bell-n{position:absolute;top:-6px;right:-6px;background:#dc2626;color:#fff;font-size:10px;font-weight:800;min-width:17px;height:17px;border-radius:9px;display:flex;align-items:center;justify-content:center;padding:0 4px}
+/* ---- needs-attention drawer ---- */
+.att-list{display:flex;flex-direction:column;gap:8px}
+.att-row{display:flex;align-items:center;gap:11px;width:100%;text-align:left;border:1px solid var(--line);background:#fff;border-radius:12px;padding:11px 12px;cursor:pointer;transition:.12s}
+.att-row:hover{border-color:var(--accent);background:var(--accent-soft)}
+.att-ic{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex:0 0 auto}
+.att-main{flex:1;min-width:0}.att-main b{display:block;font-size:13.5px;color:var(--ink)}.att-main small{color:var(--muted);font-size:12px}
+.att-go{color:var(--muted);font-size:12px}
+/* ---- dashboard "Today" strip ---- */
+.today-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:10px}
+.today-tile{text-align:left;border:1.5px solid var(--line);background:#fff;border-radius:13px;padding:12px 13px;cursor:pointer;transition:.12s}
+.today-tile:hover{border-color:var(--accent)}
+.today-tile.over{border-color:#f3c9c9;background:#fff7f7}
+.today-tile .tt-h{display:block;font-weight:800;font-size:13px;color:var(--ink)}
+.today-tile.over .tt-h{color:#dc2626}
+.today-tile .tt-bar{display:block;height:7px;border-radius:6px;background:var(--line);margin:9px 0 7px;overflow:hidden}
+.today-tile .tt-bar i{display:block;height:100%;background:linear-gradient(90deg,#0e9f6e,#0891b2);border-radius:6px}
+.today-tile .tt-n{font-size:11.5px;color:var(--muted);font-weight:700}
+.today-chips{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+.today-chip{display:flex;flex-direction:column;align-items:center;min-width:120px;flex:1;border:1.5px solid var(--line);background:#fff;border-radius:13px;padding:10px;cursor:pointer}
+.today-chip b{font-size:22px;line-height:1.1;color:var(--ink)}
+.today-chip span{font-size:11.5px;color:var(--muted);font-weight:700}
+.today-chip.ok b{color:#0e9f6e}.today-chip.bad{border-color:#f3c9c9;background:#fff7f7}.today-chip.bad b{color:#dc2626}
+/* ---- checklist overdue badge ---- */
+.ck-overdue{display:inline-flex;align-items:center;gap:5px;background:#fef2f2;color:#dc2626;border:1px solid #f3c9c9;border-radius:20px;padding:4px 11px;font-weight:800;font-size:12px;margin-left:8px}
+@media(max-width:640px){.today-grid{grid-template-columns:1fr}.today-chip{min-width:0}}

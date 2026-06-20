@@ -429,6 +429,7 @@ function buildTopbar(){
     <span class="tb-badge"><i class="fas fa-store"></i> ${esc(scopeLabel)}</span>
     <span class="tb-badge"><i class="fas fa-clock"></i> idle <b id="idle-ind">30m</b></span>
     <span class="tb-badge ${isAdmin()?'badge-admin':''}"><i class="fas ${isAdmin()?'fa-shield-halved':'fa-user'}"></i> ${roleLabel}</span>
+    <button class="tb-bell" id="tb-bell" onclick="if(window.renderAttention)renderAttention()" title="Needs attention"><i class="fas fa-bell"></i><span class="tb-bell-n" id="tb-bell-n" style="display:none">0</span></button>
     <span class="tb-badge sync-top" id="sync-pill">${syncBadge()}</span>
     <div class="user-chip"><div class="avatar">${esc(u.initials)}</div>
       <div><div class="u-name">${esc(u.name)}</div><div class="u-role">${esc(u.role)}</div></div></div>
@@ -446,6 +447,7 @@ function render(){
   destroyCharts(); closeDrawer();
   const mod=State.route.mod;
   buildSidebar();
+  refreshBell();
   if(mod==='home') return isAdmin()?renderHome():renderStaffHome();
   if(DB.customPages[mod]){
     const page=DB.customPages[mod];
@@ -480,6 +482,7 @@ function renderHome(){
         <div class="hs"><b>${critical}</b><span>Critical / Major</span></div>
         <div class="hs"><b>${records}</b><span>Records</span></div>
       </div></div>
+    ${window.ckTodayStripHTML?ckTodayStripHTML():''}
     ${isSuper()?superHomeBlock():''}
     <div class="section-title">Daily Operations</div>
     <div class="tiles">${opsTiles}</div>
@@ -762,6 +765,7 @@ function recDelete(modId,id,store){
   closeDrawer(); toast(`${id} deleted`); buildSidebar(); render();
 }
 function closeDrawer(){ $('#drawer')?.classList.remove('open'); $('#drawer-mask')?.classList.remove('open'); }
+function refreshBell(){ try{ const n=(window.ckAttentionCount?ckAttentionCount():0); const el=$('#tb-bell-n'); if(el){ el.textContent=n>99?'99+':n; el.style.display=n?'':'none'; } const b=$('#tb-bell'); if(b) b.classList.toggle('has',n>0); }catch(e){} }
 
 /* ============================================================ CHARTS */
 function destroyCharts(){ State.charts.forEach(c=>{try{c.destroy()}catch(e){}}); State.charts=[]; }
