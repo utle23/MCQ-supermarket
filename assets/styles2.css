@@ -201,9 +201,10 @@ table.sched td{vertical-align:middle}
 .ck-deadline b{margin-left:4px}
 .ck-toolbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
 .dept-chips{display:flex;gap:8px;flex-wrap:wrap}
-.dept-chip{border:1.5px solid var(--line);background:#fff;color:var(--ink-soft);font-weight:700;font-size:12.5px;padding:7px 14px;border-radius:20px;cursor:pointer;transition:.14s}
-.dept-chip:hover{border-color:var(--accent)}
-.dept-chip.active{background:var(--accent);border-color:var(--accent);color:#fff}
+.dept-chip{--dc:var(--accent);border:1.5px solid color-mix(in srgb,var(--dc) 35%,var(--line));background:color-mix(in srgb,var(--dc) 8%,#fff);color:var(--dc);font-weight:800;font-size:12.5px;padding:7px 14px;border-radius:20px;cursor:pointer;transition:.14s;display:inline-flex;align-items:center;gap:6px}
+.dept-chip i{font-size:12px;opacity:.95}
+.dept-chip:hover{border-color:var(--dc);background:color-mix(in srgb,var(--dc) 16%,#fff)}
+.dept-chip.active{background:var(--dc);border-color:var(--dc);color:#fff;box-shadow:0 4px 12px color-mix(in srgb,var(--dc) 35%,transparent)}
 .ck-subtoolbar{display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap;margin:-2px 0 12px;padding:10px 12px;border:1px solid var(--line);background:var(--surface);border-radius:13px}
 .ck-subtoolbar>span{font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);padding-top:8px}
 .area-chips{display:flex;gap:8px;flex-wrap:wrap;flex:1}

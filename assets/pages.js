@@ -131,7 +131,8 @@ function renderChecklist(){
   if(!State.chk.resp) State.chk.resp={};
   const s=State.chk;
   setCrumb('✅','Store Operation Checklist',`${isSuper()?'All stores':State.branch} · ${s.session}`);
-  const chips=C.depts.map(d=>`<button class="dept-chip ${d===s.dept?'active':''}" onclick="ckDept('${ckJS(d)}')">${esc(d)}</button>`).join('');
+  const chips=C.depts.map(d=>{ const m=C.deptMeta[d]||{}; const col=m.color||'#0e9f6e';
+    return `<button class="dept-chip ${d===s.dept?'active':''}" style="--dc:${col}" onclick="ckDept('${ckJS(d)}')">${m.icon?`<i class="fas ${m.icon}"></i> `:''}${esc(d)}</button>`; }).join('');
   const areaChips=ckAreaChips();
   const adminTools=isAdmin()?ckAdminTools():'';
   $('#content').innerHTML=`
@@ -195,7 +196,7 @@ function ckDraw(){
   let html='';
   Object.entries(groups).forEach(([dept,areas])=>{
     const dm=C.deptMeta[dept]||{};
-    html+=`<div class="ck-dept"><div class="ck-dept-h" style="--dc:${dm.color}"><span class="chk-dot" style="background:${dm.color}"></span>${esc(dept)}<span class="ck-dept-n">${Object.values(areas).flat().length} tasks</span></div>`;
+    html+=`<div class="ck-dept"><div class="ck-dept-h" style="--dc:${dm.color}">${dm.icon?`<i class="fas ${dm.icon}" style="color:${dm.color};margin-right:7px"></i>`:`<span class="chk-dot" style="background:${dm.color}"></span>`}${esc(dept)}<span class="ck-dept-n">${Object.values(areas).flat().length} tasks</span></div>`;
     html+=ckRespHTML(dept);
     Object.entries(areas).forEach(([area,items])=>{
       html+=`<div class="ck-area-h">${esc(area)}${isAdmin()?`<span class="ck-area-actions"><button class="ck-icon-action" onclick="ckAddTask('${ckJS(dept)}','${ckJS(area)}')" title="Add task"><i class="fas fa-plus"></i><span>Add task</span></button><button class="ck-icon-action danger" onclick="ckDelSection('${ckJS(dept)}','${ckJS(area)}')" title="Delete section"><i class="fas fa-trash"></i><span>Delete section</span></button></span>`:''}</div>`;
