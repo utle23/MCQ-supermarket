@@ -370,8 +370,16 @@
     return true;
   }
 
-  // resolves to true(connected) / false(offline) — never rejects, so boot never hangs
-  FB.ready = (async ()=>{
+  // exposed so the PythonAnywhere API adapter (api.js) can reuse the SAME per-store
+  // serialization instead of duplicating it
+  FB.buildStoreState=buildState; FB.applyStoreState=applyState;
+  FB.aggregateStates=aggregateStates; FB.resetToBase=resetToBase; FB.rerenderApp=rerenderApp;
+
+  // If the PythonAnywhere API backend is configured, do NOT start Firestore at all —
+  // api.js owns loadForAccount/saveAll/etc. This avoids any race over the methods.
+  FB.ready = ((window.localStorage && localStorage.getItem('mcq_api_base')) || window.MCQ_API_BASE)
+    ? Promise.resolve(false)
+    : (async ()=>{
     try{
       const TIMEOUT=new Promise((_,rej)=>setTimeout(()=>rej(new Error('fb-timeout')),3800));
       await Promise.race([(async()=>{
@@ -381,6 +389,7 @@
         FB._db = firebase.firestore();
         try{ FB._db.settings({ experimentalForceLongPolling:true }); }catch(e){}  // robust on restrictive networks / headless
       })(), TIMEOUT]);
+      if(FB._api){ captureBase(); return true; }   // PythonAnywhere API adapter is active → don't override its methods with Firestore
       FB.enabled = true;
       const withTimeout=(pr,ms,tag)=>Promise.race([pr, new Promise((_,rej)=>setTimeout(()=>rej(new Error(tag+'-timeout')),ms))]);
       captureBase();
@@ -410,6 +419,7 @@
       };
       console.log('[FB] connected · per-store realtime sync on');
     }catch(e){
+      if(FB._api){ captureBase(); return true; }   // API adapter active → keep its methods
       FB.enabled=false; console.warn('[FB] unavailable — running offline with sample data', e&&e.message);
       captureBase();
       FB.loadForAccount = async function(account){ const hit=FB.hydrateFromCache(account); FB.lastSync={status:hit.status||'local',message:hit.status==='cached'?hit.message:'Offline · local sample data'}; return FB.lastSync; };

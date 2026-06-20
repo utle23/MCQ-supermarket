@@ -146,7 +146,8 @@ def post_photo():
     require_store(au, store_id)
     f = request.files.get('image')
     data_url = request.form.get('dataUrl')
-    pid = 'p_' + time.strftime('%Y%m%d') + '_' + secrets.token_hex(5)
+    pid = request.form.get('id') or ('p_' + time.strftime('%Y%m%d') + '_' + secrets.token_hex(5))
+    pid = ''.join(c for c in pid if c.isalnum() or c in '_-')[:40] or ('p_' + secrets.token_hex(5))
     folder = os.path.join(db.UPLOADS, db_safe(store_id)); os.makedirs(folder, exist_ok=True)
     mime = 'image/jpeg'; ext = 'jpg'
     if f:

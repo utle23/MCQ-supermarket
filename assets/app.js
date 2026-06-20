@@ -162,6 +162,15 @@ function updateLoginHint(){ const el=$('#login-hint'); if(!el) return; const mod
 function doLogin(){
   const pw=$('#login-pw').value.trim(), branch=$('#login-branch').value, mode=loginMode();
   $('#login-err').textContent='';
+  // server-checked login when the PythonAnywhere API backend is active (passwords live on the server)
+  if(window.MCQDB && MCQDB._api && MCQDB.login){
+    const btn=$('.login-btn'); if(btn){ btn.disabled=true; btn.textContent='Signing in…'; }
+    MCQDB.login(mode, branch, pw).then(res=>{
+      if(res && res.ok){ loginAs(res.role, res.role==='super'?'All stores':res.store); }
+      else { if(btn){ btn.disabled=false; btn.textContent='Sign In →'; } loginFail(res&&res.error?res.error:'Incorrect password.'); }
+    }).catch(()=>{ if(btn){ btn.disabled=false; btn.textContent='Sign In →'; } loginFail('Cannot reach the server.'); });
+    return;
+  }
   if(mode==='super'){
     if(pw===DB.auth.superAdminPassword) return loginAs('super','All stores');
     return loginFail('Incorrect super admin password.');
