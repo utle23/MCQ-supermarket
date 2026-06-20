@@ -1,21 +1,42 @@
 """
-MCQ Supermarket — static-site server for PythonAnywhere.
+MCQ Supermarket — SINGLE deployment app for PythonAnywhere.
 
-This serves the front-end (index.html + assets/*) over HTTPS so Face ID (WebAuthn)
-and the installable PWA work. It does NOT expose .git, dotfiles or this server file.
+One Flask app that serves BOTH:
+  * the frontend (index.html + assets/*) over HTTPS — so Face ID (WebAuthn) and
+    the installable PWA work, and
+  * the backend API at /api/* (per-store isolated, SQLite/MySQL) — mounted from
+    server/app.py as a blueprint.
+
+Because the frontend is served by this same app, it runs on the SAME ORIGIN as
+/api, so:
+  * the page is served with `window.__MCQ_SAME_ORIGIN_API = true` injected, which
+    makes assets/api.js talk to /api automatically (no manual mcq_api_base), and
+  * assets/firebase.js sees that flag and never starts Firestore — Firebase is
+    effectively OFF whenever the app is served by this server.
+
+Opening the files directly / via `python3 -m http.server` does NOT inject the
+flag, so the old Firebase/offline build still works untouched.
 
 PythonAnywhere setup (see DEPLOY_PYTHONANYWHERE.md):
   WSGI file:  from flask_app import app as application
 """
-import os
-from flask import Flask, send_from_directory, abort
+import os, sys
 
 BASE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(BASE, 'server'))   # so `import app`/`import db` resolve to server/*
+
+from flask import Flask, send_from_directory, Response
+import app as backend   # server/app.py  (provides the `api` blueprint + add_cors + db)
+import db               # server/db.py
+
 app = Flask(__name__, static_folder=None)
+db.init_db()                       # create/seed SQLite on first boot
+app.register_blueprint(backend.api)  # mounts /api/* on this same app
+backend.add_cors(app)              # harmless on same-origin; helps if you ever split origins
 
 # files that must never be served publicly
 BLOCK = {'.git', '.gitignore', 'flask_app.py', 'requirements.txt',
-         'deploy_pythonanywhere.py', 'DEPLOY_PYTHONANYWHERE.md', '__pycache__'}
+         'deploy_pythonanywhere.py', 'DEPLOY_PYTHONANYWHERE.md', '__pycache__', 'server'}
 
 def _safe(rel):
     rel = rel.lstrip('/')
@@ -27,21 +48,29 @@ def _safe(rel):
         return None
     return rel if os.path.isfile(full) else None
 
+# the one-line flag that flips the frontend onto same-origin /api and turns Firebase off
+_FLAG = '<script>window.__MCQ_SAME_ORIGIN_API=true;</script>'
+
+def _serve_index():
+    with open(os.path.join(BASE, 'index.html'), 'r', encoding='utf-8') as fh:
+        html = fh.read()
+    if _FLAG not in html:
+        html = html.replace('<head>', '<head>\n  ' + _FLAG, 1)
+    return Response(html, mimetype='text/html')
+
 @app.route('/')
 def index():
-    return send_from_directory(BASE, 'index.html')
+    return _serve_index()
 
 @app.route('/<path:p>')
 def files(p):
     rel = _safe(p)
     if rel:
         resp = send_from_directory(BASE, rel)
-        # never cache the service worker so updates roll out immediately
-        if rel.endswith('sw.js'):
+        if rel.endswith('sw.js'):           # never cache the SW so updates roll out immediately
             resp.headers['Cache-Control'] = 'no-cache'
         return resp
-    # unknown path → single-page-app fallback
-    return send_from_directory(BASE, 'index.html')
+    return _serve_index()                    # SPA fallback (also injects the flag)
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000)
+    app.run(host='0.0.0.0', port=8000, debug=True)

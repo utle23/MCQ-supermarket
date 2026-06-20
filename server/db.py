@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS checklist_templates (
 CREATE TABLE IF NOT EXISTS checklist_submissions (
   id TEXT, store_id TEXT, data_json TEXT, created_at TEXT, PRIMARY KEY (store_id, id));
 CREATE TABLE IF NOT EXISTS records (
-  id TEXT, store_id TEXT, module TEXT, data_json TEXT, created_at TEXT, PRIMARY KEY (store_id, id));
+  id TEXT, store_id TEXT, module TEXT, data_json TEXT, created_at TEXT, PRIMARY KEY (store_id, module, id));
 CREATE TABLE IF NOT EXISTS bin_records (
   id TEXT, store_id TEXT, data_json TEXT, created_at TEXT, PRIMARY KEY (store_id, id));
 CREATE TABLE IF NOT EXISTS schedule_tasks (
@@ -143,6 +143,123 @@ def auth_from_token(token):
 
 def can_access(au, store_id):
     return bool(au) and (au['role'] == 'super' or au['store_id'] == store_id)
+
+# ---- per-store state: heavy collections normalized into tables, the rest kept as a lean blob ----
+# The frontend wire shape is preserved exactly (firebase.js buildState/applyState):
+# records live in `records`, staff in `staff`, submissions/schedule history/bin records in
+# their own tables — so the JSON blob no longer carries those growing arrays (saves space &
+# lets us query per-record later). load_state() rebuilds the identical full state on read.
+
+def _parse(v):
+    if v is None: return None
+    if isinstance(v, (list, dict)): return v
+    if isinstance(v, str):
+        try: return json.loads(v)
+        except Exception: return None
+    return v
+
+def state_updated_at(store_id):
+    conn = connect()
+    try:
+        row = conn.execute('SELECT updated_at FROM store_state WHERE store_id=?', (store_id,)).fetchone()
+        return row['updated_at'] if row else None
+    finally:
+        conn.close()
+
+def save_state(store_id, state, user):
+    state = dict(state or {})
+    conn = connect()
+    try:
+        # records (per module)
+        conn.execute('DELETE FROM records WHERE store_id=?', (store_id,))
+        modules = state.get('modules') or {}
+        if isinstance(modules, dict):
+            for m, arr in modules.items():
+                if not isinstance(arr, list): continue
+                for i, r in enumerate(arr):
+                    rid = str((isinstance(r, dict) and r.get('id')) or (str(m) + '#' + str(i)))
+                    conn.execute('INSERT OR REPLACE INTO records(id,store_id,module,data_json,created_at) VALUES(?,?,?,?,?)',
+                                 (rid, store_id, str(m), json.dumps(r), now()))
+        # staff
+        conn.execute('DELETE FROM staff WHERE store_id=?', (store_id,))
+        staff = state.get('staff') or []
+        if isinstance(staff, list):
+            for i, s in enumerate(staff):
+                sid = str((isinstance(s, dict) and (s.get('id') or s.get('code'))) or ('s#' + str(i)))
+                conn.execute('INSERT OR REPLACE INTO staff(id,store_id,data_json) VALUES(?,?,?)', (sid, store_id, json.dumps(s)))
+        # checklist submissions (carried as a JSON string in the blob)
+        conn.execute('DELETE FROM checklist_submissions WHERE store_id=?', (store_id,))
+        subs = _parse(state.get('checklistSubs'))
+        if isinstance(subs, list):
+            for i, s in enumerate(subs):
+                cid = str((isinstance(s, dict) and s.get('id')) or ('c#' + str(i)))
+                conn.execute('INSERT OR REPLACE INTO checklist_submissions(id,store_id,data_json,created_at) VALUES(?,?,?,?)',
+                             (cid, store_id, json.dumps(s), now()))
+        # schedule history
+        conn.execute('DELETE FROM schedule_history WHERE store_id=?', (store_id,))
+        sh = _parse(state.get('scheduleHistory'))
+        if isinstance(sh, list):
+            for r in sh:
+                conn.execute('INSERT INTO schedule_history(store_id,data_json,created_at) VALUES(?,?,?)', (store_id, json.dumps(r), now()))
+        # bin records (nested inside binAdmin JSON string)
+        conn.execute('DELETE FROM bin_records WHERE store_id=?', (store_id,))
+        ba = _parse(state.get('binAdmin'))
+        bin_recs = ba.get('records') if isinstance(ba, dict) else None
+        if isinstance(bin_recs, list):
+            for i, r in enumerate(bin_recs):
+                bid = str((isinstance(r, dict) and r.get('id')) or ('b#' + str(i)))
+                conn.execute('INSERT OR REPLACE INTO bin_records(id,store_id,data_json,created_at) VALUES(?,?,?,?)',
+                             (bid, store_id, json.dumps(r), now()))
+        # lean blob: identical shape, heavy arrays emptied (rebuilt on load)
+        lean = dict(state)
+        lean['modules'] = {}
+        lean['staff'] = []
+        lean['checklistSubs'] = '[]'
+        lean['scheduleHistory'] = '[]'
+        if isinstance(ba, dict):
+            ba2 = dict(ba); ba2['records'] = []
+            lean['binAdmin'] = json.dumps(ba2)
+        blob = json.dumps(lean)
+        conn.execute("""INSERT INTO store_state(store_id,state_json,updated_at,updated_by) VALUES(?,?,?,?)
+                        ON CONFLICT(store_id) DO UPDATE SET state_json=excluded.state_json,
+                        updated_at=excluded.updated_at, updated_by=excluded.updated_by""",
+                     (store_id, blob, now(), user))
+        # capped snapshot trail (lean blob — size/timeline indicator)
+        conn.execute('INSERT INTO store_state_snapshots(store_id,state_json,created_at,created_by) VALUES(?,?,?,?)',
+                     (store_id, blob, now(), user))
+        conn.execute("""DELETE FROM store_state_snapshots WHERE store_id=? AND id NOT IN
+                        (SELECT id FROM store_state_snapshots WHERE store_id=? ORDER BY id DESC LIMIT 20)""",
+                     (store_id, store_id))
+        conn.commit()
+        return len(blob)
+    finally:
+        conn.close()
+
+def load_state(store_id):
+    conn = connect()
+    try:
+        row = conn.execute('SELECT state_json FROM store_state WHERE store_id=?', (store_id,)).fetchone()
+        if not row: return None
+        state = json.loads(row['state_json'])
+        mods = {}
+        for r in conn.execute('SELECT module,data_json FROM records WHERE store_id=?', (store_id,)).fetchall():
+            mods.setdefault(r['module'], []).append(json.loads(r['data_json']))
+        state['modules'] = mods
+        state['staff'] = [json.loads(r['data_json']) for r in
+                          conn.execute('SELECT data_json FROM staff WHERE store_id=?', (store_id,)).fetchall()]
+        subs = [json.loads(r['data_json']) for r in
+                conn.execute('SELECT data_json FROM checklist_submissions WHERE store_id=?', (store_id,)).fetchall()]
+        state['checklistSubs'] = json.dumps(subs)
+        sh = [json.loads(r['data_json']) for r in
+              conn.execute('SELECT data_json FROM schedule_history WHERE store_id=? ORDER BY id', (store_id,)).fetchall()]
+        state['scheduleHistory'] = json.dumps(sh)
+        ba = _parse(state.get('binAdmin')) or {'activeDays': ['Tue', 'Thu', 'Fri'], 'checklist': [], 'records': []}
+        ba['records'] = [json.loads(r['data_json']) for r in
+                         conn.execute('SELECT data_json FROM bin_records WHERE store_id=?', (store_id,)).fetchall()]
+        state['binAdmin'] = json.dumps(ba)
+        return state
+    finally:
+        conn.close()
 
 def write_audit(user, store_id, action, entity_type, entity_id, before, after):
     conn = connect()

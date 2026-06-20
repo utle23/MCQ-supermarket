@@ -377,7 +377,7 @@
 
   // If the PythonAnywhere API backend is configured, do NOT start Firestore at all —
   // api.js owns loadForAccount/saveAll/etc. This avoids any race over the methods.
-  FB.ready = ((window.localStorage && localStorage.getItem('mcq_api_base')) || window.MCQ_API_BASE)
+  FB.ready = ((window.localStorage && localStorage.getItem('mcq_api_base')) || window.MCQ_API_BASE || window.__MCQ_SAME_ORIGIN_API)
     ? Promise.resolve(false)
     : (async ()=>{
     try{

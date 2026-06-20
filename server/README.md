@@ -1,27 +1,42 @@
-# MCQ Supermarket — local backend (Flask + SQLite)
+# MCQ Supermarket — backend (Flask + SQLite)
 
 Per-store isolated API. **Not deployed yet** — build & test locally first.
 
-## Run the backend
+## Option A — single app (frontend + API on one origin, same as production)
+From the **repo root**:
+```bash
+python3 -m pip install -r requirements.txt
+python3 flask_app.py           # http://localhost:8000  (serves the UI AND /api)
+```
+Open http://localhost:8000 and log in — **no browser config needed**. The page is
+served with `window.__MCQ_SAME_ORIGIN_API=true` injected, so the frontend uses
+`/api` automatically and **Firebase stays off**. This is exactly how it runs on
+PythonAnywhere (see ../DEPLOY_PYTHONANYWHERE.md).
+
+## Option B — API only (separate origin, for adapter testing)
 ```bash
 cd server
 python3 -m pip install -r requirements.txt
 python3 app.py                 # http://localhost:8001  (SQLite at server/data/mcq.db)
 ```
-`python3 app.py` auto-creates the database + seeds the 8 stores and the login
-passwords on first run.
-
-## Serve the frontend (separate terminal, repo root)
+Then serve the frontend separately and point it at the API once:
 ```bash
-python3 -m http.server 8765
+python3 -m http.server 8765    # repo root, another terminal
 ```
-Open http://localhost:8765 then, in the browser DevTools console (once):
 ```js
+// browser DevTools console, once:
 localStorage.mcq_api_base = 'http://localhost:8001'; location.reload();
 ```
-Now the app talks to the Flask backend instead of Firebase. (Remove that key to
-go back to the old behaviour.) When the Flask app later serves the frontend too,
-the same origin is used automatically.
+Either option auto-creates the database + seeds the 8 stores and the login
+passwords on first run. Open via plain `http.server` with no flag/key set → the
+old Firebase/offline build runs unchanged.
+
+## Data model
+Heavy collections are **normalized into tables** (not one giant JSON blob):
+`records` (per module), `staff`, `checklist_submissions`, `schedule_history`,
+`bin_records`. The per-store `store_state` row keeps only the lean config
+(structure, templates, routes…). `load_state()` rebuilds the exact frontend shape
+on read, so the UI is unchanged. Photos are files + a `photos` metadata row.
 
 ## API
 | Method | Route | Who |
