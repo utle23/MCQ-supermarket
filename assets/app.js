@@ -364,8 +364,16 @@ function stopIdleWatch(){ if(State.idleTimer) clearInterval(State.idleTimer); St
   if(State._bump){ ['mousemove','keydown','click','scroll','touchstart'].forEach(ev=>document.removeEventListener(ev,State._bump)); } }
 
 /* ============================================================ SIDEBAR */
+function navSolo(mod,icon,label){
+  const m=DB.modules[mod]||DB.customPages[mod]; if(!m) return '';
+  if(m.super&&!isSuper()) return ''; if(m.admin&&!isAdmin()) return '';
+  const cnt=openCount(mod);
+  return `<a class="nav-item solo" data-mod="${mod}"><span class="ic"><i class="fas ${icon}"></i></span><span class="lbl">${esc(label)}</span>${cnt?`<span class="count">${cnt}</span>`:''}</a>`;
+}
 function buildSidebar(){
   let html = navLink('home','fa-gauge-high','Dashboard','',true);
+  html += navSolo('issue','fa-flag','Report Issue');
+  html += navSolo('violation','fa-gavel','Violation');
   DB.navGroups.forEach(g=>{
     if(g.admin && !isAdmin()) return;
     const items = g.items.filter(id=>{

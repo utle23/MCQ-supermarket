@@ -198,7 +198,7 @@ function ckDraw(){
     html+=`<div class="ck-dept"><div class="ck-dept-h" style="--dc:${dm.color}"><span class="chk-dot" style="background:${dm.color}"></span>${esc(dept)}<span class="ck-dept-n">${Object.values(areas).flat().length} tasks</span></div>`;
     html+=ckRespHTML(dept);
     Object.entries(areas).forEach(([area,items])=>{
-      html+=`<div class="ck-area-h">${esc(area)}${isAdmin()?`<button class="ck-icon-action" onclick="ckAddTask('${ckJS(dept)}','${ckJS(area)}')" title="Add task"><i class="fas fa-plus"></i><span>Add task</span></button>`:''}</div>`;
+      html+=`<div class="ck-area-h">${esc(area)}${isAdmin()?`<span class="ck-area-actions"><button class="ck-icon-action" onclick="ckAddTask('${ckJS(dept)}','${ckJS(area)}')" title="Add task"><i class="fas fa-plus"></i><span>Add task</span></button><button class="ck-icon-action danger" onclick="ckDelSection('${ckJS(dept)}','${ckJS(area)}')" title="Delete section"><i class="fas fa-trash"></i><span>Delete section</span></button></span>`:''}</div>`;
       items.forEach(r=>{ const st=State.chk.state[r.i]||{}; const done=st.done;
         if(isAdmin() && State.chk.editing===r.i){
           const pm = r.photo ? (r.photo.req ? {mode:'R',min:r.photo.min,max:r.photo.max} : {mode:'O',min:0,max:(r.photo.max||5)}) : {mode:'0',min:1,max:5};
@@ -303,11 +303,19 @@ async function ckPhoto(input,i){
   const f=input.files&&input.files[0]; if(!f)return;
   const r=ckItem(DB.checklist.items[i],i), st=State.chk.state[i]=State.chk.state[i]||{};
   if(r.meta.temp&&st.defrosting){ input.value=''; toast('Defrosting is ticked, so photo capture is locked'); return; }
-  let ref; try{ const d=await compressImage(f); ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d; }catch(e){ ref=URL.createObjectURL(f); }
-  st.photos=st.photos||[]; st.photos.push(ref);
-  if(r.meta.temp){ st.aiStatus='scanning'; st.aiError=''; st.aiSuggestion=null; st.aiManualAllowed=false; st.temp=null; st.done=false; ckDraw(); toast('AI Vision reading temperature...');
-    setTimeout(()=>ckAiTemp(i,f.name,f),700);
-  }else{ ckDraw(); toast('📷 Photo added'); }
+  st.photos=st.photos||[];
+  const preview=URL.createObjectURL(f);     // show the photo INSTANTLY (no wait for compression)
+  st.photos.push(preview);
+  if(r.meta.temp){ st.aiStatus='scanning'; st.aiError=''; st.aiSuggestion=null; st.aiManualAllowed=false; st.temp=null; st.done=false; ckDraw();
+    setTimeout(()=>ckAiTemp(i,f.name,f),250);
+  }else{ ckDraw(); }
+  // compress + persist in the background, then swap the preview for the stored ref
+  try{
+    const d=await compressImage(f);
+    const ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d;
+    const idx=(st.photos||[]).indexOf(preview);
+    if(idx>=0){ st.photos[idx]=ref; try{URL.revokeObjectURL(preview);}catch(e){} if(!r.meta.temp) ckDraw(); }
+  }catch(e){ /* keep the instant objectURL preview if compression fails */ }
 }
 function ckRmPhoto(e,i,url){
   e.preventDefault(); e.stopPropagation();
@@ -388,6 +396,13 @@ function ckRenameDept(dept){
   ckPersistTemplate();
   renderChecklist();
   toast('✓ Department renamed');
+}
+function ckDelSection(dept,area){
+  if(!confirm(`Delete the "${area}" section in ${dept} and ALL its tasks?`)) return;
+  DB.checklist.items=DB.checklist.items.filter(it=>!(it[0]===dept&&it[1]===area));
+  State.chk.state={};          // item indexes shifted — clear in-progress ticks for a clean re-render
+  State.chk.editing=null; State.chk.area='ALL';
+  ckPersistTemplate(); renderChecklist(); toast('🗑 Section deleted');
 }
 function ckRenameSection(dept,area){
   const name=(prompt('Rename section:',area)||'').trim();
@@ -981,7 +996,25 @@ function chkSubmit(){
   if(window.persist) window.persist();
   if(window.mcqEmail) mcqEmail.notify('checklist', `Checklist submitted · ${sub.dept} ${sub.session} · ${State.branch}`,
     `Department: ${sub.dept}\nSession: ${sub.session}\nStore: ${State.branch}\nProgress: ${doneN}/${totalN} (${sub.progress}%)\nSubmitted by: ${sub.by||'—'}\nResponsible: ${sub.responsible||'—'}${out?`\n⚠️ ${out} temperature alert(s)`:''}`, {dept:sub.dept});
-  toast(`✓ ${State.chk.session} checklist submitted${isAdmin()?'':' for '+State.branch} · ${done} done${out?' · '+out+' temp alert(s)':''} · saved`);
+  ckSubmitSuccess(sub,out);
+}
+/* smooth, instant success confirmation after submit */
+function ckSubmitSuccess(sub,out){
+  document.querySelectorAll('.ck-success-ov').forEach(n=>n.remove());
+  const ov=document.createElement('div'); ov.className='ck-success-ov';
+  ov.onclick=e=>{ if(e.target===ov) ov.remove(); };
+  ov.innerHTML=`<div class="ck-success-card">
+    <div class="ck-success-ring"><svg viewBox="0 0 52 52"><circle class="cs-circle" cx="26" cy="26" r="24"/><path class="cs-check" d="M14.5 27l7.5 7.5 16-16.5"/></svg></div>
+    <h3>Checklist submitted</h3>
+    <p>${esc(sub.dept)} · ${esc(sub.session)} · ${esc(sub.store)}</p>
+    <div class="ck-success-stats"><div><b>${sub.done}/${sub.total}</b><span>tasks done</span></div><div><b>${sub.progress}%</b><span>complete</span></div>${out?`<div class="bad"><b>${out}</b><span>temp alert${out>1?'s':''}</span></div>`:''}</div>
+    <div class="ck-success-actions">
+      <button class="btn primary" onclick="this.closest('.ck-success-ov').remove();ckSharePDF('${ckJS(sub.session)}')"><i class="fab fa-whatsapp"></i>&nbsp; Share PDF</button>
+      <button class="btn ghost" onclick="this.closest('.ck-success-ov').remove()">Done</button>
+    </div></div>`;
+  document.body.appendChild(ov);
+  requestAnimationFrame(()=>ov.classList.add('show'));
+  setTimeout(()=>{ if(document.body.contains(ov)) ov.classList.add('idle'); },2600);
 }
 function ckMarkRespMissing(depts){
   depts.forEach(dept=>{
@@ -2075,6 +2108,9 @@ function mgrSubInScope(s){ return isSuper() || !!(s && s.store===State.branch); 
 function mgrStoreRecipients(store){
   const out=[], seen={};
   const add=(r)=>{ if(!r||!r.email||seen[String(r.email).toLowerCase()]) return; seen[String(r.email).toLowerCase()]=1; out.push(r); };
+  const cfg=DB.emailConfig||{};
+  // store-admin's own manager email (per-store config). Super uses staff-manager emails (store-specific) instead.
+  if(cfg.managerEmail && State.branch===store) add({key:'cfgmgr',name:cfg.managerName||(store+' Store Manager'),email:cfg.managerEmail});
   const map=DB.storeManagerEmails||DB.managerEmails||{};
   const fromMap=map&&map[store];
   if(Array.isArray(fromMap)) fromMap.forEach((r,i)=>add(typeof r==='string'?{key:'mgr-'+store+'-'+i,name:store+' Store Manager',email:r}:r));
@@ -2435,6 +2471,13 @@ function renderEmail(){
         <div class="field"><label>Verified sender email</label><input value="${esc(cfg.fromEmail||'')}" oninput="emailCfgSet('fromEmail',this.value)" placeholder="ops@mcqinternational.com"></div>`:''}
       </div>
       <div class="rail-tip" style="margin-top:12px">${cfg.channel==='brevo'?'📨 <b>Brevo</b> auto-sends over HTTPS (300/day free) — paste your API key + a verified sender. If your browser blocks it (CORS), use Gmail compose or relay through a tiny server.':cfg.channel==='gmail'?'✉️ <b>Gmail compose</b> opens a pre-filled Gmail window so you click Send — works everywhere, no setup.':cfg.channel==='mailto'?'📧 <b>Mail app</b> opens your device email client pre-filled.':'🧪 <b>Demo</b> only shows who would be notified. Pick Brevo or Gmail to actually send.'}</div>
+      </div></div>
+    <div class="card" style="margin-bottom:16px"><div class="card-head"><h3><i class="fas fa-user-tie"></i>&nbsp; Store Manager · verify-note alerts</h3><span class="ch-sub">${isSuper()?'When Super Admin verifies a store\'s checklist and leaves a note, the note is emailed to that store\'s manager (set per store, or any staff with a Manager role + email).':'When a '+esc(State.branch)+' checklist is verified with a note, the note is emailed to this manager.'}</span></div>
+      <div class="card-pad"><div class="grid2">
+        <div class="field"><label>Manager name</label><input value="${esc(cfg.managerName||'')}" oninput="emailCfgSet('managerName',this.value)" placeholder="Store manager name"></div>
+        <div class="field"><label>Manager email</label><input type="email" value="${esc(cfg.managerEmail||'')}" oninput="emailCfgSet('managerEmail',this.value)" placeholder="manager@store.com"></div>
+      </div>
+      <div class="rail-tip" style="margin-top:12px">🔒 This belongs to <b>${esc(isSuper()?'each store':State.branch)}</b>'s own settings, so every store's email notifications work independently.${isSuper()?' As Super Admin, store submissions also reach you via the Head Office recipient.':''}</div>
       </div></div>
     <div class="rail-tip" style="margin-bottom:16px;background:var(--bad-bg);border-color:#f3c9c9">⚠️ <b>Violation alerts</b> are sent to <b>all recipients</b> by default — no per-category opt-out.</div>
     <div class="section-title">Report Issue · who receives which category</div>
