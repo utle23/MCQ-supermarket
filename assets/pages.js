@@ -525,7 +525,7 @@ function ckReadRedLedTemperature(file,type,quality){
       const data=ctx.getImageData(0,0,w,h).data;
       const strict=ckLedMask(data,w,h);
       const comps=ckMaskComponents(strict,w,h).filter(c=>c.area>=8);
-      const reading=ckRecognizeLedComponents(comps,strict,w,h,type);
+      const reading=ckRecognizeLedComponents(comps,strict,data,w,h,type);
       URL.revokeObjectURL(img.src);
       if(reading&&Number.isFinite(reading.value)){
         const readingQuality=Object.assign({},quality||{},{led:true,display:reading.box,rawReading:reading.text});
@@ -586,12 +586,38 @@ function ckMaskComponents(mask,w,h){
   }
   return out;
 }
-function ckRecognizeLedComponents(comps,mask,w,h,type){
-  // pick the biggest DIGIT-shaped lit blob; reject solid fills (panel/header band) by size + fill ratio
-  const main=comps.filter(c=>c.area>=25&&c.h>=10&&c.w>=5&&c.h<=h*0.6&&c.w<=w*0.45&&(c.area/(c.w*c.h))<=0.92).sort((a,b)=>b.area-a.area)[0];
+// A lit blob is part of the display only if the area immediately AROUND it is
+// dark (LED panels are black). This rejects bright clutter in a wide photo —
+// red cables on a pale wall, printed labels, glare — which is the #1 cause of
+// mis-reads when the display is small inside the frame.
+function ckCompOnDarkBg(c,data,w,h){
+  const pad=Math.max(2,Math.round(Math.min(c.w,c.h)*0.35));
+  let dark=0,n=0;
+  const at=(x,y)=>{ if(x<0||y<0||x>=w||y>=h) return; const p=(y*w+x)*4; const L=data[p]*0.299+data[p+1]*0.587+data[p+2]*0.114; n++; if(L<95) dark++; };
+  for(let x=c.x1-pad;x<=c.x2+pad;x+=2){ at(x,c.y1-pad); at(x,c.y2+pad); }
+  for(let y=c.y1;y<=c.y2;y+=2){ at(c.x1-pad,y); at(c.x2+pad,y); }
+  return n? (dark/n)>=0.45 : true;   // mostly-dark surround ⇒ on a display (tolerates a bright edge)
+}
+function ckRecognizeLedComponents(comps,mask,data,w,h,type){
+  // keep only lit blobs sitting on a dark display background (drops bright clutter
+  // in a wide frame). Fall back to all blobs if that leaves nothing.
+  const onDisplay=data?comps.filter(c=>ckCompOnDarkBg(c,data,w,h)):comps;
+  const pool=onDisplay.length?onDisplay:comps;
+  // candidate DIGIT-shaped lit blobs. Reject solid fills (panel / header band) by
+  // fill ratio — BUT keep thin tall bars, because the digit "1" is a solid bar
+  // with fill ≈ 1.0 and would otherwise be dropped.
+  const cands=pool.filter(c=>c.area>=25&&c.h>=10&&c.w>=5&&c.h<=h*0.6&&c.w<=w*0.45
+    && ((c.area/(c.w*c.h))<=0.92 || c.w<=c.h*0.45));
+  if(!cands.length) return null;
+  // the reader anchors on the LAST (right-most) digit and reads leftwards, so pick
+  // the right-most among the FULL-HEIGHT blobs (digits share a height; a "1" is
+  // narrow but just as tall). Height — not area — fixes trailing "1" (-21, 11, -1)
+  // and equal pairs (-22, 88) without letting a short noise blob win.
+  const maxH=Math.max.apply(null,cands.map(c=>c.h));
+  const main=cands.filter(c=>c.h>=maxH*0.6).sort((a,b)=>b.x2-a.x2)[0];
   if(!main) return null;
   const H=main.h;
-  const near=comps.filter(c=>{
+  const near=pool.filter(c=>{
     if(c===main) return true;
     const vOverlap=Math.max(0,Math.min(main.y2,c.y2)-Math.max(main.y1,c.y1)+1);
     const closeLeft=c.x2>=main.x1-H*.85 && c.x1<=main.x1+H*.25;
@@ -599,7 +625,11 @@ function ckRecognizeLedComponents(comps,mask,w,h,type){
     return c.area>=8 && vOverlap>=Math.min(c.h,main.h)*.35 && (closeLeft||closeRight) && c.cy>=main.y1-H*.12 && c.cy<=main.y2+H*.18;
   });
   const digitComps=near.filter(c=>!(c.h<=H*.28&&c.w<=H*.28&&c.cy>main.y1+H*.45));
-  const leftComps=digitComps.filter(c=>c!==main && c.cx<main.cx && c.x1<main.x1+H*.18);
+  // a real left digit reaches DOWN to the digit baseline and sits within ~2 digit
+  // widths of the main digit. This drops lit ICONS (snowflake / fan / °C) that
+  // sit higher up and further left on the display.
+  const leftComps=digitComps.filter(c=>c!==main && c.cx<main.cx && c.x1<main.x1+H*.18
+    && c.y2>=main.y2-H*0.30 && c.cx>=main.x1-H*1.8);
   const leftBox=ckUnionBox(leftComps);
   const rightDigit=ckSevenDigit(main,mask,w,h);
   if(!rightDigit) return null;
@@ -615,7 +645,7 @@ function ckRecognizeLedComponents(comps,mask,w,h,type){
   if(decimal&&chars.length>=2) text=`${chars[0]}.${chars.slice(1).join('')}`;
   // minus sign = a wide, short lit bar to the LEFT of the digit cluster, near vertical centre (critical for freezers)
   const clusterLeft=leftBox?Math.min(leftBox.x1,main.x1):main.x1;
-  const negative=comps.some(c=>c!==main && c.cx<clusterLeft-H*0.05 && c.cx>=main.x1-H*2.4 && c.w>=c.h*1.1 && c.h<=H*0.55 && c.h>=H*0.05 && c.cy>=main.y1+H*0.18 && c.cy<=main.y2-H*0.18);
+  const negative=pool.some(c=>c!==main && c.cx<clusterLeft-H*0.05 && c.cx>=main.x1-H*2.4 && c.w>=c.h*1.1 && c.h<=H*0.55 && c.h>=H*0.05 && c.cy>=main.y1+H*0.18 && c.cy<=main.y2-H*0.18);
   if(negative && text.indexOf('-')<0) text='-'+text;
   const value=Number(text);
   if(!Number.isFinite(value)||value<=-45||value>=80) return null;
@@ -651,6 +681,9 @@ function ckLedDecimalPoint(near,digitComps,leftBox,rightBox,H){
   });
 }
 function ckSevenDigit(box,mask,w,h){
+  // a very narrow lit blob is the digit "1" (only the two right segments) — the
+  // segment-occupancy test can't tell it apart because the box IS the bar.
+  if(box.h>0 && box.w<=box.h*0.40) return '1';
   const regs={
     a:[.22,.78,0,.20], b:[.62,1,.10,.48], c:[.62,1,.52,.90],
     d:[.22,.78,.78,1], e:[0,.38,.52,.90], f:[0,.38,.10,.48], g:[.22,.78,.39,.62]
@@ -667,13 +700,19 @@ function ckSevenDigit(box,mask,w,h){
     0:'abcdef', 1:'bc', 2:'abged', 3:'abgcd', 4:'fgbc', 5:'afgcd',
     6:'afgecd', 7:'abc', 8:'abcdefg', 9:'abfgcd'
   };
+  // thickness-independent match: a digit is the pattern whose ON segments are lit
+  // and OFF segments are dark. Scoring by (avg ON occupancy − avg OFF occupancy)
+  // keeps every digit on an equal footing, so dense digits (8/0/6/9) no longer sit
+  // on the edge of a fixed sum threshold and drop out when segments are thin.
   let best=null;
   Object.entries(patterns).forEach(([d,segs])=>{
-    let score=0;
-    'abcdefg'.split('').forEach(s=>{ const on=segs.includes(s); score+=on?occ[s]:(1-Math.min(1,occ[s]*1.8)); });
-    if(!best||score>best.score) best={digit:d,score};
+    const on=segs.split(''), off='abcdefg'.split('').filter(s=>!segs.includes(s));
+    const avgOn=on.reduce((a,s)=>a+occ[s],0)/on.length;
+    const avgOff=off.length?off.reduce((a,s)=>a+occ[s],0)/off.length:0;
+    const score=avgOn-avgOff;
+    if(!best||score>best.score) best={digit:d,score,avgOn};
   });
-  return best&&best.score>3.1?best.digit:null;
+  return best&&best.avgOn>0.22&&best.score>0.12?best.digit:null;
 }
 function ckPickTempFromText(text,type){
   const clean=String(text||'').replace(/[−–—]/g,'-').replace(/,/g,'.');
