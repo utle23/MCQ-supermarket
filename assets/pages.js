@@ -422,7 +422,15 @@ async function ckAiTemp(i,fileName,file){
     toast(st.aiError);
     return;
   }
-  ckSaveTempReading(i,result.value,result,false);
+  // success — auto-save only a confident on-device / strong-vision read; OCR or low-confidence → manager confirms or edits
+  const src=String(result.source||''), isOCR=/OCR/i.test(src), conf=Number(result.confidence||0);
+  const trusted = !isOCR && Number.isFinite(result.value) && conf>=88 && result.suggestedValue==null;
+  if(trusted){ ckSaveTempReading(i,result.value,result,false); return; }
+  st.aiStatus='confirm';
+  st.aiError=`AI Vision read ${result.value.toFixed(1)} °C — confirm or edit before saving.`;
+  st.aiSuggestion={value:result.value,confidence:result.confidence||null,source:result.source||'AI Vision',text:result.text||'',rawReading:result.rawReading||result.text||''};
+  st.aiManualAllowed=true; st.aiQuality=result.quality||null; st.temp=null; st.done=false;
+  ckDraw(); toast(st.aiError);
 }
 function ckSaveTempReading(i,value,result,manual){
   const r=ckItem(DB.checklist.items[i],i), st=State.chk.state[i]=State.chk.state[i]||{};
@@ -515,16 +523,16 @@ function ckReadRedLedTemperature(file,type,quality){
       const canvas=document.createElement('canvas'); canvas.width=w; canvas.height=h;
       const ctx=canvas.getContext('2d',{willReadFrequently:true}); ctx.drawImage(img,0,0,w,h);
       const data=ctx.getImageData(0,0,w,h).data;
-      const strict=ckRedMask(data,w,h,true);
+      const strict=ckLedMask(data,w,h);
       const comps=ckMaskComponents(strict,w,h).filter(c=>c.area>=8);
       const reading=ckRecognizeLedComponents(comps,strict,w,h,type);
       URL.revokeObjectURL(img.src);
       if(reading&&Number.isFinite(reading.value)){
         const readingQuality=Object.assign({},quality||{},{led:true,display:reading.box,rawReading:reading.text});
         if(reading.suggestedValue!=null){
-          resolve({error:true,suggestedValue:reading.suggestedValue,message:reading.message,source:'Local red LED OCR',text:reading.text,rawReading:reading.text,confidence:reading.confidence,quality:readingQuality,candidates:[reading.value,reading.suggestedValue],manualAllowed:true});
+          resolve({error:true,suggestedValue:reading.suggestedValue,message:reading.message,source:'On-device display reader',text:reading.text,rawReading:reading.text,confidence:reading.confidence,quality:readingQuality,candidates:[reading.value,reading.suggestedValue],manualAllowed:true});
         }else{
-          resolve({value:reading.value,source:'Local red LED OCR',text:reading.text,confidence:reading.confidence,quality:readingQuality,candidates:[reading.value]});
+          resolve({value:reading.value,source:'On-device display reader',text:reading.text,confidence:reading.confidence,quality:readingQuality,candidates:[reading.value]});
         }
       }else resolve(null);
     };
@@ -540,6 +548,20 @@ function ckRedMask(data,w,h,strict){
       ? (r>195 && g<85 && b<95 && r>g*2.15 && r>b*1.95)
       : (r>135 && g<120 && b<135 && r>g*1.35 && r>b*1.2);
     if(isRed) mask[p]=1;
+  }
+  return mask;
+}
+/* Detects glowing 7-segment digits of ANY colour (red / amber / green / cyan /
+   blue / white) on a dark display — not just red. A lit segment is either a
+   bright, clearly-coloured pixel, or a near-white glow. The dull grey/blue
+   plastic panel is low-saturation + not bright enough, so it is excluded. */
+function ckLedMask(data,w,h){
+  const mask=new Uint8Array(w*h);
+  for(let i=0,p=0;i<data.length;i+=4,p++){
+    const r=data[i], g=data[i+1], b=data[i+2];
+    const mx=Math.max(r,g,b), mn=Math.min(r,g,b), sat=mx-mn;
+    const lit=(mx>120 && sat>55) || (mn>205 && mx>240);
+    if(lit) mask[p]=1;
   }
   return mask;
 }
@@ -565,7 +587,8 @@ function ckMaskComponents(mask,w,h){
   return out;
 }
 function ckRecognizeLedComponents(comps,mask,w,h,type){
-  const main=comps.filter(c=>c.area>=25&&c.h>=10&&c.w>=5).sort((a,b)=>b.area-a.area)[0];
+  // pick the biggest DIGIT-shaped lit blob; reject solid fills (panel/header band) by size + fill ratio
+  const main=comps.filter(c=>c.area>=25&&c.h>=10&&c.w>=5&&c.h<=h*0.6&&c.w<=w*0.45&&(c.area/(c.w*c.h))<=0.92).sort((a,b)=>b.area-a.area)[0];
   if(!main) return null;
   const H=main.h;
   const near=comps.filter(c=>{
@@ -590,6 +613,10 @@ function ckRecognizeLedComponents(comps,mask,w,h,type){
   const decimal=ckLedDecimalPoint(near,digitComps,leftBox,main,H);
   let text=chars.join('');
   if(decimal&&chars.length>=2) text=`${chars[0]}.${chars.slice(1).join('')}`;
+  // minus sign = a wide, short lit bar to the LEFT of the digit cluster, near vertical centre (critical for freezers)
+  const clusterLeft=leftBox?Math.min(leftBox.x1,main.x1):main.x1;
+  const negative=comps.some(c=>c!==main && c.cx<clusterLeft-H*0.05 && c.cx>=main.x1-H*2.4 && c.w>=c.h*1.1 && c.h<=H*0.55 && c.h>=H*0.05 && c.cy>=main.y1+H*0.18 && c.cy<=main.y2-H*0.18);
+  if(negative && text.indexOf('-')<0) text='-'+text;
   const value=Number(text);
   if(!Number.isFinite(value)||value<=-45||value>=80) return null;
   const box=ckUnionBox(near)||main;
@@ -704,9 +731,11 @@ function ckPrepOcrImage(file){
       ctx.drawImage(img,0,0,canvas.width,canvas.height);
       const data=ctx.getImageData(0,0,canvas.width,canvas.height);
       for(let p=0;p<data.data.length;p+=4){
-        const gray=(data.data[p]*0.299+data.data[p+1]*0.587+data.data[p+2]*0.114);
-        const hi=gray>145?255:Math.max(0,gray*0.7);
-        data.data[p]=data.data[p+1]=data.data[p+2]=hi;
+        const r=data.data[p],g=data.data[p+1],b=data.data[p+2];
+        const mx=Math.max(r,g,b),mn=Math.min(r,g,b),sat=mx-mn;
+        const lit=(mx>120&&sat>55)||(mn>205&&mx>240);
+        const v=lit?0:255;            // dark digits on white background — what Tesseract reads best
+        data.data[p]=data.data[p+1]=data.data[p+2]=v;
       }
       ctx.putImageData(data,0,0);
       URL.revokeObjectURL(img.src);
