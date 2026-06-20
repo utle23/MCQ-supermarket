@@ -930,3 +930,21 @@ table.jobduty td{vertical-align:top}
 .ck-success-actions{display:flex;gap:10px}
 .ck-success-actions .btn{flex:1;justify-content:center}
 @media(max-width:560px){.ck-success-card{padding:24px 18px}.ck-success-stats span{font-size:10px}}
+
+/* ---- checklist builder: inline edit + ghost add ---- */
+.ck-build-hint{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:600;color:var(--muted);background:color-mix(in srgb,var(--accent) 7%,#fff);border:1px dashed color-mix(in srgb,var(--accent) 35%,var(--line));border-radius:11px;padding:8px 12px;margin:-2px 0 12px}
+.ck-build-hint b{color:var(--accent)}
+.dept-chip.ghost{--dc:#94a3b8;border-style:dashed;font-weight:800;opacity:.9}
+.dept-chip.ghost:hover{--dc:var(--accent);opacity:1}
+.ck-add-ghost{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;margin:8px 0 4px;padding:9px;border:1.5px dashed var(--line);background:transparent;color:var(--muted);font-weight:800;font-size:12.5px;border-radius:11px;cursor:pointer;transition:.14s}
+.ck-add-ghost:hover{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb,var(--accent) 7%,#fff)}
+.ck-add-ghost.section{margin-top:12px;border-style:dashed;font-size:13px}
+.ck-head-edit{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ck-head-input{flex:1;min-width:120px;font-weight:800;font-size:15px;padding:8px 11px;border:1.5px solid var(--accent);border-radius:9px;outline:none}
+.ck-head-input.sm{font-size:12.5px;text-transform:none}
+.ck-head-edit .mini{border:1px solid var(--line);background:#fff;border-radius:8px;padding:6px 10px;font-weight:800;font-size:12px;cursor:pointer}
+.ck-head-edit .mini.good{background:var(--accent);border-color:var(--accent);color:#fff}
+.ck-head-edit .mini.ck-del{color:#dc2626;border-color:#f3c9c9}
+.ck-head-edit .mini.ck-del:hover{background:#fef2f2;border-color:#dc2626}
+.ck-task[ondblclick]{cursor:default}
+.ck-task[ondblclick]:hover{box-shadow:inset 0 0 0 1.5px color-mix(in srgb,var(--accent) 30%,transparent)}

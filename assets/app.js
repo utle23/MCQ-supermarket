@@ -333,11 +333,13 @@ async function faceIdLogin(){
   const modal=$('#fid-modal'), sub=$('#fid-sub'), title=$('.fid-title');
   if(!window.MCQFace){ loginFail('Face ID module not loaded'); return; }
   modal.classList.add('open'); if(title) title.textContent='Face ID / Touch ID';
-  if(!MCQFace.list().length){ if(sub) sub.textContent='No Face ID set up on this device yet'; setTimeout(closeFid,1900);
-    toast('Set up Face ID first: pick your branch, enter its password, then “Set up Face ID”.'); return; }
-  if(sub) sub.textContent='Follow the Face ID / Touch ID prompt on your device…';
+  const mode=loginMode(), branch=$('#login-branch')?.value||'';
+  const scope = mode==='super' ? '' : branch;     // staff/admin → only THIS store's Face IDs; super works anywhere
+  if(!MCQFace.listFor(scope).length){ if(sub) sub.textContent=scope?('No Face ID set up for '+scope+' on this device'):'No Face ID set up on this device yet'; setTimeout(closeFid,2100);
+    toast(scope?('Set up Face ID for '+scope+' first: enter its password, then “Set up Face ID”.'):'Set up Face ID first: pick your branch, enter its password, then “Set up Face ID”.'); return; }
+  if(sub) sub.textContent=scope?('Sign in to '+scope+' — follow the Face ID / Touch ID prompt…'):'Follow the Face ID / Touch ID prompt on your device…';
   try{
-    const m=await MCQFace.login();
+    const m=await MCQFace.login(scope);
     if(sub) sub.innerHTML='✅ Verified — '+esc(m.label||m.branch);
     setTimeout(()=>{ closeFid(); loginAs(m.role, m.branch); }, 650);
   }catch(e){ if(sub) sub.textContent='❌ '+((e&&e.message)||'Face ID failed'); setTimeout(closeFid,2200); }

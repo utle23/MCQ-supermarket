@@ -31,18 +31,21 @@ window.MCQFace = (function(){
     try{ DB.faceCreds=DB.faceCreds||[]; if(!DB.faceCreds.find(function(x){return x.id===id;})){ DB.faceCreds.push(Object.assign({device:(navigator.platform||'device')},entry)); if(window.persist) window.persist(); } }catch(e){}
     return entry;
   }
-  async function login(){
+  // credentials for ONE store (plus super/Head-Office, which works at any store)
+  function listFor(branch){ var all=load(); return branch ? all.filter(function(c){return c.branch===branch||c.role==='super';}) : all; }
+  async function login(branch){
     if(!window.PublicKeyCredential) throw new Error('WebAuthn not supported on this device');
-    var list=load(); if(!list.length) throw new Error('No Face ID set up on this device');
+    var list=listFor(branch);
+    if(!list.length) throw new Error(branch ? ('No Face ID set up for '+branch+' on this device') : 'No Face ID set up on this device');
     var assertion = await navigator.credentials.get({ publicKey:{
       challenge: rand(32), timeout:60000, userVerification:'required', rpId: location.hostname,
       allowCredentials: list.map(function(c){ return {type:'public-key', id: unb64u(c.id), transports:['internal']}; })
     }});
     var id=b64u(assertion.rawId), match=list.find(function(c){return c.id===id;});
-    if(!match) throw new Error('Face ID not recognised for any branch on this device');
+    if(!match) throw new Error(branch ? ('Face ID not recognised for '+branch) : 'Face ID not recognised on this device');
     return match;
   }
-  return { supported:supported, enroll:enroll, login:login, list:load,
+  return { supported:supported, enroll:enroll, login:login, list:load, listFor:listFor,
     remove:function(id){ store(load().filter(function(x){return x.id!==id;})); try{ if(DB.faceCreds){ DB.faceCreds=DB.faceCreds.filter(function(x){return x.id!==id;}); if(window.persist) window.persist(); } }catch(e){} } };
 })();
 

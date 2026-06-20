@@ -132,9 +132,9 @@ function renderChecklist(){
   const s=State.chk;
   setCrumb('✅','Store Operation Checklist',`${isSuper()?'All stores':State.branch} · ${s.session}`);
   const chips=C.depts.map(d=>{ const m=C.deptMeta[d]||{}; const col=m.color||'#0e9f6e';
-    return `<button class="dept-chip ${d===s.dept?'active':''}" style="--dc:${col}" onclick="ckDept('${ckJS(d)}')">${m.icon?`<i class="fas ${m.icon}"></i> `:''}${esc(d)}</button>`; }).join('');
+    return `<button class="dept-chip ${d===s.dept?'active':''}" style="--dc:${col}" ${isAdmin()?`ondblclick="ckDeptHEdit('${ckJS(d)}')" title="Double-click to rename / delete"`:''} onclick="ckDept('${ckJS(d)}')">${m.icon?`<i class="fas ${m.icon}"></i> `:''}${esc(d)}</button>`; }).join('')
+    + (isAdmin()?`<button class="dept-chip ghost" onclick="ckAddDept()" title="Add department"><i class="fas fa-plus"></i>&nbsp;Add</button>`:'');
   const areaChips=ckAreaChips();
-  const adminTools=isAdmin()?ckAdminTools():'';
   $('#content').innerHTML=`
    <div class="page-head"><div class="ph-ic">✅</div>
      <div><h2>Store Operation Checklist</h2><p>Every photo task needs evidence before submit. Temperature checks must be read by AI Vision or marked defrosting.</p></div>
@@ -151,7 +151,7 @@ function renderChecklist(){
    </div>
    <div class="ck-toolbar"><div class="dept-chips">${chips}</div></div>
    ${areaChips}
-   ${adminTools}
+   ${isAdmin()?`<div class="ck-build-hint"><i class="fas fa-wand-magic-sparkles"></i> <b>Builder mode</b> — double-click a department, section or task to rename / delete · tap <b>+</b> to add</div>`:''}
    <div id="chk-prog" class="ck-progbar"></div>
    <div id="ck-temp-report"></div>
    <div id="chk-body"></div>
@@ -196,10 +196,26 @@ function ckDraw(){
   let html='';
   Object.entries(groups).forEach(([dept,areas])=>{
     const dm=C.deptMeta[dept]||{};
-    html+=`<div class="ck-dept"><div class="ck-dept-h" style="--dc:${dm.color}">${dm.icon?`<i class="fas ${dm.icon}" style="color:${dm.color};margin-right:7px"></i>`:`<span class="chk-dot" style="background:${dm.color}"></span>`}${esc(dept)}<span class="ck-dept-n">${Object.values(areas).flat().length} tasks</span></div>`;
+    if(isAdmin() && State.chk.editDeptH===dept){
+      html+=`<div class="ck-dept"><div class="ck-dept-h ck-head-edit" style="--dc:${dm.color}">
+        <input id="ckh-dept" class="ck-head-input" value="${esc(dept)}" onkeydown="if(event.key==='Enter')ckSaveDeptH('${ckJS(dept)}');if(event.key==='Escape')ckCancelHeads()">
+        <button class="mini good" onclick="ckSaveDeptH('${ckJS(dept)}')"><i class="fas fa-check"></i></button>
+        <button class="mini" onclick="ckCancelHeads()">Cancel</button>
+        <button class="mini ck-del" onclick="ckDelDept('${ckJS(dept)}')"><i class="fas fa-trash"></i> Delete dept</button></div>`;
+    }else{
+      html+=`<div class="ck-dept"><div class="ck-dept-h" style="--dc:${dm.color}" ${isAdmin()?`ondblclick="ckDeptHEdit('${ckJS(dept)}')" title="Double-click to rename / delete"`:''}>${dm.icon?`<i class="fas ${dm.icon}" style="color:${dm.color};margin-right:7px"></i>`:`<span class="chk-dot" style="background:${dm.color}"></span>`}${esc(dept)}<span class="ck-dept-n">${Object.values(areas).flat().length} tasks</span></div>`;
+    }
     html+=ckRespHTML(dept);
     Object.entries(areas).forEach(([area,items])=>{
-      html+=`<div class="ck-area-h">${esc(area)}${isAdmin()?`<span class="ck-area-actions"><button class="ck-icon-action" onclick="ckAddTask('${ckJS(dept)}','${ckJS(area)}')" title="Add task"><i class="fas fa-plus"></i><span>Add task</span></button><button class="ck-icon-action danger" onclick="ckDelSection('${ckJS(dept)}','${ckJS(area)}')" title="Delete section"><i class="fas fa-trash"></i><span>Delete section</span></button></span>`:''}</div>`;
+      if(isAdmin() && State.chk.editArea===dept+'::'+area){
+        html+=`<div class="ck-area-h ck-head-edit">
+          <input id="ckh-area" class="ck-head-input sm" value="${esc(area)}" onkeydown="if(event.key==='Enter')ckSaveSection('${ckJS(dept)}','${ckJS(area)}');if(event.key==='Escape')ckCancelHeads()">
+          <button class="mini good" onclick="ckSaveSection('${ckJS(dept)}','${ckJS(area)}')"><i class="fas fa-check"></i></button>
+          <button class="mini" onclick="ckCancelHeads()">Cancel</button>
+          <button class="mini ck-del" onclick="ckDelSection('${ckJS(dept)}','${ckJS(area)}')"><i class="fas fa-trash"></i> Delete section</button></div>`;
+      }else{
+        html+=`<div class="ck-area-h" ${isAdmin()?`ondblclick="ckSectionEdit('${ckJS(dept)}','${ckJS(area)}')" title="Double-click to rename / delete"`:''}>${esc(area)}</div>`;
+      }
       items.forEach(r=>{ const st=State.chk.state[r.i]||{}; const done=st.done;
         if(isAdmin() && State.chk.editing===r.i){
           const pm = r.photo ? (r.photo.req ? {mode:'R',min:r.photo.min,max:r.photo.max} : {mode:'O',min:0,max:(r.photo.max||5)}) : {mode:'0',min:1,max:5};
@@ -228,13 +244,15 @@ function ckDraw(){
             photoHtml=`<div class="ck-photos" id="ck-photo-${r.i}"><div class="ck-photos-h">${photoChip(r.photo)} <span class="ck-pc ${have>=need?'ok':''}">${have}/${need}</span></div><div class="ck-slots">${slots}</div></div>`;
           }
         }
-        html+=`<div class="ck-task ${done?'done':''}" id="ck-row-${r.i}">
+        html+=`<div class="ck-task ${done?'done':''}" id="ck-row-${r.i}" ${isAdmin()?`ondblclick="ckEditTask(${r.i})" title="Double-click to edit / delete"`:''}>
           <button class="ck-check" onclick="ckTick(${r.i})">${done?'✓':''}</button>
-          <div class="ck-main"><div class="ck-name">${esc(r.task)}${isAdmin()?`<span class="ck-task-admin"><button onclick="ckEditTask(${r.i})" title="Edit task">✎</button><button onclick="ckDelTask(${r.i})" title="Delete task">🗑</button></span>`:''}</div>
+          <div class="ck-main"><div class="ck-name">${esc(r.task)}</div>
             ${r.meta.temp?ckTempBox(r,st):''}
             <input class="ck-note" placeholder="Add note…" value="${esc(st.note||'')}" oninput="ckNote(${r.i},this.value)">${photoHtml}</div></div>`;
       });
+      if(isAdmin()) html+=`<button class="ck-add-ghost" onclick="ckAddTask('${ckJS(dept)}','${ckJS(area)}')"><i class="fas fa-plus"></i> Add task</button>`;
     });
+    if(isAdmin()) html+=`<button class="ck-add-ghost section" onclick="ckAddSection('${ckJS(dept)}')"><i class="fas fa-plus"></i> Add section</button>`;
     html+=`</div>`;
   });
   $('#chk-body').innerHTML=html||'<div class="empty">No tasks for this filter.</div>';
@@ -380,24 +398,38 @@ function ckAddDept(){
   renderChecklist();
   toast('✓ Department added — edit the first task');
 }
-function ckRenameDept(dept){
-  const name=(prompt('Rename department:',dept)||'').trim();
-  if(!name||name===dept) return;
+function doRenameDept(dept,name){
+  name=(name||'').trim();
+  if(!name||name===dept) return false;
+  if((DB.checklist.depts||[]).includes(name)){ toast('A department with that name already exists'); return false; }
   DB.checklist.items.forEach(it=>{ if(it[0]===dept) it[0]=name; });
   DB.checklist.depts=(DB.checklist.depts||[]).map(d=>d===dept?name:d);
   if(DB.checklist.deptMeta&&DB.checklist.deptMeta[dept]&&!DB.checklist.deptMeta[name]){
-    DB.checklist.deptMeta[name]=DB.checklist.deptMeta[dept];
-    delete DB.checklist.deptMeta[dept];
+    DB.checklist.deptMeta[name]=DB.checklist.deptMeta[dept]; delete DB.checklist.deptMeta[dept];
   }
   if(DB.checklistEmailRoutes&&DB.checklistEmailRoutes[dept]&&!DB.checklistEmailRoutes[name]){
-    DB.checklistEmailRoutes[name]=DB.checklistEmailRoutes[dept];
-    delete DB.checklistEmailRoutes[dept];
+    DB.checklistEmailRoutes[name]=DB.checklistEmailRoutes[dept]; delete DB.checklistEmailRoutes[dept];
   }
   if(State.chk.dept===dept) State.chk.dept=name;
-  ckPersistTemplate();
-  renderChecklist();
-  toast('✓ Department renamed');
+  return true;
 }
+/* ---- inline header editing (double-click) ---- */
+function ckCancelHeads(){ State.chk.editDeptH=null; State.chk.editArea=null; ckDraw(); }
+function ckDeptHEdit(dept){ State.chk.dept=dept; State.chk.editDeptH=dept; State.chk.editArea=null; State.chk.editing=null; renderChecklist(); setTimeout(()=>{const el=document.getElementById('ckh-dept'); if(el){el.focus();el.select();}},30); }
+function ckSaveDeptH(dept){ const v=(document.getElementById('ckh-dept')||{}).value||''; State.chk.editDeptH=null; if(doRenameDept(dept,v)){ ckPersistTemplate(); toast('✓ Department renamed'); } renderChecklist(); }
+function ckDelDept(dept){
+  if(!confirm(`Delete the entire "${dept}" department and ALL its sections & tasks?`)) return;
+  DB.checklist.items=DB.checklist.items.filter(it=>it[0]!==dept);
+  DB.checklist.depts=(DB.checklist.depts||[]).filter(d=>d!==dept);
+  if(DB.checklist.deptMeta) delete DB.checklist.deptMeta[dept];
+  State.chk.state={}; State.chk.editDeptH=null; State.chk.editing=null;
+  State.chk.dept=(DB.checklist.depts||[])[0]||''; State.chk.area='ALL';
+  ckPersistTemplate(); renderChecklist(); toast('🗑 Department deleted');
+}
+function ckSectionEdit(dept,area){ State.chk.editArea=dept+'::'+area; State.chk.editDeptH=null; State.chk.editing=null; ckDraw(); setTimeout(()=>{const el=document.getElementById('ckh-area'); if(el){el.focus();el.select();}},30); }
+function ckSaveSection(dept,area){ const v=((document.getElementById('ckh-area')||{}).value||'').trim(); State.chk.editArea=null;
+  if(v&&v!==area){ DB.checklist.items.forEach(it=>{ if(it[0]===dept&&it[1]===area) it[1]=v; }); if(State.chk.area===area) State.chk.area=v; ckPersistTemplate(); toast('✓ Section renamed'); }
+  renderChecklist(); }
 function ckDelSection(dept,area){
   if(!confirm(`Delete the "${area}" section in ${dept} and ALL its tasks?`)) return;
   DB.checklist.items=DB.checklist.items.filter(it=>!(it[0]===dept&&it[1]===area));
