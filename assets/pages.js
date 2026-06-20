@@ -182,6 +182,7 @@ function ckAdminTools(){
   const dept=State.chk.dept, area=ckCurrentArea();
   return `<div class="ck-adminbar card">
     <div class="ck-admin-copy"><b>Checklist Builder</b><span>Edit this department template. Changes are saved into the current store workspace.</span></div>
+    <button class="btn sm" onclick="ckAddDept()"><i class="fas fa-plus-circle"></i> Add department</button>
     <button class="btn sm" onclick="ckRenameDept('${ckJS(dept)}')"><i class="fas fa-tag"></i> Rename department</button>
     <button class="btn sm" onclick="ckAddSection('${ckJS(dept)}')"><i class="fas fa-layer-group"></i> Add section</button>
     <button class="btn sm" onclick="ckRenameSection('${ckJS(dept)}','${ckJS(area)}')"><i class="fas fa-pen"></i> Rename section</button>
@@ -331,8 +332,11 @@ function ckSaveTask(i){
   else it[4]=0;
   State.chk.editing=null; ckPersistTemplate(); renderChecklist(); toast('✓ Task saved');
 }
+// map the active session to the task's "when" code so a task added while viewing
+// Mid-afternoon actually shows under Mid-afternoon (was always falling back to 'C').
+function ckSessionWhen(session){ return session==='Mid-afternoon'?'M':(session==='Closing'?'C':'O'); }
 function ckAddTask(dept,area){
-  const when=State.chk.session==='Opening'?'O':'C';
+  const when=ckSessionWhen(State.chk.session);
   DB.checklist.items.push([dept,area,'NEW TASK',when,0]);
   State.chk.editing=DB.checklist.items.length-1;
   if(State.chk.dept!=='ALL' && State.chk.dept!==dept) State.chk.dept=dept;
@@ -343,7 +347,7 @@ function ckAddTask(dept,area){
 function ckAddSection(dept){
   const area=(prompt('New section name:')||'').trim();
   if(!area) return;
-  const when=State.chk.session==='Opening'?'O':'C';
+  const when=ckSessionWhen(State.chk.session);
   DB.checklist.items.push([dept,area,'NEW TASK',when,0]);
   State.chk.editing=DB.checklist.items.length-1;
   State.chk.dept=dept;
@@ -351,6 +355,21 @@ function ckAddSection(dept){
   ckPersistTemplate();
   renderChecklist();
   toast('✓ Section added');
+}
+function ckAddDept(){
+  const name=(prompt('New department name:')||'').trim();
+  if(!name) return;
+  DB.checklist.depts=DB.checklist.depts||[];
+  if(DB.checklist.depts.includes(name)){ State.chk.dept=name; State.chk.area='ALL'; renderChecklist(); toast('That department already exists'); return; }
+  DB.checklist.depts.push(name);
+  DB.checklist.deptMeta=DB.checklist.deptMeta||{};
+  const palette=['#0e9f6e','#0891b2','#6366f1','#ec4899','#f59e0b','#ef4444','#14b8a6','#8b5cf6'];
+  DB.checklist.deptMeta[name]={color:palette[(DB.checklist.depts.length-1)%palette.length],icon:'fa-store'};
+  DB.checklist.items.push([name,'General','NEW TASK',ckSessionWhen(State.chk.session),0]);
+  State.chk.dept=name; State.chk.area='General'; State.chk.editing=DB.checklist.items.length-1;
+  ckPersistTemplate();
+  renderChecklist();
+  toast('✓ Department added — edit the first task');
 }
 function ckRenameDept(dept){
   const name=(prompt('Rename department:',dept)||'').trim();
@@ -1464,7 +1483,7 @@ function expPrintReport(title,inner,meta){
   const w=window.open('','_blank'); if(!w){ toast('Allow pop-ups to print / export'); return; }
   const when=new Date().toLocaleString(), role=isSuper()?'Super Admin':isAdmin()?'Admin':'Staff';
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${EXP_CSS}</style></head><body>
-    <div class="rpt-head"><div class="rpt-logo">MCQ</div><div><div class="rpt-title">${esc(title)}</div><div class="rpt-sub">MCQ Supermarket · ${esc(expScope())}</div></div><div class="rpt-stamp">${esc(when)}<br>${esc(role)} view</div></div>
+    <div class="rpt-head">${MCQ_LOGO_URL?`<img src="${MCQ_LOGO_URL}" alt="MCQ" style="height:50px;width:auto;object-fit:contain">`:'<div class="rpt-logo">MCQ</div>'}<div><div class="rpt-title">${esc(title)}</div><div class="rpt-sub">MCQ Supermarket · ${esc(expScope())}</div></div><div class="rpt-stamp">${esc(when)}<br>${esc(role)} view</div></div>
     ${meta?`<div class="rpt-meta">${meta}</div>`:''}
     <table>${inner}</table>
     <div class="rpt-foot">MCQ Supermarket — Operations report · Confidential · Generated ${esc(when)}</div>
@@ -1474,6 +1493,7 @@ function expPrintReport(title,inner,meta){
 function expDocBlob(title,inner,meta){
   const when=new Date().toLocaleString();
   const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"><style>${EXP_DOC_CSS}</style></head><body>
+    ${MCQ_LOGO_URL?`<img src="${MCQ_LOGO_URL}" alt="MCQ" style="height:42px;width:auto"><br>`:''}
     <h2 style="color:#0e9f6e;margin:0 0 2px">MCQ Supermarket — ${esc(title)}</h2>
     <div style="color:#64748b;font-size:10pt;margin-bottom:10px">${esc(expScope())} · Generated ${esc(when)}</div>
     ${meta?`<div style="font-size:10pt;margin-bottom:10px">${meta}</div>`:''}
@@ -1493,14 +1513,116 @@ function exportTableExcel(id,title){ const h=expGetTable(id); if(!h){ toast('Not
 function exportTableWord(id,title){ const h=expGetTable(id); if(!h){ toast('Nothing to export'); return; } expDocBlob(title,h); }
 
 /* checklist export — reflects current done/notes/photos, with tick boxes */
+/* MCQ logo as a data URL (works inside print windows, Word docs and jsPDF). */
+let MCQ_LOGO_URL='';
+(function(){ try{ const img=new Image(); img.onload=function(){ try{
+  const max=200, s=Math.min(1,max/Math.max(img.naturalWidth||max,img.naturalHeight||max));
+  const w=Math.round((img.naturalWidth||max)*s), h=Math.round((img.naturalHeight||max)*s);
+  const c=document.createElement('canvas'); c.width=w; c.height=h; c.getContext('2d').drawImage(img,0,0,w,h);
+  MCQ_LOGO_URL=c.toDataURL('image/png');   // small copy — keeps exported PDFs light & fast
+}catch(e){} }; img.src='assets/mcq-logo-exact.png'; }catch(e){} })();
+
 function checklistExportMenu(){
-  return `<div class="exp-dd"><button class="btn sm exp-trigger" onclick="expToggle(this,event)"><i class="fas fa-file-export"></i>&nbsp; Export <i class="fas fa-caret-down"></i></button>
+  return `<div class="exp-dd"><button class="btn sm exp-trigger" style="background:#25d366;border-color:#1eb155;color:#fff" onclick="expToggle(this,event)"><i class="fab fa-whatsapp"></i>&nbsp; Share PDF <i class="fas fa-caret-down"></i></button>
+    <div class="exp-menu">
+      <button onclick="ckSharePDF('Opening')">☀️ Opening — share PDF</button>
+      <button onclick="ckSharePDF('Mid-afternoon')">🌤️ Mid-afternoon — share PDF</button>
+      <button onclick="ckSharePDF('Closing')">🌙 Closing — share PDF</button>
+    </div></div>
+   <div class="exp-dd"><button class="btn sm exp-trigger" onclick="expToggle(this,event)"><i class="fas fa-file-export"></i>&nbsp; Export <i class="fas fa-caret-down"></i></button>
     <div class="exp-menu">
       <button onclick="exportChecklist('print')"><i class="fas fa-print"></i> Print</button>
       <button onclick="exportChecklist('pdf')"><i class="fas fa-file-pdf"></i> PDF</button>
       <button onclick="exportChecklist('excel')"><i class="fas fa-file-excel"></i> Excel</button>
       <button onclick="exportChecklist('word')"><i class="fas fa-file-word"></i> Word</button>
     </div></div>`;
+}
+function ckHexToRgb(hex){ const m=/^#?([0-9a-f]{6})$/i.exec(hex||''); if(!m) return {r:14,g:159,b:110}; const n=parseInt(m[1],16); return {r:(n>>16)&255,g:(n>>8)&255,b:n&255}; }
+function ckImgData(url,max){ return new Promise(res=>{ const img=new Image(); img.onload=()=>{ const s=Math.min(1,max/Math.max(img.width||max,img.height||max)); const w=Math.max(1,Math.round((img.width||max)*s)), h=Math.max(1,Math.round((img.height||max)*s)); try{ const c=document.createElement('canvas'); c.width=w; c.height=h; c.getContext('2d').drawImage(img,0,0,w,h); res({data:c.toDataURL('image/jpeg',0.72),w,h}); }catch(e){ res(null); } }; img.onerror=()=>res(null); img.src=url; }); }
+/* Build a branded, photo-rich PDF for ONE session (Opening / Mid-afternoon /
+   Closing) across all departments of the store, then share it to WhatsApp.
+   Each of the three menu items generates its own session deliberately, so you
+   can pick any session at any time. */
+async function ckSharePDF(session){
+  const C=DB.checklist;
+  const rows=C.items.map(ckItem).filter(r=>ckStoreOk(r)&&ckInSession(r,session));
+  if(!rows.length){ toast('No '+session+' tasks for this store'); return; }
+  if(!(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine loading — using printable report'); return ckSessionPrint(session,rows); }
+  toast('Building '+session+' PDF…');
+  const date=new Date().toISOString().slice(0,10);
+  const store=isSuper()?'All stores':State.branch;
+  // preload + downscale photos
+  const urls=[]; rows.forEach(r=>{ const st=State.chk.state[r.i]||{}; (st.photos||[]).forEach(u=>urls.push(u)); });
+  const pmap={}; await Promise.all([...new Set(urls)].map(async u=>{ const d=await ckImgData(imgSrc(u),420); if(d) pmap[u]=d; }));
+  const { jsPDF }=window.jspdf; const doc=new jsPDF({unit:'pt',format:'a4'});
+  const PW=doc.internal.pageSize.getWidth(), PH=doc.internal.pageSize.getHeight(), M=40; let y=96;
+  const ensure=h=>{ if(y+h>PH-44){ doc.addPage(); y=44; } };
+  function header(){
+    doc.setFillColor(14,159,110); doc.rect(0,0,PW,78,'F');
+    let tx=M; if(MCQ_LOGO_URL){ try{ doc.addImage(MCQ_LOGO_URL,'PNG',M,15,48,48); tx=M+60; }catch(e){} }
+    doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(17); doc.text('MCQ Supermarket',tx,34);
+    doc.setFont('helvetica','normal'); doc.setFontSize(11); doc.text('Operations Checklist — '+session,tx,54);
+    doc.setFontSize(10); doc.text(store+'  ·  '+date,PW-M,42,{align:'right'});
+    y=96;
+  }
+  header();
+  const groups={}; rows.forEach(r=>{(groups[r.dept]=groups[r.dept]||{})[r.area]=(groups[r.dept][r.area]||[]);groups[r.dept][r.area].push(r);});
+  let total=0,done=0;
+  Object.entries(groups).forEach(([dept,areas])=>{
+    const col=ckHexToRgb(((C.deptMeta&&C.deptMeta[dept])||{}).color);
+    ensure(30); doc.setFillColor(col.r,col.g,col.b); doc.roundedRect(M,y,PW-2*M,22,4,4,'F');
+    doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.text(String(dept),M+10,y+15); y+=30;
+    Object.entries(areas).forEach(([area,items])=>{
+      ensure(20); doc.setTextColor(90); doc.setFont('helvetica','bold'); doc.setFontSize(9.5); doc.text(String(area).toUpperCase(),M+4,y+9); y+=16;
+      items.forEach(r=>{ const st=State.chk.state[r.i]||{}; const ok=!!st.done; total++; if(ok)done++;
+        const taskLines=doc.splitTextToSize(String(r.task),PW-2*M-30);
+        const tline = st.temp ? (st.temp.defrosting?'Defrosting':((st.temp.value!=null?st.temp.value.toFixed(1)+' C':'')+(st.temp.inRange===false?'  OUT OF RANGE':''))) : '';
+        const noteLines=st.note?doc.splitTextToSize('Note: '+st.note,PW-2*M-30):[];
+        ensure(16+taskLines.length*12+(tline?12:0)+noteLines.length*11);
+        doc.setDrawColor(ok?21:170,ok?128:170,ok?61:170); doc.setFillColor(ok?21:255,ok?128:255,ok?61:255);
+        doc.roundedRect(M+4,y-1,12,12,2,2,ok?'FD':'D');
+        if(ok){ doc.setDrawColor(255); doc.setLineWidth(1.6); doc.line(M+6.5,y+5,M+9,y+8); doc.line(M+9,y+8,M+13.5,y+2.5); doc.setLineWidth(0.2); }
+        doc.setTextColor(30); doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.text(taskLines,M+24,y+8); let yy=y+8+taskLines.length*12-4;
+        if(tline){ const bad=st.temp&&st.temp.inRange===false; doc.setTextColor(bad?185:20,bad?28:120,40); doc.setFont('helvetica','bold'); doc.setFontSize(9.5); doc.text('Temp: '+tline,M+24,yy+10); yy+=12; }
+        if(noteLines.length){ doc.setTextColor(115); doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.text(noteLines,M+24,yy+10); yy+=noteLines.length*11; }
+        y=yy+10;
+        const ph=(st.photos||[]).map(u=>pmap[u]).filter(Boolean);
+        if(ph.length){ const tw=82,th=62,gap=6; let x=M+24; ensure(th+8);
+          ph.forEach(d=>{ if(x+tw>PW-M){ x=M+24; y+=th+gap; ensure(th+8); } try{ doc.addImage(d.data,'JPEG',x,y,tw,th); }catch(e){} doc.setDrawColor(222); doc.rect(x,y,tw,th); x+=tw+gap; });
+          y+=th+10;
+        }
+      });
+    });
+    y+=4;
+  });
+  const n=doc.internal.getNumberOfPages();
+  for(let i=1;i<=n;i++){ doc.setPage(i); doc.setFontSize(8); doc.setTextColor(150); doc.text('MCQ Supermarket — '+store+' · '+session+' · Confidential',M,PH-18); doc.text('Page '+i+' / '+n,PW-M,PH-18,{align:'right'}); }
+  const fileName='MCQ_'+store.replace(/\s+/g,'_')+'_'+session.replace(/\s+/g,'')+'_'+date+'.pdf';
+  const blob=doc.output('blob'); const file=new File([blob],fileName,{type:'application/pdf'});
+  const caption='*MCQ '+store+' — '+session+' Checklist*\n'+date+' · '+done+'/'+total+' tasks done';
+  try{
+    if(navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file],title:fileName,text:caption}); toast('Shared ✓'); return; }
+  }catch(e){ if(e&&e.name==='AbortError') return; }
+  expDownload(blob,fileName); window.open('https://wa.me/?text='+encodeURIComponent(caption),'_blank'); toast('PDF saved · WhatsApp opened — attach the PDF');
+}
+/* fallback (no jsPDF): branded printable report with photos */
+function ckSessionPrint(session,rows){
+  const groups={}; rows.forEach(r=>{(groups[r.dept]=groups[r.dept]||{})[r.area]=(groups[r.dept][r.area]||[]);groups[r.dept][r.area].push(r);});
+  let done=0,total=0; let body='<tbody>';
+  Object.entries(groups).forEach(([dept,areas])=>{
+    body+=`<tr><td colspan="3" style="background:#0e9f6e;color:#fff;font-weight:800">${esc(dept)}</td></tr>`;
+    Object.entries(areas).forEach(([area,items])=>{
+      body+=`<tr><td colspan="3" style="background:#ecfdf5;color:#047857;font-weight:700">${esc(area)}</td></tr>`;
+      items.forEach(r=>{ const st=State.chk.state[r.i]||{}, ok=!!st.done; total++; if(ok)done++;
+        const imgs=(st.photos||[]).map(u=>`<img src="${imgSrc(u)}" style="height:74px;border-radius:6px;margin:2px;border:1px solid #ddd">`).join('');
+        const t=st.temp?`<div style="color:${st.temp.inRange===false?'#b91c1c':'#047857'};font-weight:700">Temp: ${st.temp.defrosting?'Defrosting':(st.temp.value!=null?st.temp.value.toFixed(1)+' C':'')}${st.temp.inRange===false?' (OUT OF RANGE)':''}</div>`:'';
+        body+=`<tr><td style="text-align:center;font-size:16px">${ok?'☑':'☐'}</td><td>${esc(r.task)}${t}${st.note?`<div style="color:#64748b">${esc(st.note)}</div>`:''}</td><td>${imgs||'—'}</td></tr>`;
+      });
+    });
+  });
+  body+='</tbody>';
+  const head='<thead><tr><th style="width:30px">✓</th><th>Task</th><th style="width:210px">Photos</th></tr></thead>';
+  expPrintReport(`${session} Checklist`,head+body,`<b>Store:</b> ${esc(expScope())} &nbsp; <b>Session:</b> ${esc(session)} &nbsp; <b>Date:</b> ${new Date().toISOString().slice(0,10)} &nbsp; <b>Done:</b> ${done}/${total}`);
 }
 function exportChecklist(fmt){
   const C=DB.checklist, s=State.chk;
