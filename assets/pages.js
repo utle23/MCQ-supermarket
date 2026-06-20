@@ -414,23 +414,31 @@ async function ckAiTemp(i,fileName,file){
     st.aiError=result&&result.message?result.message:'AI Vision could not read the temperature clearly. Retake a closer, brighter photo of only the display.';
     st.aiQuality=result&&result.quality?result.quality:null;
     st.aiSuggestion=Number.isFinite(suggestion)?{value:suggestion,confidence:result.confidence||null,source:result.source||'AI Vision OCR',text:result.text||'',rawReading:result.rawReading||result.text||''}:null;
-    const manualSetting=result&&Object.prototype.hasOwnProperty.call(result,'manualAllowed');
-    st.aiManualAllowed=!!(result&&(manualSetting?result.manualAllowed:(Number.isFinite(suggestion)||(result.quality&&!result.quality.fail))));
+    st.aiManualAllowed=true;   // always let the user type/confirm the value, even if AI couldn't read it
     st.temp=null;
     st.done=false;
     ckDraw();
     toast(st.aiError);
     return;
   }
-  // success — auto-save only a confident on-device / strong-vision read; OCR or low-confidence → manager confirms or edits
-  const src=String(result.source||''), isOCR=/OCR/i.test(src), conf=Number(result.confidence||0);
-  const trusted = !isOCR && Number.isFinite(result.value) && conf>=88 && result.suggestedValue==null;
-  if(trusted){ ckSaveTempReading(i,result.value,result,false); return; }
+  // Food-safety policy: AI fills the best reading, but a manager/staff member
+  // confirms or edits it before saving. Ambiguous decimal/minus cases are already
+  // routed through the same confirm UI with a safer suggested value.
   st.aiStatus='confirm';
-  st.aiError=`AI Vision read ${result.value.toFixed(1)} °C — confirm or edit before saving.`;
+  st.aiError=ckTempConfirmMessage(result,r.meta.type);
   st.aiSuggestion={value:result.value,confidence:result.confidence||null,source:result.source||'AI Vision',text:result.text||'',rawReading:result.rawReading||result.text||''};
   st.aiManualAllowed=true; st.aiQuality=result.quality||null; st.temp=null; st.done=false;
   ckDraw(); toast(st.aiError);
+}
+function ckTempConfirmMessage(result,type){
+  if(result&&result.message) return result.message;
+  const value=Number(result&&result.value);
+  const raw=String((result&&result.rawReading)||(result&&result.text)||'').trim();
+  const range=ckTempRange(type).text;
+  const rawLine=raw?` Raw display: "${raw}".`:'';
+  return Number.isFinite(value)
+    ? `AI Vision read ${value.toFixed(1)} C.${rawLine} Confirm or edit before saving. Safe range: ${range}.`
+    : `AI Vision needs confirmation. Confirm or retake a closer photo. Safe range: ${range}.`;
 }
 function ckSaveTempReading(i,value,result,manual){
   const r=ckItem(DB.checklist.items[i],i), st=State.chk.state[i]=State.chk.state[i]||{};
@@ -478,7 +486,12 @@ async function ckVisionValue(fileName,file,r,i){
       if(!res.ok && data.fallback) throw new Error(data.message||'AI Vision endpoint unavailable');
       const v=Number(data.temperature ?? data.value ?? data.tempC);
       const confidence=data.confidence==null?null:Number(data.confidence);
-      if(Number.isFinite(v)) return {value:v,source:data.source||'Strong AI Vision',text:data.text||data.rawText||'',confidence,quality:{reason:data.reason||'',model:data.model||''},candidates:Array.isArray(data.candidates)?data.candidates:[]};
+      if(Number.isFinite(v)){
+        const rawText=String(data.displayText||data.text||data.rawText||v);
+        const implicit=ckImplicitTempSuggestion(v,r.meta.type,rawText);
+        if(implicit) return {error:true,suggestedValue:implicit.value,message:implicit.message,source:data.source||'Strong AI Vision',text:rawText,rawReading:rawText,confidence,quality:{reason:data.reason||'',model:data.model||'',ambiguous:true},candidates:[v,implicit.value].concat(Array.isArray(data.candidates)?data.candidates:[]),manualAllowed:true};
+        return {value:v,source:data.source||'Strong AI Vision',text:rawText,rawReading:rawText,confidence,quality:{reason:data.reason||'',model:data.model||''},candidates:Array.isArray(data.candidates)?data.candidates:[]};
+      }
       if(data.error||data.readable===false) return {error:true,message:data.message||'Strong AI Vision could not read a temperature number. Retake a closer photo of the display.',source:data.source||'Strong AI Vision',text:data.text||data.rawText||'',confidence,manualAllowed:false};
     }catch(e){ console.warn('AI Vision endpoint failed, trying browser OCR',e); }
   }
@@ -495,9 +508,12 @@ async function ckOcrTemperature(file,type){
     if(window.Tesseract){
       const raw=await ckTesseractTemperature(file,type,quality,'AI Vision OCR');
       if(raw) return raw;
-      const img=await ckPrepOcrImage(file);
-      const prep=await ckTesseractTemperature(img,type,quality,'AI Vision OCR enhanced');
-      if(prep) return prep;
+      const angles=[0,90,-90,180];
+      for(const angle of angles){
+        const img=await ckPrepOcrImage(file,angle);
+        const prep=await ckTesseractTemperature(img,type,quality,angle?`AI Vision OCR enhanced rotated ${angle}`:'AI Vision OCR enhanced');
+        if(prep) return prep;
+      }
     }
     return {error:true,message:'AI Vision found no readable temperature number. Retake a closer photo of the display with the full number visible.',quality,manualAllowed:false};
   }catch(e){ console.warn('Temperature OCR failed; retake required',e); }
@@ -511,7 +527,11 @@ async function ckTesseractTemperature(img,type,quality,source){
   const text=res?.data?.text||'';
   const confidence=Math.round(res?.data?.confidence||0);
   const pick=ckPickTempFromText(text,type);
-  if(pick&&Number.isFinite(pick.value)) return {value:pick.value,source,text,confidence,quality,candidates:pick.candidates};
+  if(pick&&Number.isFinite(pick.value)){
+    const implicit=ckImplicitTempSuggestion(pick.value,type,text);
+    if(implicit) return {error:true,suggestedValue:implicit.value,message:implicit.message,source,text,rawReading:String(pick.value),confidence,quality:Object.assign({},quality||{},{ambiguous:true}),candidates:[pick.value,implicit.value],manualAllowed:true};
+    return {value:pick.value,source,text,rawReading:text,confidence,quality,candidates:pick.candidates};
+  }
   return null;
 }
 function ckReadRedLedTemperature(file,type,quality){
@@ -528,7 +548,12 @@ function ckReadRedLedTemperature(file,type,quality){
       const reading=ckRecognizeLedComponents(comps,strict,data,w,h,type);
       URL.revokeObjectURL(img.src);
       if(reading&&Number.isFinite(reading.value)){
-        const readingQuality=Object.assign({},quality||{},{led:true,display:reading.box,rawReading:reading.text});
+        const displayCheck=ckLedDisplayCheck(reading,w,h);
+        const readingQuality=Object.assign({},quality||{},{led:true,display:reading.box,rawReading:reading.text,decimalSeen:!!reading.decimal,negativeSeen:!!reading.negative,displayHeight:displayCheck.displayHeight,displayRatio:displayCheck.displayRatio});
+        if(displayCheck.fail){
+          resolve({error:true,message:displayCheck.message,source:'On-device display reader',text:reading.text,rawReading:reading.text,confidence:Math.min(reading.confidence||0,55),quality:readingQuality,manualAllowed:false});
+          return;
+        }
         if(reading.suggestedValue!=null){
           resolve({error:true,suggestedValue:reading.suggestedValue,message:reading.message,source:'On-device display reader',text:reading.text,rawReading:reading.text,confidence:reading.confidence,quality:readingQuality,candidates:[reading.value,reading.suggestedValue],manualAllowed:true});
         }else{
@@ -539,6 +564,16 @@ function ckReadRedLedTemperature(file,type,quality){
     img.onerror=()=>resolve(null);
     img.src=URL.createObjectURL(file);
   });
+}
+function ckLedDisplayCheck(reading,w,h){
+  const box=reading&&reading.box;
+  if(!box) return {fail:true,message:'AI Vision found a number, but could not locate the full display area. Retake a closer photo of the temperature display.'};
+  const displayHeight=Math.max(0,box.y2-box.y1+1), displayWidth=Math.max(0,box.x2-box.x1+1);
+  const displayRatio=displayHeight/Math.max(1,Math.min(w,h));
+  if(displayHeight<22 || displayWidth<10 || displayRatio<0.018){
+    return {fail:true,displayHeight,displayRatio,message:'AI Vision found a possible number, but the display is too small in the photo. Move closer and retake so the LED digits fill the camera view.'};
+  }
+  return {fail:false,displayHeight,displayRatio};
 }
 function ckRedMask(data,w,h,strict){
   const mask=new Uint8Array(w*h);
@@ -606,7 +641,9 @@ function ckRecognizeLedComponents(comps,mask,data,w,h,type){
   // candidate DIGIT-shaped lit blobs. Reject solid fills (panel / header band) by
   // fill ratio — BUT keep thin tall bars, because the digit "1" is a solid bar
   // with fill ≈ 1.0 and would otherwise be dropped.
+  const frameMin=Math.max(1,Math.min(w,h));
   const cands=pool.filter(c=>c.area>=25&&c.h>=10&&c.w>=5&&c.h<=h*0.6&&c.w<=w*0.45
+    && c.x1>1 && c.y1>1 && c.x2<w-2 && c.y2<h-2 && c.h<=frameMin*0.32
     && ((c.area/(c.w*c.h))<=0.92 || c.w<=c.h*0.45));
   if(!cands.length) return null;
   // the reader anchors on the LAST (right-most) digit and reads leftwards, so pick
@@ -650,17 +687,34 @@ function ckRecognizeLedComponents(comps,mask,data,w,h,type){
   const value=Number(text);
   if(!Number.isFinite(value)||value<=-45||value>=80) return null;
   const box=ckUnionBox(near)||main;
-  const out={value,text,confidence:decimal?94:90,box:{x1:box.x1,y1:box.y1,x2:box.x2,y2:box.y2}};
+  const out={value,text,confidence:decimal?94:90,decimal,negative,box:{x1:box.x1,y1:box.y1,x2:box.x2,y2:box.y2}};
   if(!decimal && /^\d{2}$/.test(text)){
     if(type==='freezer' && value>=10 && value<=35){
       out.suggestedValue=-value;
-      out.message=`AI Vision read ${text} on the freezer LED and suggests ${out.suggestedValue.toFixed(1)} C. Confirm, edit the value, or retake if the display is different.`;
+      out.message=`AI Vision read "${text}" on the freezer LED, but the minus sign was not clearly visible. Suggested ${out.suggestedValue.toFixed(1)} C. Confirm, edit, or retake.`;
     }else if(type!=='freezer' && value>=10 && value<=99){
       out.suggestedValue=Math.round(value)/10;
-      out.message=`AI Vision read ${text} on the fridge LED and suggests ${out.suggestedValue.toFixed(1)} C. Confirm, edit the value, or retake if the display is different.`;
+      out.message=`AI Vision read "${text}" on the fridge LED, but the decimal point was not clearly visible. Suggested ${out.suggestedValue.toFixed(1)} C. Confirm, edit, or retake.`;
     }
   }
   return out;
+}
+function ckImplicitTempSuggestion(value,type,rawText){
+  value=Number(value);
+  if(!Number.isFinite(value)) return null;
+  const raw=String(rawText||'').trim();
+  if(/[.,]/.test(raw)) return null;
+  const rounded=Math.round(Math.abs(value));
+  if(Math.abs(Math.abs(value)-rounded)>0.05) return null;
+  if(type==='freezer' && value>=10 && value<=35){
+    const suggested=-rounded;
+    return {value:suggested,message:`AI Vision read "${raw||rounded}" for a freezer, but the minus sign was not clearly visible. Suggested ${suggested.toFixed(1)} C. Confirm, edit, or retake.`};
+  }
+  if(type!=='freezer' && value>=10 && value<=99){
+    const suggested=Math.round(rounded)/10;
+    return {value:suggested,message:`AI Vision read "${raw||rounded}" for a fridge/coolroom, but the decimal point was not clearly visible. Suggested ${suggested.toFixed(1)} C. Confirm, edit, or retake.`};
+  }
+  return null;
 }
 function ckUnionBox(comps){
   if(!comps||!comps.length) return null;
@@ -758,22 +812,32 @@ function ckImageQuality(file){
     img.src=URL.createObjectURL(file);
   });
 }
-function ckPrepOcrImage(file){
+function ckPrepOcrImage(file,angle){
   return new Promise((resolve,reject)=>{
     const img=new Image();
     img.onload=()=>{
       const max=1500, scale=Math.min(1,max/Math.max(img.width,img.height));
+      const sw=Math.max(1,Math.round(img.width*scale)), sh=Math.max(1,Math.round(img.height*scale));
+      const rot=(((angle||0)%360)+360)%360;
       const canvas=document.createElement('canvas');
-      canvas.width=Math.max(1,Math.round(img.width*scale));
-      canvas.height=Math.max(1,Math.round(img.height*scale));
+      canvas.width=(rot===90||rot===270)?sh:sw;
+      canvas.height=(rot===90||rot===270)?sw:sh;
       const ctx=canvas.getContext('2d');
-      ctx.drawImage(img,0,0,canvas.width,canvas.height);
+      if(rot){
+        ctx.translate(canvas.width/2,canvas.height/2);
+        ctx.rotate(rot*Math.PI/180);
+        ctx.drawImage(img,-sw/2,-sh/2,sw,sh);
+      }else{
+        ctx.drawImage(img,0,0,sw,sh);
+      }
       const data=ctx.getImageData(0,0,canvas.width,canvas.height);
       for(let p=0;p<data.data.length;p+=4){
         const r=data.data[p],g=data.data[p+1],b=data.data[p+2];
         const mx=Math.max(r,g,b),mn=Math.min(r,g,b),sat=mx-mn;
-        const lit=(mx>120&&sat>55)||(mn>205&&mx>240);
-        const v=lit?0:255;            // dark digits on white background — what Tesseract reads best
+        const l=r*0.299+g*0.587+b*0.114;
+        const ledLit=(mx>120&&sat>55)||(mn>205&&mx>240);
+        const lcdDark=l<105&&mx<145&&sat<105;
+        const v=(ledLit||lcdDark)?0:255;            // dark digits on white background — what Tesseract reads best
         data.data[p]=data.data[p+1]=data.data[p+2]=v;
       }
       ctx.putImageData(data,0,0);
@@ -808,14 +872,14 @@ function ckTempBox(r,st){
   const range=ckTempRange(r.meta.type), temp=st.temp;
   const needsConfirm=st.aiStatus==='confirm';
   const status=st.defrosting?'defrost':(temp?(temp.inRange?'ok':'bad'):(st.aiStatus==='scanning'?'scan':(needsConfirm?'confirm':(st.aiStatus==='error'?'error':'idle'))));
-  const reading=st.defrosting?'DEFROSTING':(temp?`${temp.value.toFixed(1)} C`:(st.aiStatus==='scanning'?'Scanning photo...':(needsConfirm?'Confirm temperature':(st.aiStatus==='error'?'Retake or confirm':'Waiting for photo'))));
-  const source=temp?` · ${temp.source||'AI Vision'}${temp.confidence?` ${temp.confidence}%`:''}`:'';
-  const detail=temp?`${temp.inRange?'Within safety range':'Outside safety range - Gmail alert queued'}${source}`:((st.aiStatus==='error'||needsConfirm)?(st.aiError||'AI Vision could not read the number clearly'):`Safety range ${range.text}`);
   const manualValue=Number.isFinite(Number(st.aiSuggestion?.value))?Number(st.aiSuggestion.value).toFixed(1):'';
+  const reading=st.defrosting?'DEFROSTING':(temp?`${temp.value.toFixed(1)} C`:(st.aiStatus==='scanning'?'Scanning photo...':(needsConfirm?(manualValue!==''?`AI read ${manualValue} °C`:'Enter temperature'):(st.aiStatus==='error'?'Check / enter temperature':'Waiting for photo'))));
+  const source=temp?` · ${temp.source||'AI Vision'}${temp.confidence?` ${temp.confidence}%`:''}`:'';
+  const detail=temp?`${temp.inRange?'Within safety range':'Outside safety range - Gmail alert queued'}${source}`:((st.aiStatus==='error'||needsConfirm)?'Edit the value if it is wrong, then tap Confirm.':`Safety range ${range.text}`);
   const showRetake=!temp&&!st.defrosting&&(st.aiStatus==='error'||needsConfirm);
   const manual=showRetake?`<div class="ck-temp-manual">
-      ${st.aiManualAllowed?`<input id="ck-temp-manual-${r.i}" type="number" step="0.1" min="-45" max="35" value="${esc(manualValue)}" placeholder="Enter °C">
-      <button class="mini good" type="button" onclick="ckManualTemp(${r.i})">Confirm</button>`:''}
+      <input id="ck-temp-manual-${r.i}" type="number" step="0.1" min="-45" max="35" value="${esc(manualValue)}" placeholder="Enter °C">
+      <button class="mini good" type="button" onclick="ckManualTemp(${r.i})">Confirm</button>
       <button class="mini" type="button" onclick="ckRetakeTemp(${r.i})">Retake</button>
     </div>`:'';
   return `<div class="ck-temp-box ${status}">
