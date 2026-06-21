@@ -9,7 +9,7 @@ Run standalone (local API only):
   cd server && python3 -m pip install -r requirements.txt
   python3 app.py            # http://localhost:8001
 """
-import os, sys, json, time, secrets
+import os, sys, json, time, secrets, urllib.request, urllib.error
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # so `import db` works when imported as server.app too
 import db
 from flask import Blueprint, Flask, request, jsonify, send_file, abort
@@ -177,6 +177,32 @@ def audit_log():
     db.write_audit(uid(au), store_id, d.get('action', 'update'), d.get('entity_type', 'record'),
                    d.get('entity_id', ''), d.get('before_json'), d.get('after_json'))
     return jsonify(ok=True)
+
+# ---------- email relay (Brevo) — API key stays on the SERVER, never in the frontend / repo ----------
+@api.route('/api/send-email', methods=['POST'])
+def send_email():
+    require_auth()
+    key = os.environ.get('BREVO_API_KEY', '')
+    d = request.get_json(force=True, silent=True) or {}
+    to = [r for r in (d.get('to') or []) if r.get('email')]
+    if not to: return jsonify(ok=False, error='no recipients'), 400
+    if not key: return jsonify(ok=False, fallback=True, error='BREVO_API_KEY not set on the server'), 200
+    sender = {'email': d.get('fromEmail') or os.environ.get('MCQ_FROM_EMAIL', 'mcqcafe.notify@gmail.com'),
+              'name':  d.get('fromName')  or os.environ.get('MCQ_FROM_NAME', 'MCQ Supermarket Notification')}
+    payload = {'sender': sender,
+               'to': [{'email': r['email'], 'name': r.get('name') or r['email']} for r in to],
+               'subject': d.get('subject') or 'MCQ Supermarket',
+               'htmlContent': d.get('html') or ('<pre style="font-family:Arial">' + (d.get('text') or '') + '</pre>')}
+    req = urllib.request.Request('https://api.brevo.com/v3/smtp/email',
+        data=json.dumps(payload).encode('utf-8'),
+        headers={'api-key': key, 'content-type': 'application/json', 'accept': 'application/json'}, method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return jsonify(ok=(200 <= resp.status < 300), sent=len(to))
+    except urllib.error.HTTPError as e:
+        return jsonify(ok=False, error='brevo ' + str(e.code), detail=e.read().decode('utf-8', 'ignore')[:200]), 200
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)), 200
 
 # ---------- CORS (only needed when frontend is on a different origin, e.g. local :8765↔:8001) ----------
 def add_cors(app):

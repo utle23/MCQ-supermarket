@@ -30,7 +30,9 @@ DB.emailRecipients = [
 ];
 /* email sending config (copies the restaurant: Brevo HTTP API, + Gmail-compose / mailto fallbacks).
    channel: 'preview' (demo toast) | 'brevo' (auto-send via api.brevo.com) | 'gmail' | 'mailto' */
-DB.emailConfig = { channel:'preview', apiKey:'', fromEmail:'', fromName:'MCQ Supermarket' };
+/* Brevo by default; the API KEY is NOT here — it lives in the server env var
+   BREVO_API_KEY and is used by the /api/send-email relay. Sender/name are not secret. */
+DB.emailConfig = { channel:'brevo', apiKey:'', fromEmail:'mcqcafe.notify@gmail.com', fromName:'MCQ Supermarket Notification' };
 /* default recipients per category group */
 const _GROUP_RECIPIENTS = {
   'Maintenance & Facility':['fac','ho'],

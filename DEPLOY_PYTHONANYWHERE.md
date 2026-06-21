@@ -26,13 +26,26 @@ pip install --user -r requirements.txt
 - **Working directory:** `/home/YOURUSER/MCQ-supermarket`
 - Click the **WSGI configuration file** link and replace its whole contents with:
 ```python
-import sys
+import os, sys
 path = '/home/YOURUSER/MCQ-supermarket'      # <-- change YOURUSER
 if path not in sys.path:
     sys.path.insert(0, path)
+
+# --- email (silent send via Brevo). The KEY lives ONLY here on the server,
+#     never in the GitHub code. Paste your CURRENT Brevo key below. ---
+os.environ['BREVO_API_KEY'] = 'xkeysib-...your-key...'
+os.environ['MCQ_FROM_EMAIL'] = 'mcqcafe.notify@gmail.com'
+os.environ['MCQ_FROM_NAME']  = 'MCQ Supermarket Notification'
+
 from flask_app import app as application
 ```
 - **Virtualenv:** leave blank if you used `pip install --user`.
+- 🔐 **Email key:** the WSGI file lives on PythonAnywhere only (not on GitHub), so the
+  Brevo key stays private. With it set, every store sends email **silently** (temperature
+  alerts, verify notes, checklist notifications) via `/api/send-email` — no per-store
+  setup, no key in the frontend. Without it, the app falls back to demo/Gmail-compose.
+  ⚠️ The key shared earlier in chat is exposed — **regenerate it in Brevo** (SMTP & API →
+  API Keys) and paste the NEW one here.
 
 ## 4. Reload & open
 - Click the green **Reload** button.

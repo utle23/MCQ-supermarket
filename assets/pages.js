@@ -2370,7 +2370,7 @@ Progress: ${s.done}/${s.total} (${s.progress}%)
 Assessment note:
 ${note}`;
   const cfg=(window.mcqEmail&&mcqEmail.cfg&&mcqEmail.cfg())||DB.emailConfig||{};
-  if(cfg.channel==='brevo' && cfg.apiKey && cfg.fromEmail){ mcqEmail._brevo(to,subject,body,cfg); return 'silent'; }   // send in the background, no window
+  if(window.mcqEmail && mcqEmail.canBrevo && mcqEmail.canBrevo()){ mcqEmail._brevo(to,subject,body,cfg); return 'silent'; }   // send in the background, no window
   if(window.mcqEmail && mcqEmail._gmail) mcqEmail._gmail(to,subject,body);
   else window.open('https://mail.google.com/mail/?view=cm&fs=1&to='+encodeURIComponent(to.map(r=>r.email).join(','))+'&su='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body),'_blank');
   return 'compose';
@@ -2657,8 +2657,15 @@ window.mcqEmail={
     else keys=recips.map(r=>r.key);   // violation & others broadcast
     return recips.filter(r=>keys.includes(r.key)&&r.email); },
   _html(title,body){ return `<div style="font-family:Arial,Helvetica,sans-serif;color:#1f2937;max-width:640px;margin:auto"><div style="background:linear-gradient(135deg,#0e9f6e,#0891b2);color:#fff;padding:16px 20px;border-radius:12px 12px 0 0"><div style="font-weight:800;font-size:18px">MCQ Supermarket</div><div style="opacity:.9;font-size:13px">${esc(title)}</div></div><div style="border:1px solid #e5e7eb;border-top:0;padding:18px 20px;border-radius:0 0 12px 12px;white-space:pre-wrap;font-size:14px;line-height:1.55">${esc(body)}</div><div style="color:#9ca3af;font-size:11px;text-align:center;margin-top:10px">Automated notification · MCQ Supermarket Operations</div></div>`; },
+  // can we send silently?
+  //  • server relay present (key on the server) → send silently by default, unless the
+  //    admin explicitly chose Gmail compose or the device mail app.
+  //  • no relay → only if a frontend Brevo key + sender are configured.
+  canBrevo(){ const c=this.cfg();
+    if(window.MCQ_EMAIL_RELAY) return c.channel!=='gmail' && c.channel!=='mailto';
+    return c.channel==='brevo' && !!c.apiKey && !!c.fromEmail; },
   notify(eventType,subject,body,meta){ const to=this.recipients(eventType,meta); if(!to.length) return; const cfg=this.cfg();
-    if(cfg.channel==='brevo'&&cfg.apiKey&&cfg.fromEmail) return this._brevo(to,subject,body,cfg);
+    if(this.canBrevo()) return this._brevo(to,subject,body,cfg);
     if(cfg.channel==='gmail'){ this._gmail(to,subject,body); toast(`📧 Gmail compose opened · ${to.length} recipient(s)`); return; }
     if(cfg.channel==='mailto'){ window.location.href=this._mailto(to,subject,body); return; }
     toast(`📧 ${to.length} recipient(s) would be notified (demo) — enable real sending in Email settings`); },
@@ -2667,19 +2674,28 @@ window.mcqEmail={
     (extraEmails||[]).forEach(e=>{ e=String(e||'').trim(); if(e&&!seen[e.toLowerCase()]){ seen[e.toLowerCase()]=1; to.push({email:e,name:e}); } });
     try{ (window.mgrStoreRecipients?mgrStoreRecipients(State.branch):[]).forEach(r=>{ if(r.email&&!seen[r.email.toLowerCase()]){ seen[r.email.toLowerCase()]=1; to.push(r); } }); }catch(e){}
     if(!to.length) return false;
-    if(cfg.channel==='brevo'&&cfg.apiKey&&cfg.fromEmail){ this._brevo(to,subject,body,cfg); return 'silent'; }   // background, no window
+    if(this.canBrevo()){ this._brevo(to,subject,body,cfg); return 'silent'; }   // background, no window
     if(cfg.channel==='gmail'){ this._gmail(to,subject,body); return 'compose'; }
     return 'queued';
   },
   _brevo(to,subject,body,cfg){
+    cfg=cfg||this.cfg();
+    if(window.MCQ_EMAIL_RELAY){   // preferred: server holds the key (nothing secret in the browser/repo)
+      fetch(window.MCQ_EMAIL_RELAY,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+((window.localStorage&&localStorage.getItem('mcq_token'))||'')},
+        body:JSON.stringify({to:to.map(r=>({email:r.email,name:r.name})),subject,html:this._html(subject,body),fromEmail:cfg.fromEmail,fromName:cfg.fromName})})
+        .then(r=>r.json().catch(()=>({}))).then(d=>{ toast(d&&d.ok?`📧 Sent to ${to.length} (Brevo)`:('📧 Not sent: '+((d&&d.error)||'set BREVO_API_KEY on the server'))); })
+        .catch(()=>toast('📧 Email server unreachable'));
+      return;
+    }
+    if(!(cfg.apiKey&&cfg.fromEmail)){ toast('📧 Brevo not configured'); return; }
     fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'accept':'application/json','content-type':'application/json','api-key':cfg.apiKey},
       body:JSON.stringify({sender:{name:cfg.fromName||'MCQ Supermarket',email:cfg.fromEmail},to:to.map(r=>({email:r.email,name:r.name})),subject,htmlContent:this._html(subject,body)})})
       .then(r=>{ if(r.ok) toast(`📧 Sent to ${to.length} via Brevo`); else toast('📧 Brevo error '+r.status+' — check API key / sender'); })
-      .catch(()=>toast('📧 Browser blocked Brevo (CORS) — use Gmail compose, or send via a server relay')); },
+      .catch(()=>toast('📧 Browser blocked Brevo (CORS) — deploy on the server to send silently')); },
   _gmail(to,subject,body){ window.open('https://mail.google.com/mail/?view=cm&fs=1&to='+encodeURIComponent(to.map(r=>r.email).join(','))+'&su='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body),'_blank'); },
   _mailto(to,subject,body){ return 'mailto:'+encodeURIComponent(to.map(r=>r.email).join(','))+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body); },
   test(){ const cfg=this.cfg(), to=(DB.emailRecipients||[]).filter(r=>r.email).slice(0,1); if(!to.length){toast('No recipients with an email');return;}
-    if(cfg.channel==='brevo'&&cfg.apiKey&&cfg.fromEmail) this._brevo(to,'MCQ Supermarket — test email','This is a test notification from MCQ Supermarket. If you received this, real email sending works.',cfg);
+    if(this.canBrevo()) this._brevo(to,'MCQ Supermarket — test email','This is a test notification from MCQ Supermarket. If you received this, real email sending works.',cfg);
     else if(cfg.channel==='gmail'){ this._gmail(to,'MCQ Supermarket — test email','This is a test notification from MCQ Supermarket.'); toast('📧 Gmail compose opened'); }
     else if(cfg.channel==='mailto'){ window.location.href=this._mailto(to,'MCQ Supermarket — test email','Test'); }
     else toast('Demo mode — choose Brevo or Gmail to actually send'); }
