@@ -289,7 +289,13 @@ function ckDraw(){
     });
     html+=`</div>`;
   });
-  $('#chk-body').innerHTML=html||'<div class="empty">No tasks for this filter.</div>';
+  $('#chk-body').innerHTML=html||(isAdmin()
+    ? `<div class="empty"><div class="e-ic">📝</div>No ${esc(State.chk.session)} tasks in ${esc(State.chk.dept)} yet.
+        <div style="margin-top:12px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
+          <button class="btn primary" onclick="ckAddTask('${ckJS(State.chk.dept)}','${ckJS(ckCurrentArea())}')"><i class="fas fa-plus"></i>&nbsp; Add task</button>
+          <button class="btn" onclick="ckAddSection('${ckJS(State.chk.dept)}')"><i class="fas fa-layer-group"></i>&nbsp; Add section</button>
+        </div></div>`
+    : '<div class="empty"><div class="e-ic">✅</div>No tasks for this filter.</div>');
   const report=$('#ck-temp-report'); if(report) report.innerHTML=(State.chk.dept==='MANAGER')?ckTempReportHTML():'';
   ckProgress();
 }
@@ -644,9 +650,13 @@ function ckReadRedLedTemperature(file,type,quality){
       const canvas=document.createElement('canvas'); canvas.width=w; canvas.height=h;
       const ctx=canvas.getContext('2d',{willReadFrequently:true}); ctx.drawImage(img,0,0,w,h);
       const data=ctx.getImageData(0,0,w,h).data;
-      const strict=ckLedMask(data,w,h);
-      const comps=ckMaskComponents(strict,w,h).filter(c=>c.area>=8);
-      const reading=ckRecognizeLedComponents(comps,strict,data,w,h,type);
+      // Try BOTH display polarities and keep the first that yields a valid reading:
+      //  (1) bright/coloured segments on a dark panel (red/blue/green LED)
+      //  (2) dark segments on a light panel (grey LCD probes)
+      const tryPolarity=(mask,pol)=>{ const comps=ckMaskComponents(mask,w,h).filter(c=>c.area>=8); return {mask,reading:ckRecognizeLedComponents(comps,mask,data,w,h,type,pol)}; };
+      let res=tryPolarity(ckLedMask(data,w,h),'led');
+      if(!(res.reading&&Number.isFinite(res.reading.value))) res=tryPolarity(ckLcdMask(data,w,h),'lcd');
+      const strict=res.mask, reading=res.reading;
       URL.revokeObjectURL(img.src);
       if(reading&&Number.isFinite(reading.value)){
         const displayCheck=ckLedDisplayCheck(reading,w,h);
@@ -701,6 +711,19 @@ function ckLedMask(data,w,h){
   }
   return mask;
 }
+/* Dark segments on a LIGHT panel (grey/white LCD probes): mark pixels that are
+   clearly darker than the scene average and not strongly coloured. */
+function ckLcdMask(data,w,h){
+  let sum=0; const n=w*h;
+  for(let i=0;i<data.length;i+=4) sum+=data[i]*0.299+data[i+1]*0.587+data[i+2]*0.114;
+  const mean=sum/n, thr=Math.min(150,Math.max(45,mean*0.6));
+  const mask=new Uint8Array(n);
+  for(let i=0,p=0;i<data.length;i+=4,p++){ const r=data[i],g=data[i+1],b=data[i+2];
+    const L=r*0.299+g*0.587+b*0.114, sat=Math.max(r,g,b)-Math.min(r,g,b);
+    if(L<thr && sat<90) mask[p]=1;
+  }
+  return mask;
+}
 function ckMaskComponents(mask,w,h){
   const seen=new Uint8Array(mask.length), out=[], stack=[];
   for(let p=0;p<mask.length;p++){
@@ -734,10 +757,20 @@ function ckCompOnDarkBg(c,data,w,h){
   for(let y=c.y1;y<=c.y2;y+=2){ at(c.x1-pad,y); at(c.x2+pad,y); }
   return n? (dark/n)>=0.45 : true;   // mostly-dark surround ⇒ on a display (tolerates a bright edge)
 }
-function ckRecognizeLedComponents(comps,mask,data,w,h,type){
-  // keep only lit blobs sitting on a dark display background (drops bright clutter
-  // in a wide frame). Fall back to all blobs if that leaves nothing.
-  const onDisplay=data?comps.filter(c=>ckCompOnDarkBg(c,data,w,h)):comps;
+// LCD counterpart: a dark segment sits on a LIGHT display body.
+function ckCompOnLightBg(c,data,w,h){
+  const pad=Math.max(2,Math.round(Math.min(c.w,c.h)*0.35));
+  let light=0,n=0;
+  const at=(x,y)=>{ if(x<0||y<0||x>=w||y>=h) return; const p=(y*w+x)*4; const L=data[p]*0.299+data[p+1]*0.587+data[p+2]*0.114; n++; if(L>110) light++; };
+  for(let x=c.x1-pad;x<=c.x2+pad;x+=2){ at(x,c.y1-pad); at(x,c.y2+pad); }
+  for(let y=c.y1;y<=c.y2;y+=2){ at(c.x1-pad,y); at(c.x2+pad,y); }
+  return n? (light/n)>=0.45 : true;
+}
+function ckRecognizeLedComponents(comps,mask,data,w,h,type,polarity){
+  // keep only blobs sitting on the display body (drops clutter in a wide frame):
+  // LED → dark surround; LCD → light surround. Fall back to all blobs if empty.
+  const surroundOk = polarity==='lcd' ? (c=>ckCompOnLightBg(c,data,w,h)) : (c=>ckCompOnDarkBg(c,data,w,h));
+  const onDisplay=data?comps.filter(surroundOk):comps;
   const pool=onDisplay.length?onDisplay:comps;
   // candidate DIGIT-shaped lit blobs. Reject solid fills (panel / header band) by
   // fill ratio — BUT keep thin tall bars, because the digit "1" is a solid bar
@@ -855,19 +888,25 @@ function ckSevenDigit(box,mask,w,h){
     0:'abcdef', 1:'bc', 2:'abged', 3:'abgcd', 4:'fgbc', 5:'afgcd',
     6:'afgecd', 7:'abc', 8:'abcdefg', 9:'abfgcd'
   };
-  // thickness-independent match: a digit is the pattern whose ON segments are lit
-  // and OFF segments are dark. Scoring by (avg ON occupancy − avg OFF occupancy)
-  // keeps every digit on an equal footing, so dense digits (8/0/6/9) no longer sit
-  // on the edge of a fixed sum threshold and drop out when segments are thin.
+  // Binarize each segment ON/OFF using a threshold relative to this digit's own
+  // segment occupancies, then pick the pattern with the smallest mismatch (Hamming).
+  // This is far more robust than averaging: a "3" no longer collapses to "8" just
+  // because its OFF segments (e,f) pick up a little bleed.
+  const vals=Object.values(occ), maxOcc=Math.max.apply(null,vals);
+  if(maxOcc<0.25) return null;                       // nothing really lit
+  const thr=Math.max(0.30, maxOcc*0.55);
+  const ON={}; 'abcdefg'.split('').forEach(s=>ON[s]=occ[s]>=thr?1:0);
   let best=null;
   Object.entries(patterns).forEach(([d,segs])=>{
-    const on=segs.split(''), off='abcdefg'.split('').filter(s=>!segs.includes(s));
-    const avgOn=on.reduce((a,s)=>a+occ[s],0)/on.length;
-    const avgOff=off.length?off.reduce((a,s)=>a+occ[s],0)/off.length:0;
-    const score=avgOn-avgOff;
-    if(!best||score>best.score) best={digit:d,score,avgOn};
+    let dist=0, conf=0;
+    'abcdefg'.split('').forEach(s=>{ const want=segs.includes(s)?1:0;
+      if(want!==ON[s]) dist++;
+      // soft confidence: reward clear agreement
+      conf += want ? occ[s] : (1-Math.min(1,occ[s]/Math.max(0.001,thr)));
+    });
+    if(!best||dist<best.dist||(dist===best.dist&&conf>best.conf)) best={digit:d,dist,conf};
   });
-  return best&&best.avgOn>0.22&&best.score>0.12?best.digit:null;
+  return best&&best.dist<=1?best.digit:null;          // tolerate at most one wrong segment
 }
 function ckPickTempFromText(text,type){
   const clean=String(text||'').replace(/[−–—]/g,'-').replace(/,/g,'.');
