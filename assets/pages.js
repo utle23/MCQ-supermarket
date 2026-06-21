@@ -706,7 +706,7 @@ function ckLedMask(data,w,h){
   for(let i=0,p=0;i<data.length;i+=4,p++){
     const r=data[i], g=data[i+1], b=data[i+2];
     const mx=Math.max(r,g,b), mn=Math.min(r,g,b), sat=mx-mn;
-    const lit=(mx>120 && sat>55) || (mn>205 && mx>240);
+    const lit=(mx>120 && sat>55) || (mn>175 && mx>210);   // 2nd clause = white/very-light segments (low saturation)
     if(lit) mask[p]=1;
   }
   return mask;
@@ -778,7 +778,7 @@ function ckRecognizeLedComponents(comps,mask,data,w,h,type,polarity){
   const frameMin=Math.max(1,Math.min(w,h));
   const cands=pool.filter(c=>c.area>=25&&c.h>=10&&c.w>=5&&c.h<=h*0.6&&c.w<=w*0.45
     && c.x1>1 && c.y1>1 && c.x2<w-2 && c.y2<h-2 && c.h<=frameMin*0.32
-    && ((c.area/(c.w*c.h))<=0.92 || c.w<=c.h*0.45));
+    && ((c.area/(c.w*c.h))<=0.80 || c.w<=c.h*0.45));   // sparse = digit; solid block = panel/LCD body → reject (thin "1" exempt)
   if(!cands.length) return null;
   // the reader anchors on the LAST (right-most) digit and reads leftwards, so pick
   // the right-most among the FULL-HEIGHT blobs (digits share a height; a "1" is
