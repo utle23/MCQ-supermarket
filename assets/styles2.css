@@ -17,8 +17,9 @@
 .mcq-logo.lg img{height:112px;filter:drop-shadow(0 14px 26px rgba(0,0,0,.18))}
 
 /* ---------------- LOGIN ---------------- */
-.login-root{position:fixed;inset:0;display:none;align-items:center;justify-content:center;padding:24px;z-index:100;
-  background:linear-gradient(150deg,#06402e 0%,#0a6b54 32%,#0b7d8f 63%,#163e83 100%);overflow:hidden}
+.login-root{position:fixed;inset:0;display:none;align-items:flex-start;justify-content:center;z-index:100;overflow-y:auto;
+  padding:calc(24px + env(safe-area-inset-top,0px)) 20px calc(24px + env(safe-area-inset-bottom,0px));
+  background:linear-gradient(150deg,#06402e 0%,#0a6b54 32%,#0b7d8f 63%,#163e83 100%)}
 .login-bg{position:absolute;inset:0;overflow:hidden}
 .login-bg .orb{position:absolute;border-radius:50%;filter:blur(72px);opacity:.6;mix-blend-mode:screen}
 .login-bg .o1{width:520px;height:520px;background:#22e39a;top:-150px;left:-110px;animation:float1 14s ease-in-out infinite}
@@ -27,7 +28,7 @@
 .login-bg .o4{width:300px;height:300px;background:#f59e0b;bottom:6%;left:12%;opacity:.34;animation:float2 18s ease-in-out infinite}
 @keyframes float1{0%,100%{transform:translate(0,0)}50%{transform:translate(40px,30px)}}
 @keyframes float2{0%,100%{transform:translate(0,0)}50%{transform:translate(-40px,-30px)}}
-.login-card{position:relative;z-index:2;width:100%;max-width:430px;background:rgba(255,255,255,.97);
+.login-card{position:relative;z-index:2;width:100%;max-width:430px;margin:auto;background:rgba(255,255,255,.97);
   border-radius:26px;padding:34px 34px 26px;box-shadow:0 30px 80px rgba(0,0,0,.45);animation:fade .4s ease}
 .login-brand{display:flex;flex-direction:column;align-items:center;gap:8px;margin-bottom:20px;text-align:center}
 .login-brand .lb-sub{font-size:12px;color:var(--muted);font-weight:700;letter-spacing:.02em}

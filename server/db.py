@@ -92,6 +92,12 @@ def hash_pw(pw):
 def init_db():
     conn = connect()
     conn.executescript(SCHEMA)
+    # migration: schedule_history needs a stable client id so merge-saves upsert
+    # (instead of duplicating) and concurrent users don't clobber each other.
+    try: conn.execute('ALTER TABLE schedule_history ADD COLUMN rec_id TEXT')
+    except Exception: pass
+    try: conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_sched_recid ON schedule_history(store_id, rec_id)')
+    except Exception: pass
     # seed stores
     for s in STORES:
         conn.execute('INSERT OR IGNORE INTO stores(id,name,active,created_at) VALUES(?,?,1,?)', (s, s, now()))
@@ -174,8 +180,8 @@ def save_state(store_id, state, user):
     state = dict(state or {})
     conn = connect()
     try:
-        # records (per module)
-        conn.execute('DELETE FROM records WHERE store_id=?', (store_id,))
+        # records (per module) — MERGE (upsert): never mass-delete, so concurrent
+        # editors at the same store accumulate rows instead of wiping each other.
         modules = state.get('modules') or {}
         if isinstance(modules, dict):
             for m, arr in modules.items():
@@ -184,29 +190,27 @@ def save_state(store_id, state, user):
                     rid = str((isinstance(r, dict) and r.get('id')) or (str(m) + '#' + str(i)))
                     conn.execute('INSERT OR REPLACE INTO records(id,store_id,module,data_json,created_at) VALUES(?,?,?,?,?)',
                                  (rid, store_id, str(m), json.dumps(r), now()))
-        # staff
-        conn.execute('DELETE FROM staff WHERE store_id=?', (store_id,))
+        # staff (merge/upsert)
         staff = state.get('staff') or []
         if isinstance(staff, list):
             for i, s in enumerate(staff):
                 sid = str((isinstance(s, dict) and (s.get('id') or s.get('code'))) or ('s#' + str(i)))
                 conn.execute('INSERT OR REPLACE INTO staff(id,store_id,data_json) VALUES(?,?,?)', (sid, store_id, json.dumps(s)))
-        # checklist submissions (carried as a JSON string in the blob)
-        conn.execute('DELETE FROM checklist_submissions WHERE store_id=?', (store_id,))
+        # checklist submissions (merge/upsert)
         subs = _parse(state.get('checklistSubs'))
         if isinstance(subs, list):
             for i, s in enumerate(subs):
                 cid = str((isinstance(s, dict) and s.get('id')) or ('c#' + str(i)))
                 conn.execute('INSERT OR REPLACE INTO checklist_submissions(id,store_id,data_json,created_at) VALUES(?,?,?,?)',
                              (cid, store_id, json.dumps(s), now()))
-        # schedule history
-        conn.execute('DELETE FROM schedule_history WHERE store_id=?', (store_id,))
+        # schedule history (merge/upsert by client record id, deduped via rec_id index)
         sh = _parse(state.get('scheduleHistory'))
         if isinstance(sh, list):
-            for r in sh:
-                conn.execute('INSERT INTO schedule_history(store_id,data_json,created_at) VALUES(?,?,?)', (store_id, json.dumps(r), now()))
-        # bin records (nested inside binAdmin JSON string)
-        conn.execute('DELETE FROM bin_records WHERE store_id=?', (store_id,))
+            for i, r in enumerate(sh):
+                rid = str((isinstance(r, dict) and r.get('id')) or ('sh#' + str(i)))
+                conn.execute('INSERT OR REPLACE INTO schedule_history(rec_id,store_id,data_json,created_at) VALUES(?,?,?,?)',
+                             (rid, store_id, json.dumps(r), now()))
+        # bin records (merge/upsert)
         ba = _parse(state.get('binAdmin'))
         bin_recs = ba.get('records') if isinstance(ba, dict) else None
         if isinstance(bin_recs, list):

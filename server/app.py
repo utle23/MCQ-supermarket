@@ -178,6 +178,38 @@ def audit_log():
                    d.get('entity_id', ''), d.get('before_json'), d.get('after_json'))
     return jsonify(ok=True)
 
+# ---------- explicit delete (save() now MERGES, so real deletes go through here) ----------
+@api.route('/api/delete', methods=['POST'])
+def delete_records():
+    au = require_auth()
+    d = request.get_json(force=True, silent=True) or {}
+    store = d.get('store_id'); require_store(au, store)
+    table = d.get('table')
+    if table not in ('records', 'staff', 'checklist_submissions', 'bin_records', 'schedule_history'):
+        abort(400)
+    idcol = 'rec_id' if table == 'schedule_history' else 'id'
+    # scope: a specific store (admin or super), or ALL stores (super only)
+    all_stores = (au['role'] == 'super' and store not in db.STORES)
+    if not all_stores:
+        require_store(au, store)
+    scope = '' if all_stores else ' store_id=?'
+    base = [] if all_stores else [store]
+    conn = db.connect()
+    try:
+        if d.get('all'):
+            conn.execute('DELETE FROM ' + table + (' WHERE' + scope if scope else ''), base)
+        else:
+            ids = [str(x) for x in (d.get('ids') or []) if x is not None]
+            for chunk in [ids[i:i+400] for i in range(0, len(ids), 400)]:
+                if not chunk: continue
+                cond = (scope + ' AND' if scope else '') + ' ' + idcol + ' IN (' + ','.join('?'*len(chunk)) + ')'
+                conn.execute('DELETE FROM ' + table + ' WHERE' + cond, base + chunk)
+        conn.commit()
+    finally:
+        conn.close()
+    db.write_audit(uid(au), store, 'delete', table, 'ALL' if d.get('all') else ','.join((d.get('ids') or [])[:5]), None, None)
+    return jsonify(ok=True)
+
 # ---------- email relay (Brevo) — API key stays on the SERVER, never in the frontend / repo ----------
 @api.route('/api/send-email', methods=['POST'])
 def send_email():

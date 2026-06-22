@@ -29,6 +29,17 @@
   // server-side AI Vision (OpenAI/ChatGPT key lives on the server)
   window.MCQ_AI_VISION_ENDPOINT = (BASE||'') + '/api/vision-temp';
   window.MCQ_VISION_TEXT_ENDPOINT = (BASE||'') + '/api/vision-text';
+  // explicit delete — the per-store save MERGES (never mass-deletes), so real deletions
+  // are propagated here. table: records|staff|checklist_submissions|bin_records|schedule_history
+  window.mcqDeleteRecords = function(table, ids, opts){
+    try{
+      var tok=(window.localStorage&&localStorage.getItem('mcq_token'))||'';
+      var store=(opts&&opts.store)||(window.State&&State.branch)||'';
+      var body={store_id:store, table:table};
+      if(opts&&opts.all) body.all=true; else body.ids=(ids||[]).map(String);
+      return fetch((BASE||'')+'/api/delete',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+tok},body:JSON.stringify(body)}).catch(function(){});
+    }catch(e){}
+  };
   var TOKEN = (window.localStorage && localStorage.getItem('mcq_token')) || '';
   var api = function(p){ return (BASE||'') + p; };
   function headers(json){ var h={}; if(json) h['Content-Type']='application/json'; if(TOKEN) h['Authorization']='Bearer '+TOKEN; return h; }

@@ -130,9 +130,28 @@ function ckInSession(r,session){
 function ckDeadline(session){ return ((DB.checklist&&DB.checklist.deadlines)||{})[session] || CK_DEADLINE[session] || ''; }
 function ckEditDeadline(session){ const v=prompt('Deadline for '+session+' (e.g. 10:30 AM):', ckDeadline(session)); if(v==null) return;
   DB.checklist.deadlines=DB.checklist.deadlines||{}; DB.checklist.deadlines[session]=v.trim(); if(window.persist)window.persist(); renderChecklist(); toast('✓ Deadline updated'); }
+/* ---- in-progress checklist DRAFT (survives accidental close / lock / app-switch) ----
+   Saved to localStorage per store + day. Only small data (done flags, notes, temp
+   objects, photo IDs) — no image blobs — so it stays tiny. Restored on reopen. */
+function ckDraftKey(){ return 'mcq_ckdraft_'+(State.branch||'store')+'_'+ckTodayStr(); }
+let _ckDraftTimer=null;
+function ckWriteDraft(){ try{ if(!State.chk) return; localStorage.setItem(ckDraftKey(), JSON.stringify({state:State.chk.state||{}, resp:State.chk.resp||{}, t:Date.now()})); }catch(e){} }
+function ckSaveDraft(){ clearTimeout(_ckDraftTimer); _ckDraftTimer=setTimeout(ckWriteDraft, 500); }   // debounced
+function ckRestoreDraft(){ try{
+  const raw=localStorage.getItem(ckDraftKey()); if(!raw) return;
+  const d=JSON.parse(raw);
+  if(d && d.state && Object.keys(d.state).length){
+    State.chk.state=d.state; State.chk.resp=d.resp||{};
+    try{ Object.values(d.state).forEach(st=>{ ((st&&st.photos)||[]).forEach(id=>{ if(window.MCQDB&&MCQDB.fetchPhoto) MCQDB.fetchPhoto(id); }); }); }catch(e){}
+    setTimeout(()=>{ try{ toast('↩ Restored your unsaved checklist for today'); }catch(e){} }, 500);
+  }
+}catch(e){} }
+if(!window._ckDraftHooked){ window._ckDraftHooked=true;
+  try{ document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') ckWriteDraft(); }); window.addEventListener('pagehide', ckWriteDraft); }catch(e){}
+}
 function renderChecklist(){
   const C=DB.checklist; setAccent('#0e9f6e');
-  if(!State.chk) State.chk={session:'Opening',dept:C.depts[0],area:'ALL',state:{}};
+  if(!State.chk){ State.chk={session:'Opening',dept:C.depts[0],area:'ALL',state:{},resp:{}}; ckRestoreDraft(); }
   if(State.chk.dept==='ALL' || !C.depts.includes(State.chk.dept)) State.chk.dept=C.depts[0];
   if(!State.chk.area) State.chk.area='ALL';
   if(!State.chk.resp) State.chk.resp={};
@@ -318,6 +337,7 @@ function ckResp(dept,field,value){
   State.chk.resp[dept][field]=value;
   const el=document.getElementById(ckRespId(dept,field));
   if(el&&value.trim()) el.classList.remove('invalid');
+  ckSaveDraft();
 }
 function ckProgress(){
   const rows=ckList(); let done=0,total=rows.length,preq=0,pdone=0,tok=0,tbad=0,tscan=0;
@@ -355,9 +375,9 @@ function ckTick(i){
   }
   st.done=!st.done; const row=document.getElementById('ck-row-'+i);
   if(row){row.classList.toggle('done',st.done);row.querySelector('.ck-check').textContent=st.done?'✓':'';}
-  ckProgress();
+  ckProgress(); ckSaveDraft();
 }
-function ckNote(i,v){const st=State.chk.state[i]=State.chk.state[i]||{};st.note=v;}
+function ckNote(i,v){const st=State.chk.state[i]=State.chk.state[i]||{};st.note=v;ckSaveDraft();}
 async function ckPhoto(input,i){
   const f=input.files&&input.files[0]; if(!f)return;
   const r=ckItem(DB.checklist.items[i],i), st=State.chk.state[i]=State.chk.state[i]||{};
@@ -373,13 +393,13 @@ async function ckPhoto(input,i){
     const d=await compressImage(f);
     const ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d;
     const idx=(st.photos||[]).indexOf(preview);
-    if(idx>=0){ st.photos[idx]=ref; try{URL.revokeObjectURL(preview);}catch(e){} if(!r.meta.temp) ckDraw(); }
+    if(idx>=0){ st.photos[idx]=ref; try{URL.revokeObjectURL(preview);}catch(e){} ckSaveDraft(); if(!r.meta.temp) ckDraw(); }
   }catch(e){ /* keep the instant objectURL preview if compression fails */ }
 }
 function ckRmPhoto(e,i,url){
   e.preventDefault(); e.stopPropagation();
   const st=State.chk.state[i], r=ckItem(DB.checklist.items[i],i);
-  if(st&&st.photos){st.photos=st.photos.filter(u=>u!==url); if(r.meta.temp&&!st.photos.length){st.temp=null;st.aiStatus=null;st.aiError='';st.aiSuggestion=null;st.aiManualAllowed=false;st.done=false;} ckDraw();}
+  if(st&&st.photos){st.photos=st.photos.filter(u=>u!==url); if(r.meta.temp&&!st.photos.length){st.temp=null;st.aiStatus=null;st.aiError='';st.aiSuggestion=null;st.aiManualAllowed=false;st.done=false;} ckDraw(); ckSaveDraft();}
 }
 function ckSession(v){State.chk.session=v;State.chk.area='ALL';renderChecklist();}
 function ckDept(d){State.chk.dept=d;State.chk.area='ALL';renderChecklist();}
@@ -495,13 +515,13 @@ function ckDelTask(i){
   ckPersistTemplate(); renderChecklist(); toast('🗑 Task deleted');
 }
 function ckArea(a){State.chk.area=a;renderChecklist();}
-function ckAll(v){ckList().forEach(r=>{const st=State.chk.state[r.i]=State.chk.state[r.i]||{};st.done=v;});ckDraw();}
+function ckAll(v){ckList().forEach(r=>{const st=State.chk.state[r.i]=State.chk.state[r.i]||{};st.done=v;});ckDraw();ckSaveDraft();}
 function ckDefrost(i,on){
   const st=State.chk.state[i]=State.chk.state[i]||{};
   st.defrosting=on; st.aiStatus=null; st.temp=null; st.aiError=''; st.aiSuggestion=null; st.aiManualAllowed=false;
   if(on){ st.photos=[]; st.done=true; ckRecordTemp(i,{defrosting:true,inRange:true,value:null}); }
   else st.done=false;
-  ckDraw();
+  ckDraw(); ckSaveDraft();
   toast(on?'Defrosting marked; photo capture locked':'Defrosting removed; photo required again');
 }
 function ckTempRange(type){ return (DB.checklist.tempRanges||{})[type]||{label:type,max:5,text:'<= 5 C'}; }
@@ -558,7 +578,7 @@ function ckSaveTempReading(i,value,result,manual){
   st.temp={value:tempValue,inRange,type:r.meta.type,range:ckTempRange(r.meta.type).text,source:result.source||'AI Vision OCR',ocrText:result.text||'',confidence:result.confidence||null,quality:result.quality||null,manual:!!manual,confirmedBy:manual?ckTempConfirmer():'',suggestedValue:result.suggestedValue??null,rawReading:result.rawReading||result.text||'',at:new Date().toISOString()};
   ckRecordTemp(i,st.temp);
   if(!inRange) ckQueueTempAlert(i,st.temp);
-  ckDraw();
+  ckDraw(); ckSaveDraft();
   const label=manual?'Manager confirmed':'AI Vision saved';
   toast(inRange?`${label} ${tempValue.toFixed(1)} C · in range`:`${label} ${tempValue.toFixed(1)} C · Gmail alert queued`);
 }
@@ -1160,7 +1180,7 @@ function staffSave(ed){
   if(window.persist) window.persist();
   State.staffEdit=null; toast('✓ Staff saved'); renderStaff();
 }
-function staffDelete(id){ if(!confirm('Delete this staff member permanently?')) return; const i=DB.staff.findIndex(x=>x.id===id); if(i>=0 && !recordInScope(DB.staff[i])){ toast('This staff member belongs to another store'); return; } if(i>=0){ const before=JSON.parse(JSON.stringify(DB.staff[i])); auditLog('delete','staff',before.id,before.store,before,null); DB.staff.splice(i,1); } if(window.persist) window.persist(); State.staffEdit=null; toast('🗑 Staff deleted'); renderStaff(); }
+function staffDelete(id){ if(!confirm('Delete this staff member permanently?')) return; const i=DB.staff.findIndex(x=>x.id===id); if(i>=0 && !recordInScope(DB.staff[i])){ toast('This staff member belongs to another store'); return; } if(i>=0){ const before=JSON.parse(JSON.stringify(DB.staff[i])); auditLog('delete','staff',before.id,before.store,before,null); DB.staff.splice(i,1); if(window.mcqDeleteRecords) mcqDeleteRecords('staff',[before.id],isSuper()?{store:before.store}:null); } if(window.persist) window.persist(); State.staffEdit=null; toast('🗑 Staff deleted'); renderStaff(); }
 
 /* ============================================================ JOB SCHEDULE — duties per department + weekly roster */
 const JOB_DUTIES={
@@ -1540,6 +1560,7 @@ function schedDeleteHistory(id){
   if(!rec||!confirm('Delete this completion record?')) return;
   auditLog('delete','scheduleHistory',id,rec.store,rec,null);
   DB.scheduleHistory=(DB.scheduleHistory||[]).filter(r=>r.id!==id);
+  if(window.mcqDeleteRecords) mcqDeleteRecords('schedule_history',[id],isSuper()?{store:rec.store}:null);
   if(rec.tickKey&&DB.scheduleTicks) delete DB.scheduleTicks[rec.tickKey];
   if(window.persist)window.persist();
   closeDrawer();
@@ -2441,20 +2462,25 @@ function dataExportModule(id,fmt){ const m=DB.modules[id]; if(!m) return; const 
 function dataDeleteModule(id){ const m=DB.modules[id]; if(!m) return; const n=dataScopeRecs(m).length;
   if(!n){ toast('Nothing to delete'); return; }
   if(!confirm('Delete '+n+' '+m.label+' record(s)'+(isSuper()?' across ALL stores':' for '+State.branch)+'?\nThis frees space and cannot be undone.')) return;
+  const removed=dataScopeRecs(m).map(r=>r.id).filter(Boolean);
   m.records = isSuper()? [] : (m.records||[]).filter(r=>r.store!==State.branch);
+  if(window.mcqDeleteRecords&&removed.length) mcqDeleteRecords('records',removed,isSuper()?{store:'ALL'}:null);
   if(window.auditLog) auditLog('delete','records',m.id,State.branch,{count:n},null);
   if(window.persist) window.persist(); toast('🗑 Deleted '+n+' '+m.label); renderData();
 }
 function dataClearSubs(){ const n=(DB.checklistSubs||[]).filter(s=>isSuper()||s.store===State.branch).length;
   if(!n){ toast('No submitted checklists'); return; }
   if(!confirm('Delete '+n+' submitted checklist(s)'+(isSuper()?' across ALL stores':' for '+State.branch)+'? Photos stay in storage until purged. Cannot be undone.')) return;
+  const removedSubs=(DB.checklistSubs||[]).filter(s=>isSuper()||s.store===State.branch).map(s=>s.id).filter(Boolean);
   DB.checklistSubs = isSuper()? [] : (DB.checklistSubs||[]).filter(s=>s.store!==State.branch);
+  if(window.mcqDeleteRecords&&removedSubs.length) mcqDeleteRecords('checklist_submissions',removedSubs,isSuper()?{store:'ALL'}:null);
   if(window.persist) window.persist(); toast('🗑 Cleared '+n+' submissions'); renderData();
 }
 function dataClearAll(){
   if(!confirm('Delete ALL operational records + submitted checklists'+(isSuper()?' across ALL stores':' for '+State.branch)+'?\nStaff, templates & schedules are KEPT. Cannot be undone.')) return;
   Object.values(DB.modules).forEach(m=>{ m.records = isSuper()?[]:(m.records||[]).filter(r=>r.store!==State.branch); });
   DB.checklistSubs = isSuper()? [] : (DB.checklistSubs||[]).filter(s=>s.store!==State.branch);
+  if(window.mcqDeleteRecords){ const o=isSuper()?{store:'ALL',all:true}:{all:true}; mcqDeleteRecords('records',null,o); mcqDeleteRecords('checklist_submissions',null,o); mcqDeleteRecords('bin_records',null,o); }
   if(window.auditLog) auditLog('delete','records','ALL',State.branch,null,null);
   if(window.persist) window.persist(); toast('🗑 All records cleared'); renderData();
 }
@@ -2476,9 +2502,13 @@ function dataDeleteRange(){
   const parts=[]; if(doSubs)parts.push(nSubs+' submission(s)'); if(doPhotos&&!doSubs)parts.push(nPhotos+' photo(s)'); if(doRecs)parts.push(nRecs+' record(s)');
   if(!(nSubs+nRecs+nPhotos)){ toast('Nothing matches that date range / scope'); return; }
   if(!confirm('Delete '+parts.join(' + ')+'\ndated '+(from||'…')+' → '+(to||'…')+(isSuper()?' across ALL stores':' for '+State.branch)+'?\nThis cannot be undone.')) return;
+  const opt=isSuper()?{store:'ALL'}:null;
   if(doPhotos&&!doSubs) subs.forEach(s=>{ if(inScope(s.store)&&dataDelInRange(s.date,from,to)) (s.items||[]).forEach(it=>{ it.photos=[]; }); });
-  if(doSubs) DB.checklistSubs=subs.filter(s=>!(inScope(s.store)&&dataDelInRange(s.date,from,to)));
-  if(doRecs) Object.values(DB.modules).forEach(m=>{ m.records=(m.records||[]).filter(r=>!(inScope(r.store)&&dataDelInRange(dataRecDate(r),from,to))); });
+  if(doSubs){ const rm=subs.filter(s=>inScope(s.store)&&dataDelInRange(s.date,from,to)).map(s=>s.id).filter(Boolean);
+    DB.checklistSubs=subs.filter(s=>!(inScope(s.store)&&dataDelInRange(s.date,from,to)));
+    if(window.mcqDeleteRecords&&rm.length) mcqDeleteRecords('checklist_submissions',rm,opt); }
+  if(doRecs){ const rm=[]; Object.values(DB.modules).forEach(m=>{ (m.records||[]).forEach(r=>{ if(inScope(r.store)&&dataDelInRange(dataRecDate(r),from,to)&&r.id) rm.push(r.id); }); m.records=(m.records||[]).filter(r=>!(inScope(r.store)&&dataDelInRange(dataRecDate(r),from,to))); });
+    if(window.mcqDeleteRecords&&rm.length) mcqDeleteRecords('records',rm,opt); }
   if(window.auditLog) auditLog('delete','dateRange',(from||'')+'..'+(to||''),State.branch,{subs:nSubs,photos:nPhotos,records:nRecs},null);
   if(window.persist) window.persist();
   toast('🗑 Deleted '+parts.join(' + ')); renderData();
@@ -2488,6 +2518,7 @@ function dataResetStore(store){ if(!isSuper()) return;
   Object.values(DB.modules).forEach(m=>{ m.records=(m.records||[]).filter(r=>r.store!==store); });
   if(Array.isArray(DB.checklistSubs)) DB.checklistSubs=DB.checklistSubs.filter(s=>s.store!==store);
   if(Array.isArray(DB.scheduleHistory)) DB.scheduleHistory=DB.scheduleHistory.filter(r=>r.store!==store);
+  if(window.mcqDeleteRecords){ ['records','checklist_submissions','bin_records','schedule_history'].forEach(t=>mcqDeleteRecords(t,null,{store:store,all:true})); }
   if(window.auditLog) auditLog('delete','store',store,store,null,null);
   if(window.persist) window.persist(); toast('🗑 Reset '+store); renderData();
 }
