@@ -22,16 +22,16 @@ DB_PATH = os.path.join(DATA, 'mcq.db')
 UPLOADS = os.path.join(BASE, 'uploads')
 
 STORES = ['Morley', 'Mirrabooka', 'Malaga', 'Subiaco', 'Armadale',
-          'Beechboro Fresh', 'Market West', 'Warehouse']
+          'Beechboro Fresh', 'Market West', 'Warehouse', 'Demo']
 
 # seed passwords (same scheme as the old frontend). These live ONLY on the server now.
 SUPER_PW = '99999'
 # Per-store admin passwords (each store admin has its own). Change here, then the next
 # app start re-seeds new ones (existing data is untouched).
 ADMIN_PW = {'Morley':'1010','Mirrabooka':'2020','Malaga':'3030','Subiaco':'4040',
-            'Armadale':'5050','Beechboro Fresh':'6060','Market West':'7070','Warehouse':'8080'}
+            'Armadale':'5050','Beechboro Fresh':'6060','Market West':'7070','Warehouse':'8080','Demo':'0000'}
 BRANCH_PW = {'Morley':'1111','Mirrabooka':'2222','Malaga':'3333','Subiaco':'4444',
-             'Armadale':'5555','Beechboro Fresh':'6666','Market West':'7000','Warehouse':'8000'}
+             'Armadale':'5555','Beechboro Fresh':'6666','Market West':'7000','Warehouse':'8000','Demo':'0000'}
 
 TOKEN_TTL = 60 * 60 * 24 * 30   # 30 days
 

@@ -20,7 +20,7 @@ const TONES = {
   Yes:'bad', No:'mute',
 };
 
-const STORES = ['Morley','Mirrabooka','Malaga','Subiaco','Armadale','Beechboro Fresh','Market West','Warehouse'];
+const STORES = ['Morley','Mirrabooka','Malaga','Subiaco','Armadale','Beechboro Fresh','Market West','Warehouse','Demo'];
 const DRIVERS = ['Chu Phuoc','Chu Tam','Michael Tran','Duy Quyen Pham','Duy Thanh Le','Nguyen Ba Cong','Nguyen Thanh Tri'];
 
 const DB = {

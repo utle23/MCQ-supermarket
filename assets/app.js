@@ -97,7 +97,7 @@ function showLogin(notice){
   document.getElementById('boot-splash')?.remove();
   document.body.classList.add('on-login');
   $('#app').style.display='none';
-  const branches = DB.branches.map(b=>`<option value="${esc(b)}">MCQ ${esc(b)}</option>`).join('');
+  const branches = DB.branches.map(b=>`<option value="${esc(b)}">${b==='Demo'?'🎬 Demo (sample data)':'MCQ '+esc(b)}</option>`).join('');
   $('#login-root').style.display='flex';
   $('#login-root').innerHTML = `
     <div class="login-bg"><span class="orb o1"></span><span class="orb o2"></span><span class="orb o3"></span><span class="orb o4"></span></div>
@@ -427,6 +427,7 @@ function buildTopbar(){
   const scopeLabel=isSuper()?'All stores':State.branch;
   const roleLabel=isSuper()?'Super':isAdmin()?'Admin':'Staff';
   $('#topbar-right').innerHTML = `
+    ${State.branch==='Demo'?'<span class="tb-badge" style="background:#fdf2f8;color:#9d174d;border-color:#f9c9e0">🎬 Sample data</span>':''}
     <span class="tb-badge"><i class="fas fa-store"></i> ${esc(scopeLabel)}</span>
     <span class="tb-badge"><i class="fas fa-clock"></i> idle <b id="idle-ind">30m</b></span>
     <span class="tb-badge ${isAdmin()?'badge-admin':''}"><i class="fas ${isAdmin()?'fa-shield-halved':'fa-user'}"></i> ${roleLabel}</span>
@@ -867,6 +868,7 @@ function closeLightbox(){ const ov=document.getElementById('mcq-lightbox'); if(o
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeLightbox(); });
 Object.assign(window,{go,openDetail,closeDrawer,submitForm,reviewSave,recSaveAll,recDelete,logout,doLogin,togglePw,updateLoginHint,faceIdLogin,closeFid,toggleGroup,toggleSidebar,closeSidebarM,openLightbox,closeLightbox});
 async function boot(){
+  try{ if(window.MCQDemo) MCQDemo.inject(); }catch(e){}   // seed the isolated Demo store (store:'Demo' only)
   try{ const saved=sessionStorage.getItem('mcq_acct'); if(saved){ State.account=JSON.parse(saved); State.branch=State.account.branch; State.role=State.account.role==='staff'?'store':'ho'; } }catch(e){}
   if(State.account){
     setBootMessage(`Opening ${syncScopeLabel(State.account)} workspace...`,'Using cached data while cloud sync starts');

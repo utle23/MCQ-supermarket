@@ -94,6 +94,7 @@
           rows=rows.filter(Boolean);
           if(FB.resetToBase) FB.resetToBase();
           if(rows.length && FB.aggregateStates) FB.aggregateStates(rows);
+          try{ if(window.MCQDemo) MCQDemo.inject(); }catch(e){}   // ensure Demo shows for Super even before its first save
           FB._loaded=true;
           FB.lastSync={status:'synced',message:'Loaded '+rows.length+' store(s)'};
           if(FB.rerenderApp) FB.rerenderApp();
@@ -104,7 +105,7 @@
     var store=account.branch;
     return getState(store).then(function(d){
       if(d&&d.state){ if(FB.resetToBase) FB.resetToBase(); if(FB.applyStoreState) FB.applyStoreState(d.state); if(FB.rerenderApp) FB.rerenderApp(); }
-      else { FB._loaded=true; postState(store); }   // first run for this store → seed backend from local
+      else { try{ if(store==='Demo' && window.MCQDemo) MCQDemo.inject(); }catch(e){} FB._loaded=true; postState(store); }   // first run for this store → seed backend from local (Demo gets its sample data)
       FB._loaded=true;
       FB.lastSync={status:'synced',message:'Loaded '+store};
       return FB.lastSync;
