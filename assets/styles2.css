@@ -1077,3 +1077,10 @@ table.jobduty td{vertical-align:top}
 .ck-block-jump{background:none;border:0;color:#2563eb;font-weight:700;cursor:pointer;padding:0;text-align:left;text-decoration:underline}
 .ck-flash{animation:ckFlash 1.5s ease}
 @keyframes ckFlash{0%,100%{background:transparent}30%{background:#fff7cc}}
+
+/* ---- Submit note (subtle hint under the locked/ready button) ---- */
+.ck-submit{display:flex;flex-direction:column;align-items:center;gap:8px}
+.ck-submit-note{font-size:12.5px;text-align:center;line-height:1.5}
+.ck-submit-note.pending{color:#b45309}
+.ck-submit-note.pending span{color:#92600a;font-weight:600}
+.ck-submit-note.ready{color:#15803d;font-weight:600}

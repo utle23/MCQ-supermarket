@@ -184,8 +184,8 @@ function renderChecklist(){
    <div id="chk-prog" class="ck-progbar"></div>
    <div id="ck-temp-report"></div>
    <div id="chk-body"></div>
-   ${viewing?'':`<div class="ck-submit-help">💾 Đã tự lưu — bạn có thể rời đi rồi quay lại làm tiếp. Chỉ bấm Submit khi <b>đã làm xong tất cả section</b>. Task nào không làm được thì ghi lý do vào ô note.</div>
-   <div class="ck-submit"><button id="ck-submit-btn" class="btn primary lg" onclick="chkSubmit()">✓ Submit ${s.session} checklist</button></div>`}`;
+   ${viewing?'':`<div class="ck-submit"><div id="ck-submit-note" class="ck-submit-note"></div>
+   <button id="ck-submit-btn" class="btn primary lg" onclick="chkSubmit()">✓ Submit ${s.session} checklist</button></div>`}`;
   if(viewing){ const b=$('#chk-body'); if(b) b.innerHTML=ckPastHTML(); } else { ckDraw(); ckUpdateSubmitBtn(); }
 }
 function ckSetDate(v){ State.chk.date=v||ckTodayStr(); State.chk.editing=null; State.chk.editDeptH=null; State.chk.editArea=null; renderChecklist(); }
@@ -361,12 +361,12 @@ function ckProgress(){
 function ckTaskIssue(r,st){
   st=st||{};
   if(st.done){
-    if(r.meta&&r.meta.temp && !st.defrosting && (!st.temp || st.aiStatus==='scanning')) return 'temperature not read';
-    if(r.photo && !(r.meta&&r.meta.temp&&st.defrosting) && (st.photos||[]).length<1) return 'photo required';
+    if(r.meta&&r.meta.temp && !st.defrosting && (!st.temp || st.aiStatus==='scanning')) return 'temperature not recorded yet';
+    if(r.photo && !(r.meta&&r.meta.temp&&st.defrosting) && (st.photos||[]).length<1) return 'photo missing';
     return null;   // satisfied
   }
   if(String(st.note||'').trim()) return null;   // not done but a reason was written → OK
-  return 'not ticked — add a reason in the note';
+  return 'not done — tick it, or write a reason in the note';
 }
 // evaluate ALL sections in the current department+session (not just the visible area)
 function ckGate(){
@@ -387,14 +387,16 @@ function ckGate(){
 function ckAreaDone(area){ const rows=ckRows(true).filter(r=>r.area===area); return rows.length>0 && rows.every(r=>!ckTaskIssue(r,State.chk.state[r.i])); }
 function ckUpdateSubmitBtn(){
   const btn=document.getElementById('ck-submit-btn'); if(!btn) return;
+  const note=document.getElementById('ck-submit-note');
   const g=ckGate();
-  if(g.complete){ btn.className='btn primary lg'; btn.innerHTML=`✓ Submit ${esc(State.chk.session)} checklist`; }
-  else{
+  btn.innerHTML=`✓ Submit ${esc(State.chk.session)} checklist`;   // label stays "Submit" — just greys out when locked
+  if(g.complete){
+    btn.className='btn primary lg';
+    if(note){ note.className='ck-submit-note ready'; note.innerHTML='✓ All sections complete — ready to submit'; }
+  }else{
     btn.className='btn lg ck-locked';
-    const bits=[];
-    if(g.incompleteSections.length) bits.push((g.incompleteSections.length)+' section'+(g.incompleteSections.length>1?'s':'')+': '+g.incompleteSections.join(', '));
-    if(!g.respOk) bits.push('Responsible Person');
-    btn.innerHTML=`🔒 Finish first — ${esc(bits.join(' · '))}`;
+    const left=[]; if(g.incompleteSections.length) left.push(...g.incompleteSections); if(!g.respOk) left.push('Responsible Person');
+    if(note){ note.className='ck-submit-note pending'; note.innerHTML=`<b>${left.length}</b> to finish before submitting — <span>${esc(left.join(', '))}</span>`; }
   }
 }
 function ckTick(i){
@@ -785,8 +787,8 @@ function ckBlockModal(g){
   const respHtml=g.respOk?'':`<div class="ck-block-sec"><div class="ck-block-sec-h bad">⛔ Responsible Person — required</div><ul class="ck-block-list"><li>Enter Responsible Person 1 and Submitted by</li></ul></div>`;
   const ov=document.createElement('div'); ov.className='lb-overlay ck-block-ov'; ov.style.display='flex';
   ov.onclick=e=>{ if(e.target===ov) ov.remove(); };
-  ov.innerHTML=`<div class="lb-panel"><div class="card-head" style="padding:14px 16px"><h3>⛔ Chưa thể submit — còn việc chưa xong</h3><button class="x-btn" onclick="this.closest('.ck-block-ov').remove()">✕</button></div>
-    <div class="card-pad" style="max-height:62vh;overflow:auto"><p class="fhint" style="margin:0 0 10px">Làm xong tất cả section bên dưới, hoặc ghi <b>lý do</b> vào ô note cho task không làm được. Dữ liệu đã tự lưu — không mất.</p>${respHtml}${secHtml}</div></div>`;
+  ov.innerHTML=`<div class="lb-panel"><div class="card-head" style="padding:14px 16px"><h3>Not ready to submit — items still incomplete</h3><button class="x-btn" onclick="this.closest('.ck-block-ov').remove()">✕</button></div>
+    <div class="card-pad" style="max-height:62vh;overflow:auto"><p class="fhint" style="margin:0 0 10px">Finish every section below, or write a <b>reason</b> in the note for any task you can't complete. Your progress is saved automatically.</p>${respHtml}${secHtml}</div></div>`;
   document.body.appendChild(ov);
 }
 function ckJumpTo(i){ document.querySelectorAll('.ck-block-ov').forEach(n=>n.remove());
@@ -799,10 +801,10 @@ function ckConfirmSubmit(g){
   const total=g.sections.reduce((n,s)=>n+s.total,0), ok=g.sections.reduce((n,s)=>n+s.ok,0);
   const ov=document.createElement('div'); ov.className='lb-overlay ck-block-ov'; ov.style.display='flex';
   ov.onclick=e=>{ if(e.target===ov) ov.remove(); };
-  ov.innerHTML=`<div class="lb-panel" style="max-width:440px"><div class="card-head" style="padding:14px 16px"><h3>Submit toàn bộ checklist?</h3><button class="x-btn" onclick="this.closest('.ck-block-ov').remove()">✕</button></div>
-    <div class="card-pad"><p>Bạn đang nộp <b>TOÀN BỘ</b> checklist <b>${esc(State.chk.dept)} · ${esc(State.chk.session)}</b> cho <b>${esc(State.branch)}</b>.</p>
-    <p class="fhint">${g.sections.length} section · ${ok}/${total} mục hoàn thành. Sau khi nộp sẽ chuyển cho quản lý duyệt.</p>
-    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px"><button class="btn" onclick="this.closest('.ck-block-ov').remove()">Huỷ</button><button class="btn primary" onclick="this.closest('.ck-block-ov').remove();ckDoSubmit()">✓ Nộp checklist</button></div></div></div>`;
+  ov.innerHTML=`<div class="lb-panel" style="max-width:440px"><div class="card-head" style="padding:14px 16px"><h3>Submit the whole checklist?</h3><button class="x-btn" onclick="this.closest('.ck-block-ov').remove()">✕</button></div>
+    <div class="card-pad"><p>You're submitting the <b>ENTIRE</b> <b>${esc(State.chk.dept)} · ${esc(State.chk.session)}</b> checklist for <b>${esc(State.branch)}</b>.</p>
+    <p class="fhint">${g.sections.length} section(s) · ${ok}/${total} items complete. It will then go to the manager to verify.</p>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px"><button class="btn" onclick="this.closest('.ck-block-ov').remove()">Cancel</button><button class="btn primary" onclick="this.closest('.ck-block-ov').remove();ckDoSubmit()">✓ Submit checklist</button></div></div></div>`;
   document.body.appendChild(ov);
 }
 function ckDoSubmit(){
