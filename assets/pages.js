@@ -2516,9 +2516,13 @@ function renderEmail(){
   // department-lead block (per store)
   const leadStore=isSuper()?(State.emailLeadStore||DB.stores[0]):State.branch;
   const leadStorePicker=isSuper()?`<select class="login-input" style="max-width:220px" onchange="emailLeadStore(this.value)">${(DB.stores||[]).map(s=>`<option ${s===leadStore?'selected':''}>${esc(s)}</option>`).join('')}</select>`:'';
-  const leadBlocks=chkDepts.map(d=>{ const meta=dm[d]||{}; const list=leadList(leadStore,d);
+  const leadBlocks=chkDepts.map(d=>{ const meta=dm[d]||{}; const list=leadList(leadStore,d); const staffOpts=leadStaffFor(leadStore,d);
     const rows=list.map((l,i)=>`<div class="email-row" style="gap:8px;padding:6px 0">
-        <input class="login-input" style="flex:1;min-width:110px" value="${esc(l.name||'')}" placeholder="Lead name" oninput="leadSet('${ckJS(leadStore)}','${ckJS(d)}',${i},'name',this.value)">
+        <select class="login-input" style="flex:1;min-width:120px" onchange="leadPick('${ckJS(leadStore)}','${ckJS(d)}',${i},this)">
+          <option value="">— Select staff —</option>
+          ${staffOpts.map(sm=>`<option value="${esc(sm.name)}" data-email="${esc(sm.email||'')}" ${sm.name===l.name?'selected':''}>${esc(sm.name)}${sm.role?(' · '+esc(sm.role)):''}</option>`).join('')}
+          ${l.name&&!staffOpts.some(sm=>sm.name===l.name)?`<option value="${esc(l.name)}" selected>${esc(l.name)} (manual)</option>`:''}
+        </select>
         <input class="login-input" style="flex:1.4;min-width:150px" type="email" value="${esc(l.email||'')}" placeholder="lead@email.com" oninput="leadSet('${ckJS(leadStore)}','${ckJS(d)}',${i},'email',this.value)">
         <button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="leadDel('${ckJS(leadStore)}','${ckJS(d)}',${i})">🗑</button>
       </div>`).join('');
@@ -2574,6 +2578,20 @@ function leadList(store,dept){ const m=DB.checklistLeadEmails||(DB.checklistLead
 function leadAdd(store,dept){ const m=DB.checklistLeadEmails=DB.checklistLeadEmails||{}; m[store]=m[store]||{}; m[store][dept]=m[store][dept]||[]; m[store][dept].push({name:'',email:''}); if(window.persist) window.persist(); renderEmail(); }
 function leadSet(store,dept,i,field,val){ const a=leadList(store,dept); if(a[i]){ a[i][field]=val; if(window.persist) window.persist(); } }
 function leadDel(store,dept,i){ const a=leadList(store,dept); if(i>=0&&i<a.length){ a.splice(i,1); if(window.persist) window.persist(); renderEmail(); } }
+// staff that belong to a checklist department, for a SPECIFIC store (super may pick any store)
+function leadStaffFor(store,dept){
+  const all=(DB.staff||[]).filter(s=>s.active!==0 && s.store===store && s.name);
+  const dn=staffNorm(dept); let rows=[];
+  if(dn) rows=all.filter(s=> staffIsAdmin(s) || (Array.isArray(s.roles)&&s.roles.some(r=>staffNorm(r)===dn)) || staffNorm(s.dept)===dn);
+  if(!rows.length){ const needles=staffDeptNeedles(dept); if(needles.length) rows=all.filter(s=>{ const role=staffNorm(s.role), name=staffNorm(s.name); return needles.some(n=>role.includes(n)||name.includes(n)); }); }
+  if(!rows.length) rows=all;   // fallback: any staff in this store
+  return rows;
+}
+function leadPick(store,dept,i,sel){ const a=leadList(store,dept); if(!a[i]) return;
+  a[i].name=sel.value;
+  const opt=sel.options[sel.selectedIndex], email=opt&&opt.getAttribute('data-email');
+  if(email) a[i].email=email;   // auto-fill from the staff record (admin can still edit)
+  if(window.persist) window.persist(); renderEmail(); }
 function emailLeadStore(s){ State.emailLeadStore=s; renderEmail(); }
 /* ---- super-admin daily-digest recipients (server-side settings) ---- */
 function digestRender(){
