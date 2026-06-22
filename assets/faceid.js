@@ -58,9 +58,17 @@ window.MCQFace = (function(){
 async function faceEnrollInApp(){
   if(!window.PublicKeyCredential){ toast('This device does not support Face ID (WebAuthn).'); return; }
   var acct=(window.State&&State.account)||{}, role=acct.role||'staff', branch=acct.branch||'';
-  var label = role==='super'?'Head Office':(role==='admin'?branch+' Admin':branch);
+  var base = role==='super'?'Head Office':(role==='admin'?branch+' Admin':branch+' Staff');
+  // many people can enrol at the same branch — ask WHO this Face ID belongs to so they're
+  // easy to tell apart later. Default suggests the next number so names never collide.
+  var scope = role==='super'?'':branch;
+  var same = (MCQFace.listFor(scope)||[]).filter(function(c){return c.role===role;}).length;
+  var suggested = base + (same? ' '+(same+1):'');
+  var person = window.prompt('Whose Face ID is this? Enter a name so it can be told apart\n(e.g. "'+base+' · Tony"):', suggested);
+  if(person===null) return;                       // cancelled
+  var label = (person||'').trim() || suggested;    // blank → use the numbered default
   try{ toast('Follow your device Face ID / Touch ID prompt…');
-    await MCQFace.enroll(role==='super'?'':branch, role, label);
+    await MCQFace.enroll(scope, role, label);
     toast('✅ Face ID added for '+label); if(window.renderFaceId) renderFaceId();
   }catch(e){ toast('Face ID setup cancelled or failed'); }
 }
