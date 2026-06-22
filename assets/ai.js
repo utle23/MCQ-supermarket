@@ -33,9 +33,13 @@
     img.onerror=()=>{ URL.revokeObjectURL(url); res({neat:75,full:75,pres:75,avg:75,risk:'Medium'}); };
     img.src=url; }); }
   function imgDims(file){ return new Promise((res)=>{ const i=new Image(),u=URL.createObjectURL(file); i.onload=()=>{URL.revokeObjectURL(u);res({w:i.naturalWidth||0,h:i.naturalHeight||0});}; i.onerror=()=>{URL.revokeObjectURL(u);res({w:0,h:0});}; i.src=u; }); }
-  async function aiOcr(file){ if(!window.Tesseract) return '';
-    try{ const d=await imgDims(file); if(d.w<140||d.h<70) return ''; }catch(e){ return ''; }   // too small to read — skip (avoids WASM abort)
-    try{ const out=await Tesseract.recognize(file,'eng'); return (out&&out.data&&out.data.text)||''; }catch(e){ return ''; } }
+  // OCR via ChatGPT Vision (server endpoint, key on server). No on-device OCR.
+  async function aiOcr(file){
+    const ep=window.MCQ_VISION_TEXT_ENDPOINT; if(!ep||!file) return '';
+    try{ const fd=new FormData(); fd.append('image',file,'scan.jpg');
+      const tok=(window.localStorage&&localStorage.getItem('mcq_token'))||'';
+      const res=await fetch(ep,{method:'POST',headers:tok?{Authorization:'Bearer '+tok}:{},body:fd});
+      const d=await res.json().catch(()=>({})); return d.text||''; }catch(e){ return ''; } }
 
   function aiState(){ if(!State.ai) State.ai={tool:'',cap:{}}; State.ai.cap=State.ai.cap||{}; return State.ai; }
   function aiGo(t){ aiState().tool=t; renderAIUse(); }

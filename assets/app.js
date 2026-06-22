@@ -313,7 +313,7 @@ function enterApp(){
   document.body.classList.remove('on-login');
   document.body.className = 'role-'+State.role;
   $('#login-root').style.display='none';
-  $('#app').style.display='grid';
+  $('#app').style.display='';   // let CSS decide (grid on desktop, block flow on mobile) — avoids inline override
   if(!location.hash || location.hash==='#') location.hash='#/home'; else render();
   buildTopbar(); buildSidebar(); render();
   startIdleWatch();

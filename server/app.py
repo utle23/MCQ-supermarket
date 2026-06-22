@@ -9,7 +9,7 @@ Run standalone (local API only):
   cd server && python3 -m pip install -r requirements.txt
   python3 app.py            # http://localhost:8001
 """
-import os, sys, json, time, secrets, urllib.request, urllib.error
+import os, sys, json, time, secrets, base64, re, urllib.request, urllib.error
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # so `import db` works when imported as server.app too
 import db
 from flask import Blueprint, Flask, request, jsonify, send_file, abort
@@ -203,6 +203,70 @@ def send_email():
         return jsonify(ok=False, error='brevo ' + str(e.code), detail=e.read().decode('utf-8', 'ignore')[:200]), 200
     except Exception as e:
         return jsonify(ok=False, error=str(e)), 200
+
+# ---------- AI Vision (OpenAI / ChatGPT) — API key stays on the SERVER (OPENAI_API_KEY) ----------
+def _openai_vision(image_bytes, mime, prompt, max_tokens=220):
+    key = os.environ.get('OPENAI_API_KEY', '')
+    if not key: return None, 'OPENAI_API_KEY not set on the server'
+    b64 = base64.b64encode(image_bytes).decode('ascii')
+    payload = {
+        'model': os.environ.get('OPENAI_VISION_MODEL', 'gpt-4o-mini'),
+        'temperature': 0, 'max_tokens': max_tokens,
+        'messages': [{'role': 'user', 'content': [
+            {'type': 'text', 'text': prompt},
+            {'type': 'image_url', 'image_url': {'url': 'data:' + (mime or 'image/jpeg') + ';base64,' + b64, 'detail': 'high'}}
+        ]}],
+    }
+    req = urllib.request.Request('https://api.openai.com/v1/chat/completions',
+        data=json.dumps(payload).encode('utf-8'),
+        headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'}, method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=40) as resp:
+            out = json.loads(resp.read().decode('utf-8'))
+        return out['choices'][0]['message']['content'], None
+    except urllib.error.HTTPError as e:
+        return None, 'openai ' + str(e.code) + ' ' + e.read().decode('utf-8', 'ignore')[:160]
+    except Exception as e:
+        return None, str(e)
+
+def _extract_json(s):
+    if not s: return None
+    m = re.search(r'\{.*\}', s, re.S)
+    if not m: return None
+    try: return json.loads(m.group(0))
+    except Exception: return None
+
+@api.route('/api/vision-temp', methods=['POST'])
+def vision_temp():
+    require_auth()
+    f = request.files.get('image')
+    if not f: return jsonify(readable=False, error='no image'), 400
+    typ = request.form.get('type', 'fridge'); equip = request.form.get('equipment', '')
+    prompt = ("Read the digital temperature display in this photo (a %s%s). "
+              "Return ONLY compact JSON, no prose: "
+              "{\"temperature\": <number>, \"displayText\": \"<exactly what is shown, incl. minus sign and decimal>\", "
+              "\"confidence\": <0-100>, \"readable\": <true or false>}. "
+              "Read the MAIN temperature number exactly as shown, including any minus sign and decimal point. "
+              "If no temperature number is legible, set readable=false."
+              % (typ, (' — ' + equip) if equip else ''))
+    content, err = _openai_vision(f.read(), f.mimetype, prompt)
+    if err is not None: return jsonify(readable=False, fallback=True, error=err), 200
+    d = _extract_json(content) or {}
+    return jsonify(temperature=d.get('temperature'), displayText=d.get('displayText'),
+                   text=str(d.get('displayText') or ''), confidence=d.get('confidence'),
+                   readable=bool(d.get('readable', d.get('temperature') is not None)),
+                   source='ChatGPT Vision', model=os.environ.get('OPENAI_VISION_MODEL', 'gpt-4o-mini'))
+
+@api.route('/api/vision-text', methods=['POST'])
+def vision_text():
+    require_auth()
+    f = request.files.get('image')
+    if not f: return jsonify(text='', error='no image'), 400
+    prompt = request.form.get('prompt') or ("Read all visible text and numbers in this photo (product labels, "
+             "expiry / use-by dates, prices, weights). Return them as plain text, one item per line. No commentary.")
+    content, err = _openai_vision(f.read(), f.mimetype, prompt, max_tokens=400)
+    if err is not None: return jsonify(text='', error=err), 200
+    return jsonify(text=content or '', source='ChatGPT Vision')
 
 # ---------- CORS (only needed when frontend is on a different origin, e.g. local :8765↔:8001) ----------
 def add_cors(app):

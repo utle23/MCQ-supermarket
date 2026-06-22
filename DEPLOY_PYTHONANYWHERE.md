@@ -37,6 +37,11 @@ os.environ['BREVO_API_KEY'] = 'xkeysib-...your-key...'
 os.environ['MCQ_FROM_EMAIL'] = 'mcqcafe.notify@gmail.com'
 os.environ['MCQ_FROM_NAME']  = 'MCQ Supermarket Notification'
 
+# --- AI Vision (ChatGPT). Reads temperatures from photos + AI Lab OCR.
+#     Key stays here on the server only, never in the GitHub code. ---
+os.environ['OPENAI_API_KEY'] = 'sk-...your-openai-key...'
+os.environ['OPENAI_VISION_MODEL'] = 'gpt-4o-mini'   # optional; gpt-4o for higher accuracy
+
 from flask_app import app as application
 ```
 - **Virtualenv:** leave blank if you used `pip install --user`.

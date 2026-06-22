@@ -59,7 +59,7 @@ button{font-family:inherit;cursor:pointer}
 
 /* ---------- Sidebar ---------- */
 .sidebar{
-  position:sticky;top:0;height:100vh;height:100dvh;
+  position:sticky;top:0;align-self:start;height:100vh;height:100dvh;
   background:linear-gradient(168deg,#06402e 0%,#0a6b54 34%,#0b7d8f 68%,#163e83 100%);
   color:#d2ded8;display:flex;flex-direction:column;overflow:hidden;
   border-right:1px solid rgba(255,255,255,.06);
@@ -326,6 +326,8 @@ body.role-ho .store-only{display:none}
 
 @media(max-width:860px){
   :root{--sidebar:0px}
+  .app{display:block}            /* single-column flow on phones (no reserved sidebar track → no blank space on top) */
+  .main{width:100%}
   /* sidebar becomes a slide-in drawer (was display:none, leaving no menu on phones) */
   .sidebar{position:fixed;left:0;top:0;height:100dvh;width:min(82vw,290px);z-index:70;
     transform:translateX(-100%);transition:transform .28s cubic-bezier(.16,1,.3,1);box-shadow:0 18px 50px rgba(0,0,0,.45)}
