@@ -26,7 +26,10 @@ STORES = ['Morley', 'Mirrabooka', 'Malaga', 'Subiaco', 'Armadale',
 
 # seed passwords (same scheme as the old frontend). These live ONLY on the server now.
 SUPER_PW = '99999'
-ADMIN_PW = '77771'
+# Per-store admin passwords (each store admin has its own). Change here, then the next
+# app start re-seeds new ones (existing data is untouched).
+ADMIN_PW = {'Morley':'Morley2026','Mirrabooka':'Mirra2026','Malaga':'Malaga2026','Subiaco':'Subiaco2026',
+            'Armadale':'Armadale2026','Beechboro Fresh':'Beechboro2026','Market West':'MarketW2026','Warehouse':'Warehouse2026'}
 BRANCH_PW = {'Morley':'1111','Mirrabooka':'2222','Malaga':'3333','Subiaco':'4444',
              'Armadale':'5555','Beechboro Fresh':'6666','Market West':'7000','Warehouse':'8000'}
 
@@ -99,7 +102,8 @@ def init_db():
             conn.execute('INSERT INTO users(role,store_id,password_hash,created_at) VALUES(?,?,?,?)',
                          (role, store, hash_pw(pw), now()))
     add_user('super', None, SUPER_PW)
-    add_user('admin', None, ADMIN_PW)
+    for s, pw in ADMIN_PW.items():
+        add_user('admin', s, pw)
     for s, pw in BRANCH_PW.items():
         add_user('staff', s, pw)
     conn.commit(); conn.close()
@@ -114,7 +118,7 @@ def verify_login(mode, store, pw):
             return ('super', 'ALL') if row and row['password_hash'] == hash_pw(pw) else None
         if mode == 'admin':
             if store not in STORES: return None
-            row = conn.execute('SELECT password_hash FROM users WHERE role="admin"').fetchone()
+            row = conn.execute('SELECT password_hash FROM users WHERE role="admin" AND store_id=?', (store,)).fetchone()
             return ('admin', store) if row and row['password_hash'] == hash_pw(pw) else None
         # staff: per-store password
         if store not in STORES: return None

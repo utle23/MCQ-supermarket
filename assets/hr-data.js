@@ -9,7 +9,10 @@
 /* ---------- Auth & branches ---------- */
 DB.branches = ['Morley','Mirrabooka','Malaga','Subiaco','Armadale','Beechboro Fresh','Market West','Warehouse'];
 DB.auth = {
-  adminPassword: '77771',                 // store admin — own store only
+  adminPasswords: {                       // each store has its OWN admin password
+    'Morley':'Morley2026', 'Mirrabooka':'Mirra2026', 'Malaga':'Malaga2026', 'Subiaco':'Subiaco2026',
+    'Armadale':'Armadale2026', 'Beechboro Fresh':'Beechboro2026', 'Market West':'MarketW2026', 'Warehouse':'Warehouse2026',
+  },
   superAdminPassword: '99999',             // super admin — ALL stores + cross-store compare
   branchPasswords: {                      // each branch has its OWN staff password
     'Morley':'1111', 'Mirrabooka':'2222', 'Malaga':'3333', 'Subiaco':'4444',

@@ -157,7 +157,7 @@ function loginFail(m){ const e=$('#login-err'); if(e) e.textContent='❌ '+m; co
 function updateLoginHint(){ const el=$('#login-hint'); if(!el) return; const mode=loginMode(), branch=$('#login-branch')?.value;
   const row=$('#login-store-row'); if(row) row.style.display=mode==='super'?'none':'block';
   el.innerHTML = mode==='super' ? `Super Admin password: <b>${esc(DB.auth.superAdminPassword)}</b> · all stores + compare`
-    : mode==='admin' ? `Admin password: <b>${esc(DB.auth.adminPassword)}</b> · this store only`
+    : mode==='admin' ? `${esc(branch||'')} admin password: <b>${esc((DB.auth.adminPasswords||{})[branch]||'—')}</b> · this store only`
     : `MCQ ${esc(branch||'')} staff password: <b>${esc(DB.auth.branchPasswords[branch]||'—')}</b>`; }
 function doLogin(){
   const pw=$('#login-pw').value.trim(), branch=$('#login-branch').value, mode=loginMode();
@@ -176,12 +176,12 @@ function doLogin(){
     return loginFail('Incorrect super admin password.');
   }
   if(mode==='admin'){
-    if(pw===DB.auth.adminPassword) return loginAs('admin',branch);
-    return loginFail('Incorrect admin password.');
+    if(pw===(DB.auth.adminPasswords||{})[branch]) return loginAs('admin',branch);
+    return loginFail('Incorrect admin password for '+branch+'.');
   }
   // staff: must match THIS branch's password
   if(pw===DB.auth.branchPasswords[branch]) return loginAs('staff',branch);
-  if(pw===DB.auth.adminPassword) return loginFail('That is the admin password — switch to the Admin tab.');
+  if(Object.values(DB.auth.adminPasswords||{}).includes(pw)) return loginFail('That is an admin password — switch to the Admin tab.');
   loginFail(`Wrong password for MCQ ${branch}.`);
 }
 let dataSyncRun = 0;

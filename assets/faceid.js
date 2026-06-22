@@ -52,7 +52,7 @@ window.MCQFace = (function(){
 /* password check (mirrors doLogin) so only an authorised person can enrol a branch */
 function mcqAuthRole(mode,branch,pw){ if(!pw) return null; var a=(typeof DB!=='undefined'&&DB.auth)||{};
   if(mode==='super') return pw===a.superAdminPassword?'super':null;
-  if(mode==='admin') return pw===a.adminPassword?'admin':null;
+  if(mode==='admin') return pw===((a.adminPasswords||{})[branch])?'admin':null;
   return pw===((a.branchPasswords||{})[branch])?'staff':null; }
 
 async function faceEnroll(){
