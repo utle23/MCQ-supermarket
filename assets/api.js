@@ -74,10 +74,18 @@
   // ---- per-store state ----
   function getState(store){ return fetch(api('/api/state/'+encodeURIComponent(store)), {headers:headers()})
       .then(function(r){ if(!r.ok) throw new Error('state '+r.status); return r.json(); }); }
+  function setSave(status,msg){ FB.lastSync={status:status,message:msg};
+    try{ if(window.State) State.dataSync={status:status,message:msg}; if(window.refreshSyncUi) refreshSyncUi(); }catch(e){} }
+  var saveDirty=false;   // a save failed → keep retrying until the server confirms
   function postState(store){
     var state = FB.buildStoreState ? FB.buildStoreState(store) : null;
+    // mirror locally FIRST so the data survives even if the network/tab dies before the POST lands
+    try{ if(state && FB.writeCache) FB.writeCache(store, state); }catch(e){}
+    // NOTE: no `keepalive` — the full state often exceeds the 64KB keepalive limit, which would
+    // make fetch throw and silently drop the save. Durability on unload is covered by the local
+    // cache mirror above + the awaited logout flush + the retry loop.
     return fetch(api('/api/state/'+encodeURIComponent(store)), {method:'POST', headers:headers(true), body:JSON.stringify({state:state})})
-      .then(function(r){ return r.json().catch(function(){return {};}); });
+      .then(function(r){ if(!r.ok) throw new Error('save '+r.status); return r.json().catch(function(){return {};}); });
   }
 
   FB.loadForAccount = function(account){
@@ -115,13 +123,17 @@
 
   FB.saveAll = function(){
     var acct=(window.State&&State.account)||null; if(!acct||!TOKEN) return Promise.resolve();
-    if(!FB._loaded) return Promise.resolve();   // never overwrite the server before the first successful load (prevents wiping data)
+    // NOTE: server save is MERGE/upsert (never deletes), so saving any time is safe —
+    // we deliberately do NOT gate on _loaded (that previously disabled saves for a whole
+    // session after one load hiccup → silent data loss).
+    setSave('loading','Saving…');
     if(acct.role==='super'){
-      return Promise.all(stores().map(function(s){ return postState(s).catch(function(){}); }))
-        .then(function(){ FB.lastSync={status:'synced',message:'Saved all stores'}; });
+      return Promise.all(stores().map(function(s){ return postState(s); }))
+        .then(function(){ saveDirty=false; setSave('synced','Saved · all stores'); })
+        .catch(function(){ saveDirty=true; setSave('error','Save failed — retrying'); });
     }
-    return postState(acct.branch).then(function(){ FB.lastSync={status:'synced',message:'Saved '+acct.branch}; })
-      .catch(function(){ FB.lastSync={status:'error',message:'Save failed · will retry'}; });
+    return postState(acct.branch).then(function(){ saveDirty=false; setSave('synced','Saved · '+acct.branch); })
+      .catch(function(){ saveDirty=true; setSave('error','Save failed — retrying'); });
   };
 
   // ---- store config ----
@@ -156,6 +168,11 @@
       .then(function(b){ PS[id]=URL.createObjectURL(b); delete pending[id]; if(FB.rerenderApp) FB.rerenderApp(); })
       .catch(function(){ delete pending[id]; });
   };
+
+  // keep retrying a failed save until the server confirms (covers transient drops / offline)
+  function retryIfDirty(){ if(saveDirty && (window.State&&State.account) && TOKEN && FB.saveAll) FB.saveAll(); }
+  setInterval(retryIfDirty, 7000);
+  try{ window.addEventListener('online', retryIfDirty); }catch(e){}
 
   FB.lastSync={status:'ready',message:'Server ready ('+(BASE||'same origin')+')'};
   console.info('[MCQ] API backend active →', BASE||'(same origin)');

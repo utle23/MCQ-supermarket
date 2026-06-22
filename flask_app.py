@@ -64,6 +64,10 @@ def index():
 
 @app.route('/<path:p>')
 def files(p):
+    # index.html must ALWAYS go through the flag-injecting path, never the raw file —
+    # otherwise the frontend can load without window.__MCQ_SAME_ORIGIN_API and skip the backend.
+    if p.lstrip('/').lower() in ('index.html', 'index.htm'):
+        return _serve_index()
     rel = _safe(p)
     if rel:
         resp = send_from_directory(BASE, rel)

@@ -56,6 +56,7 @@
     const acct=window.State&&State.account?State.account:null;
     return !store || !acct || acct.role==='super' || store===acct.branch;
   }
+  FB.writeCache = writeCache;   // let the API adapter mirror each save locally (durable against stale reads / tab close)
   FB.hydrateFromCache = function(account){
     captureBase();
     const store=(account&&account.role==='super')?'All stores':(account&&account.branch)||'Morley';
@@ -437,7 +438,7 @@
       captureBase();
       FB.loadForAccount = async function(account){ const hit=FB.hydrateFromCache(account); FB.lastSync={status:hit.status||'local',message:hit.status==='cached'?hit.message:'Offline · local sample data'}; return FB.lastSync; };
       FB.loadAll = function(){ return FB.loadForAccount(window.State&&State.account?State.account:{role:'super'}); };
-      FB.saveAll = async function(){};
+      FB.saveAll = async function(){ try{ const acct=window.State&&State.account; if(!acct) return; const store=acct.role==='super'?'All stores':acct.branch; if(store&&!isAllStore(store)) writeCache(store, buildState(store)); FB.lastSync={status:'local',message:'Saved on this device (offline)'}; }catch(e){} };
       FB.fetchStoreConfig = async function(store){ return parseStoreConfigData(buildState(store)); };
       FB.saveStoreConfig = async function(){ FB.lastSync={status:'local',message:'Offline · changes stay local'}; return false; };
     }
@@ -449,8 +450,14 @@
   function snapshotHash(){
     try{ const s=buildState(accountStore()||activeStore||''); delete s.updatedAt; return JSON.stringify(s)+':'+activeMode; }catch(e){ return ''; }
   }
-  window.persist = function(){ if(!FB.enabled || !(window.State&&State.account)) return; clearTimeout(timer); timer=setTimeout(()=>{ FB.saveAll&&FB.saveAll(); }, 800); };
+  window.persist = function(){ if(!(window.State&&State.account)) return;
+    // ALWAYS mirror to the local cache immediately, so a reload/re-login can never show
+    // less than the latest local data — even if the server save is delayed or fails.
+    try{ const acct=State.account, store=acct.role==='super'?'All stores':acct.branch; if(store&&!isAllStore(store)) writeCache(store, buildState(store)); }catch(e){}
+    if(!FB.enabled) return;
+    clearTimeout(timer); timer=setTimeout(()=>{ FB.saveAll&&FB.saveAll(); }, 800); };
   // safety net: poll for changes every 5s and push if the data changed
   setInterval(()=>{ if(!FB.enabled || !(window.State&&State.account)) return; const h=snapshotHash(); if(h!==lastHash){ lastHash=h; FB.saveAll&&FB.saveAll(); } }, 5000);
   window.addEventListener('beforeunload', ()=>{ if(FB.enabled&&FB.saveAll) FB.saveAll(); });
+  window.addEventListener('pagehide', ()=>{ if(FB.enabled&&FB.saveAll) FB.saveAll(); });   // mobile: fires on tab close / app switch (keepalive POST survives)
 })();

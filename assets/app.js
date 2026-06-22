@@ -315,11 +315,13 @@ function enterApp(){
   buildTopbar(); buildSidebar(); render();
   startIdleWatch();
 }
-function logout(reason){
-  // flush any unsaved work BEFORE clearing the account, otherwise a pending debounced
-  // save fires after logout, sees no account and skips → last edits (e.g. a new
-  // violation) would be lost. saveAll() captures the data synchronously here.
-  try{ if(window.MCQDB && MCQDB.saveAll && State.account) MCQDB.saveAll(); }catch(e){}
+async function logout(reason){
+  // flush any unsaved work and WAIT for the server to confirm BEFORE clearing the account,
+  // otherwise the next login could read the server before this save lands → last edits lost.
+  try{ if(window.MCQDB && MCQDB.saveAll && State.account){
+    try{ State.dataSync={status:'loading',message:'Saving…'}; refreshSyncUi(); }catch(e){}
+    await MCQDB.saveAll();
+  } }catch(e){}
   dataSyncRun++;
   State.superFullSyncStarted=false;
   State.superFullSyncFailedAt=0;
