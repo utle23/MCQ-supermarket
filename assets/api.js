@@ -29,6 +29,16 @@
   // server-side AI Vision (OpenAI/ChatGPT key lives on the server)
   window.MCQ_AI_VISION_ENDPOINT = (BASE||'') + '/api/vision-temp';
   window.MCQ_VISION_TEXT_ENDPOINT = (BASE||'') + '/api/vision-text';
+  // server-side settings (super-admin only): digest recipient emails, etc.
+  window.MCQ_SETTINGS_ENDPOINT = (BASE||'') + '/api/settings';
+  window.mcqSettings = {
+    get:function(key){ var tok=(window.localStorage&&localStorage.getItem('mcq_token'))||'';
+      return fetch((BASE||'')+'/api/settings?key='+encodeURIComponent(key),{headers:{Authorization:'Bearer '+tok}})
+        .then(function(r){return r.json().catch(function(){return {};});}).catch(function(){return {};}); },
+    set:function(key,value){ var tok=(window.localStorage&&localStorage.getItem('mcq_token'))||'';
+      return fetch((BASE||'')+'/api/settings',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+tok},body:JSON.stringify({key:key,value:value})})
+        .then(function(r){return r.json().catch(function(){return {};});}).catch(function(){return {ok:false};}); }
+  };
   // explicit delete — the per-store save MERGES (never mass-deletes), so real deletions
   // are propagated here. table: records|staff|checklist_submissions|bin_records|schedule_history
   window.mcqDeleteRecords = function(table, ids, opts){

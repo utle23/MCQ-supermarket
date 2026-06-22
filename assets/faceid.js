@@ -45,9 +45,26 @@ window.MCQFace = (function(){
     if(!match) throw new Error(branch ? ('Face ID not recognised for '+branch) : 'Face ID not recognised on this device');
     return match;
   }
-  return { supported:supported, enroll:enroll, login:login, list:load, listFor:listFor,
+  // rebuild this device's local list from the synced DB.faceCreds (so the in-app
+  // manager never looks empty after a cache clear — the WebAuthn key stays device-bound)
+  function syncFromDB(){ try{ if(!window.DB||!Array.isArray(DB.faceCreds)) return; var list=load(), have={}; list.forEach(function(c){have[c.id]=1;});
+    DB.faceCreds.forEach(function(c){ if(c&&c.id&&!have[c.id]){ list.push({id:c.id,branch:c.branch,role:c.role,label:c.label||c.branch,created:c.created||''}); have[c.id]=1; } });
+    store(list); }catch(e){} }
+  return { supported:supported, enroll:enroll, login:login, list:load, listFor:listFor, syncFromDB:syncFromDB,
     remove:function(id){ store(load().filter(function(x){return x.id!==id;})); try{ if(DB.faceCreds){ DB.faceCreds=DB.faceCreds.filter(function(x){return x.id!==id;}); if(window.persist) window.persist(); } }catch(e){} } };
 })();
+
+/* in-app enrolment — the user is already authenticated, so no login-form password needed */
+async function faceEnrollInApp(){
+  if(!window.PublicKeyCredential){ toast('This device does not support Face ID (WebAuthn).'); return; }
+  var acct=(window.State&&State.account)||{}, role=acct.role||'staff', branch=acct.branch||'';
+  var label = role==='super'?'Head Office':(role==='admin'?branch+' Admin':branch);
+  try{ toast('Follow your device Face ID / Touch ID prompt…');
+    await MCQFace.enroll(role==='super'?'':branch, role, label);
+    toast('✅ Face ID added for '+label); if(window.renderFaceId) renderFaceId();
+  }catch(e){ toast('Face ID setup cancelled or failed'); }
+}
+window.faceEnrollInApp=faceEnrollInApp;
 
 /* password check (mirrors doLogin) so only an authorised person can enrol a branch */
 function mcqAuthRole(mode,branch,pw){ if(!pw) return null; var a=(typeof DB!=='undefined'&&DB.auth)||{};

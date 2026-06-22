@@ -210,6 +210,25 @@ def delete_records():
     db.write_audit(uid(au), store, 'delete', table, 'ALL' if d.get('all') else ','.join((d.get('ids') or [])[:5]), None, None)
     return jsonify(ok=True)
 
+# ---------- settings (super-admin only): digest recipients, etc. ----------
+@api.route('/api/settings', methods=['GET'])
+def get_settings():
+    au = require_auth()
+    if au['role'] != 'super': abort(403)
+    key = request.args.get('key') or ''
+    if not key: abort(400)
+    return jsonify(ok=True, key=key, value=db.get_setting(key, []))
+
+@api.route('/api/settings', methods=['POST'])
+def post_settings():
+    au = require_auth()
+    if au['role'] != 'super': abort(403)
+    d = request.get_json(force=True, silent=True) or {}
+    key = d.get('key') or ''
+    if not key: abort(400)
+    db.set_setting(key, d.get('value'))
+    return jsonify(ok=True)
+
 # ---------- email relay (Brevo) — API key stays on the SERVER, never in the frontend / repo ----------
 @api.route('/api/send-email', methods=['POST'])
 def send_email():
@@ -225,6 +244,10 @@ def send_email():
                'to': [{'email': r['email'], 'name': r.get('name') or r['email']} for r in to],
                'subject': d.get('subject') or 'MCQ Supermarket',
                'htmlContent': d.get('html') or ('<pre style="font-family:Arial">' + (d.get('text') or '') + '</pre>')}
+    att = d.get('attachment')
+    if isinstance(att, list) and att:
+        payload['attachment'] = [{'content': a.get('content'), 'name': a.get('name') or 'attachment.pdf'}
+                                 for a in att if a.get('content')]
     req = urllib.request.Request('https://api.brevo.com/v3/smtp/email',
         data=json.dumps(payload).encode('utf-8'),
         headers={'api-key': key, 'content-type': 'application/json', 'accept': 'application/json'}, method='POST')

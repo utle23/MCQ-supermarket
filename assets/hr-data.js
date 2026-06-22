@@ -36,6 +36,10 @@ DB.emailRecipients = [
 /* Brevo by default; the API KEY is NOT here — it lives in the server env var
    BREVO_API_KEY and is used by the /api/send-email relay. Sender/name are not secret. */
 DB.emailConfig = { channel:'brevo', apiKey:'', fromEmail:'mcqcafe.notify@gmail.com', fromName:'MCQ Supermarket Notification' };
+/* Sent-mail history (proof emails actually went out) — capped to ~100, persisted per store */
+DB.emailLog = [];
+/* Per-store department-lead emails: { [store]: { [dept]: [ {name,email}, … ] } } — isolated per store */
+DB.checklistLeadEmails = {};
 /* default recipients per category group */
 const _GROUP_RECIPIENTS = {
   'Maintenance & Facility':['fac','ho'],

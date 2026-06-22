@@ -59,7 +59,29 @@ from flask_app import app as application
 - The data backend is live at the same address: `…/api/health` returns JSON.
   The first request auto-creates the SQLite database and seeds the 8 stores.
 
-## 5. Updating later
+## 5. Automatic 9 PM daily summary (Scheduled Task)
+The app emails a branded **PDF per store** (today's Opening / Mid-afternoon / Closing
+checklists + temperature alerts + open issues/violations + photo evidence) to the
+Super-Admin addresses set in **Email Notifications → "Daily summary recipients"**.
+
+1. Install the PDF engine once: `pip install --user fpdf2` (or `pip install --user -r server/requirements.txt`).
+2. PythonAnywhere → **Tasks** tab → add a **Scheduled task** at **21:00** (server time):
+   ```
+   python3.10 /home/YOURUSER/MCQ-supermarket/server/daily_digest.py
+   ```
+   (match your Python version). Scheduled tasks inherit your account env; if
+   `BREVO_API_KEY` / `MCQ_FROM_EMAIL` aren't already in your `~/.bashrc`, prefix them:
+   ```
+   BREVO_API_KEY='xkeysib-...' MCQ_FROM_EMAIL='mcqcafe.notify@gmail.com' python3.10 .../server/daily_digest.py
+   ```
+3. Test it now from a Bash console: `python3 ~/MCQ-supermarket/server/daily_digest.py`
+   → it prints how many stores/PDFs/recipients and sends one email. If no recipients are
+   configured yet it exits cleanly with a message.
+
+> Note: the digest reads SQLite directly (no login token needed) and is safe to run
+> repeatedly. Super-Admin can add **multiple** recipient emails in the app.
+
+## 6. Updating later
 ```bash
 cd ~/MCQ-supermarket && git pull
 ```

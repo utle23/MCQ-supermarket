@@ -128,8 +128,6 @@ function showLogin(notice){
       <button class="faceid-btn" onclick="faceIdLogin()">
         <span class="fid-ic">🪪</span> Sign in with Face ID
       </button>
-      <button class="faceid-enroll" onclick="faceEnroll()">＋ Set up Face ID for this branch</button>
-      <div class="fid-list" id="fid-list"></div>
       <div class="login-hint" id="login-hint"></div>
       <div class="login-feats">
         <span>✅ Checklists</span><span>📷 Photo proof</span><span>📊 Analytics</span><span>🪪 Face ID</span>
@@ -149,16 +147,15 @@ function showLogin(notice){
   $('#login-branch').addEventListener('change',updateLoginHint);
   $('#login-pw').addEventListener('keydown',e=>{ if(e.key==='Enter') doLogin(); });
   updateLoginHint();
-  if(window.faceRefreshList) faceRefreshList();
 }
 function loginMode(){ return $('#login-mode .seg-btn.active').dataset.mode; }
 function togglePw(){ const p=$('#login-pw'); p.type=p.type==='password'?'text':'password'; }
 function loginFail(m){ const e=$('#login-err'); if(e) e.textContent='❌ '+m; const c=$('.login-card'); if(c){ c.classList.add('shake'); setTimeout(()=>c.classList.remove('shake'),450); } }
 function updateLoginHint(){ const el=$('#login-hint'); if(!el) return; const mode=loginMode(), branch=$('#login-branch')?.value;
   const row=$('#login-store-row'); if(row) row.style.display=mode==='super'?'none':'block';
-  el.innerHTML = mode==='super' ? `Super Admin password: <b>${esc(DB.auth.superAdminPassword)}</b> · all stores + compare`
-    : mode==='admin' ? `${esc(branch||'')} admin password: <b>${esc((DB.auth.adminPasswords||{})[branch]||'—')}</b> · this store only`
-    : `MCQ ${esc(branch||'')} staff password: <b>${esc(DB.auth.branchPasswords[branch]||'—')}</b>`; }
+  el.innerHTML = mode==='super' ? `👑 Super Admin — all stores &amp; cross-store compare`
+    : mode==='admin' ? `🛡️ Admin access — ${esc(branch||'this store')} only`
+    : `🧑‍💼 Staff sign-in — ${esc(branch||'your store')}`; }
 function doLogin(){
   const pw=$('#login-pw').value.trim(), branch=$('#login-branch').value, mode=loginMode();
   $('#login-err').textContent='';
@@ -855,7 +852,20 @@ window.addEventListener('hashchange',()=>{ if(State.account) render(); });
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeDrawer(); });
 function toggleSidebar(){ const s=$('#sidebar'); if(!s) return; const open=s.classList.toggle('show'); const bd=$('#sb-backdrop'); if(bd) bd.classList.toggle('show',open); }
 function closeSidebarM(){ $('#sidebar')?.classList.remove('show'); $('#sb-backdrop')?.classList.remove('show'); }
-Object.assign(window,{go,openDetail,closeDrawer,submitForm,reviewSave,recSaveAll,recDelete,logout,doLogin,togglePw,updateLoginHint,faceIdLogin,closeFid,toggleGroup,toggleSidebar,closeSidebarM});
+/* Reusable photo lightbox — tap/Esc to close, click image to toggle zoom */
+function openLightbox(src){ if(!src) return; let ov=document.getElementById('mcq-lightbox');
+  if(!ov){ ov=document.createElement('div'); ov.id='mcq-lightbox'; ov.className='lb-overlay';
+    ov.innerHTML='<button class="lb-x" aria-label="Close">✕</button><img class="lb-img" alt="">';
+    ov.addEventListener('click',e=>{ if(e.target===ov||e.target.classList.contains('lb-x')) closeLightbox(); });
+    ov.querySelector('.lb-img').addEventListener('click',function(){ this.classList.toggle('zoomed'); });
+    document.body.appendChild(ov);
+  }
+  ov.querySelector('.lb-img').classList.remove('zoomed');
+  ov.querySelector('.lb-img').src=src; ov.style.display='flex';
+}
+function closeLightbox(){ const ov=document.getElementById('mcq-lightbox'); if(ov) ov.style.display='none'; }
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeLightbox(); });
+Object.assign(window,{go,openDetail,closeDrawer,submitForm,reviewSave,recSaveAll,recDelete,logout,doLogin,togglePw,updateLoginHint,faceIdLogin,closeFid,toggleGroup,toggleSidebar,closeSidebarM,openLightbox,closeLightbox});
 async function boot(){
   try{ const saved=sessionStorage.getItem('mcq_acct'); if(saved){ State.account=JSON.parse(saved); State.branch=State.account.branch; State.role=State.account.role==='staff'?'store':'ho'; } }catch(e){}
   if(State.account){

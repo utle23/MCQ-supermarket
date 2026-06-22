@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS schedule_tasks (
   id TEXT, store_id TEXT, data_json TEXT, PRIMARY KEY (store_id, id));
 CREATE TABLE IF NOT EXISTS schedule_history (
   id INTEGER PRIMARY KEY AUTOINCREMENT, store_id TEXT, data_json TEXT, created_at TEXT);
+CREATE TABLE IF NOT EXISTS settings (
+  key TEXT PRIMARY KEY, value_json TEXT, updated_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_audit_store ON audit_logs(store_id);
 CREATE INDEX IF NOT EXISTS idx_photos_store ON photos(store_id);
 CREATE INDEX IF NOT EXISTS idx_snap_store ON store_state_snapshots(store_id);
@@ -85,6 +87,26 @@ def connect():
 
 def now():
     return time.strftime('%Y-%m-%d %H:%M:%S')
+
+def get_setting(key, default=None):
+    conn = connect()
+    try:
+        row = conn.execute('SELECT value_json FROM settings WHERE key=?', (key,)).fetchone()
+        if not row or row['value_json'] is None: return default
+        try: return json.loads(row['value_json'])
+        except Exception: return default
+    finally:
+        conn.close()
+
+def set_setting(key, value):
+    conn = connect()
+    try:
+        conn.execute('INSERT INTO settings(key,value_json,updated_at) VALUES(?,?,?) '
+                     'ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at',
+                     (key, json.dumps(value), now()))
+        conn.commit()
+    finally:
+        conn.close()
 
 def hash_pw(pw):
     return hashlib.sha256(('mcq-salt::' + str(pw)).encode()).hexdigest()

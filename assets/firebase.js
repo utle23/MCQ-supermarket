@@ -150,7 +150,11 @@
       binAdmin: JSON.stringify(buildBinAdmin(scoped?store:'')),
       jobDuties: JSON.stringify(DB.jobDuties||null), jobRoster: JSON.stringify(DB.jobRoster||null),
       scheduleTasks: JSON.stringify(DB.scheduleTasks||[]), scheduleTicks: clone(DB.scheduleTicks||{}), scheduleHistory:JSON.stringify(scheduleHistory), auditLogs:audits,
-      issueEmailRoutes:clone(DB.issueEmailRoutes||{}), checklistEmailRoutes:clone(DB.checklistEmailRoutes||{}), emailConfig:clone(DB.emailConfig||null), faceCreds:clone(DB.faceCreds||[]), updatedAt:Date.now() };
+      issueEmailRoutes:clone(DB.issueEmailRoutes||{}), checklistEmailRoutes:clone(DB.checklistEmailRoutes||{}), emailConfig:clone(DB.emailConfig||null), faceCreds:clone(DB.faceCreds||[]),
+      emailRecipients:clone(DB.emailRecipients||[]), emailLog:(Array.isArray(DB.emailLog)?DB.emailLog.slice(0,100):[]).map(clone),
+      // dept-lead emails are per-store; keep only this store's subtree when scoped (isolation), full map for super
+      checklistLeadEmails: scoped ? {[store]:clone((DB.checklistLeadEmails||{})[store]||{})} : clone(DB.checklistLeadEmails||{}),
+      updatedAt:Date.now() };
   }
   function applyState(d){
     if(!d) return;
@@ -176,8 +180,12 @@
     if(Array.isArray(d.auditLogs)) DB.auditLogs=clone(d.auditLogs);
     if(d.emailConfig) DB.emailConfig=clone(d.emailConfig);
     if(Array.isArray(d.faceCreds)) DB.faceCreds=clone(d.faceCreds);
+    try{ if(window.MCQFace&&MCQFace.syncFromDB) MCQFace.syncFromDB(); }catch(e){}
     if(d.issueEmailRoutes) DB.issueEmailRoutes=clone(d.issueEmailRoutes);
     if(d.checklistEmailRoutes) DB.checklistEmailRoutes=clone(d.checklistEmailRoutes);
+    if(Array.isArray(d.emailRecipients)&&d.emailRecipients.length) DB.emailRecipients=clone(d.emailRecipients);
+    if(Array.isArray(d.emailLog)) DB.emailLog=clone(d.emailLog);
+    if(d.checklistLeadEmails && typeof d.checklistLeadEmails==='object'){ DB.checklistLeadEmails=DB.checklistLeadEmails||{}; Object.keys(d.checklistLeadEmails).forEach(st=>{ DB.checklistLeadEmails[st]=clone(d.checklistLeadEmails[st]); }); }
   }
   async function seedStoreState(store){
     resetToBase();
@@ -221,9 +229,14 @@
     resetToBase();
     RECORD_MODS.forEach(m=>{ if(DB.modules[m]) DB.modules[m].records=[]; });
     DB.staff=[]; DB.checklistSubs=[]; DB.auditLogs=[]; DB.scheduleHistory=[]; DB.binAdmin=DB.binAdmin||{activeDays:['Tue','Thu','Fri'],checklist:[],records:[]}; DB.binAdmin.records=[];
+    DB.checklistLeadEmails={};   // per-store dept-lead emails — rebuilt from each store's blob
     const seenStaff=new Set(), seenSubs=new Set(), seenAudit=new Set(), seenBin=new Set(), seenSched=new Set(), seenRec={};
     rows.forEach(row=>{
       const d=row.data||{}, store=row.store;
+      // per-store config: dept-lead emails (keep each store's own), + global-ish recipients/log (last non-empty wins)
+      if(d.checklistLeadEmails && typeof d.checklistLeadEmails==='object'){ const sub=d.checklistLeadEmails[store]||d.checklistLeadEmails; if(sub&&typeof sub==='object') DB.checklistLeadEmails[store]=clone(sub); }
+      if(Array.isArray(d.emailRecipients)&&d.emailRecipients.length) DB.emailRecipients=clone(d.emailRecipients);
+      if(Array.isArray(d.emailLog)&&d.emailLog.length) DB.emailLog=clone(d.emailLog);
       const mods=d.modules||{};
       RECORD_MODS.forEach(m=>{
         if(!DB.modules[m]) return;

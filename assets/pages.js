@@ -2039,16 +2039,92 @@ ${note}`;
   else window.open('https://mail.google.com/mail/?view=cm&fs=1&to='+encodeURIComponent(to.map(r=>r.email).join(','))+'&su='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body),'_blank');
   return 'compose';
 }
+async function mgrAddVerifyPhotos(e){
+  const files=e.target.files; if(!files||!files.length) return;
+  State.mgrV=State.mgrV||{photos:[]}; State.mgrV.photos=State.mgrV.photos||[];
+  for(const f of files){ const preview=URL.createObjectURL(f); State.mgrV.photos.push(preview);
+    try{ const d=await compressImage(f); const ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d; const idx=State.mgrV.photos.indexOf(preview); if(idx>=0){ State.mgrV.photos[idx]=ref; try{URL.revokeObjectURL(preview);}catch(_){} } }catch(_){}
+  }
+  e.target.value=''; mgrDrawVerifyPhotos();
+}
+function mgrRmVerifyPhoto(p){ State.mgrV.photos=(State.mgrV.photos||[]).filter(x=>x!==p); mgrDrawVerifyPhotos(); }
+function mgrDrawVerifyPhotos(){ const el=document.getElementById('mgr-vphotos'); if(!el) return;
+  el.innerHTML=(State.mgrV.photos||[]).map(p=>`<span style="position:relative;display:inline-block"><img src="${imgSrc(p)}" onclick="openLightbox('${ckJS(imgSrc(p))}')" style="cursor:zoom-in"><span class="ck-rm" onclick="mgrRmVerifyPhoto('${ckJS(p)}')">✕</span></span>`).join(''); }
+function mgrAssessment(){
+  const g=id=>{ const el=document.getElementById(id); return el?String(el.value||'').trim():''; };
+  return { verifiedBy:g('mgr-by')||((State.account&&State.account.name)||'Manager'), overallResult:g('mgr-overall'),
+    issuesFound:g('mgr-issues'), actionResponsible:g('mgr-action'), verifyNote:g('mgr-note'),
+    verifyPhotos:((State.mgrV&&State.mgrV.photos)||[]).slice() };
+}
 function mgrVerify(id){
-  const note=($('#mgr-note')&&$('#mgr-note').value||'').trim();
-  const s=mgrSubs().find(x=>x.id===id); if(s){ s.status='Verified'; s.verifyNote=note; s.verifiedAt=new Date().toISOString(); s.verifiedBy=(State.account&&State.account.name)||'Manager'; }
+  const a=mgrAssessment();
+  const s=mgrSubs().find(x=>x.id===id);
   if(!mgrSubInScope(s)){ toast('This checklist belongs to another store'); return; }
+  const apply=(o)=>{ o.status='Verified'; o.verifyNote=a.verifyNote; o.verifiedBy=a.verifiedBy; o.overallResult=a.overallResult; o.issuesFound=a.issuesFound; o.actionResponsible=a.actionResponsible; o.verifyPhotos=a.verifyPhotos; o.verifiedAt=new Date().toISOString(); };
+  if(s) apply(s);
   const real=(DB.checklistSubs||[]).find(x=>x.id===id && x.store===s.store);
-  if(real){ const before=JSON.parse(JSON.stringify(real)); real.status='Verified'; real.verifyNote=note; real.verifiedAt=new Date().toISOString(); real.verifiedBy=(State.account&&State.account.name)||'Manager'; auditLog('verify','checklistSubmission',real.id,real.store,before,real,note); if(window.persist) window.persist(); }
-  const sent=note&&s&&mgrEmailVerifyNote(s,note);
+  if(real){ const before=JSON.parse(JSON.stringify(real)); apply(real); auditLog('verify','checklistSubmission',real.id,real.store,before,real,a.verifyNote); if(window.persist) window.persist(); }
+  // notify store admin (existing behaviour) when there's any written assessment
+  const hasContent=a.verifyNote||a.issuesFound||a.actionResponsible||a.overallResult;
+  const sent=hasContent&&s&&mgrEmailVerifyNote(s,mgrAssessmentText(a));
+  // notify department lead(s) for this store+dept with a branded PDF
+  let leadSent=false;
+  try{ const leads=leadList(s.store,s.department).filter(l=>l.email); if(leads.length){ mgrSendLeadPDF(s,a,leads); leadSent=true; } }catch(err){}
   closeDrawer&&closeDrawer();
-  toast(sent==='silent'?('✓ Verified · note sent silently to '+s.store+' admin'):sent==='compose'?'✓ Verified · email opened to store admin':'✓ Checklist verified');
+  toast(leadSent?('✓ Verified · PDF sent to '+s.department+' lead'):sent==='silent'?('✓ Verified · note sent to '+s.store+' admin'):'✓ Checklist verified');
   renderManager(); }
+function mgrAssessmentText(a){
+  return `Verified by: ${a.verifiedBy}
+Overall result: ${a.overallResult||'—'}
+
+Issues found:
+${a.issuesFound||'—'}
+
+Action / Responsible:
+${a.actionResponsible||'—'}
+
+${a.verifyNote?('Manager note:\n'+a.verifyNote):''}`.trim();
+}
+async function mgrSendLeadPDF(s,a,leads){
+  const text=mgrAssessmentText(a);
+  const subject=`MCQ ${s.store} · ${s.department} ${s.session} — verified (${a.overallResult||'reviewed'})`;
+  try{
+    if(!(window.jspdf&&window.jspdf.jsPDF)) throw new Error('no jspdf');
+    const tasks=mgrSubTasks(s), doneN=tasks.filter(t=>t.done).length;
+    const { jsPDF }=window.jspdf; const doc=new jsPDF({unit:'pt',format:'a4'});
+    const PW=doc.internal.pageSize.getWidth(), PH=doc.internal.pageSize.getHeight(), M=40; let y=92;
+    const ensure=h=>{ if(y+h>PH-40){ doc.addPage(); y=44; } };
+    doc.setFillColor(14,159,110); doc.rect(0,0,PW,74,'F');
+    let tx=M; if(window.MCQ_LOGO_URL){ try{ doc.addImage(MCQ_LOGO_URL,'PNG',M,14,46,46); tx=M+58; }catch(e){} }
+    doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(16); doc.text('MCQ Supermarket — Checklist Verification',tx,32);
+    doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.text(`${s.store} · ${s.department} · ${s.session} · ${s.date}`,tx,52);
+    // assessment summary box
+    const col = a.overallResult==='Critical'?[185,28,28]:a.overallResult==='Need improving'?[202,138,4]:[21,128,61];
+    ensure(20); doc.setFillColor(col[0],col[1],col[2]); doc.roundedRect(M,y,PW-2*M,24,4,4,'F'); doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(12);
+    doc.text(`Overall result: ${a.overallResult||'Reviewed'}   ·   ${doneN}/${tasks.length} tasks done (${s.progress}%)`,M+12,y+16); y+=36;
+    const block=(label,val)=>{ if(!val)return; ensure(16); doc.setTextColor(90); doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.text(label,M,y); y+=14;
+      doc.setTextColor(30); doc.setFont('helvetica','normal'); doc.setFontSize(10.5); const lines=doc.splitTextToSize(String(val),PW-2*M); ensure(lines.length*13); doc.text(lines,M,y); y+=lines.length*13+8; };
+    block('Verified by', a.verifiedBy);
+    block('Issues found', a.issuesFound);
+    block('Action / Responsible', a.actionResponsible);
+    block('Manager note', a.verifyNote);
+    // outstanding tasks list
+    const out=tasks.filter(t=>!t.done);
+    if(out.length){ ensure(16); doc.setTextColor(185,28,28); doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.text(`Outstanding tasks (${out.length})`,M,y); y+=14;
+      doc.setTextColor(60); doc.setFont('helvetica','normal'); doc.setFontSize(10); out.slice(0,30).forEach(t=>{ const l=doc.splitTextToSize('• '+t.task+(t.area?(' ('+t.area+')'):''),PW-2*M); ensure(l.length*12); doc.text(l,M,y); y+=l.length*12+2; }); y+=6; }
+    // annotated photos from the manager
+    const photoIds=(a.verifyPhotos||[]); if(photoIds.length){ ensure(16); doc.setTextColor(90); doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.text('Manager photos',M,y); y+=14;
+      const pmap={}; await Promise.all([...new Set(photoIds)].map(async u=>{ const d=await ckImgData(imgSrc(u),900); if(d) pmap[u]=d; }));
+      const box=160, th=120, gap=10; let x=M; photoIds.forEach(u=>{ const d=pmap[u]; if(!d) return; if(x+box>PW-M){ x=M; y+=th+gap; } ensure(th+12);
+        const ar=(d.w&&d.h)?d.w/d.h:4/3; let iw=box, ih=iw/ar; if(ih>th){ ih=th; iw=ih*ar; } try{ doc.addImage(d.data,'JPEG',x,y,iw,ih); }catch(e){} doc.setDrawColor(205); doc.rect(x,y,iw,ih); x+=box+gap; }); y+=th+14; }
+    const n=doc.internal.getNumberOfPages(); for(let i=1;i<=n;i++){ doc.setPage(i); doc.setFontSize(8); doc.setTextColor(150); doc.text('MCQ Supermarket · '+s.store+' · Confidential',M,PH-18); doc.text('Page '+i+' / '+n,PW-M,PH-18,{align:'right'}); }
+    const fileName=`MCQ_${String(s.store).replace(/\s+/g,'_')}_${String(s.department).replace(/\s+/g,'')}_${s.session}_${s.date}.pdf`;
+    const b64=doc.output('datauristring').split(',')[1];
+    mcqEmail.sendPdf(leads, subject, text, b64, fileName);
+  }catch(e){ // fallback: plain HTML email
+    if(window.mcqEmail) mcqEmail._brevo(leads, subject, text, mcqEmail.cfg());
+  }
+}
 function mgrDate(v){ if(!State.mgr) State.mgr={}; State.mgr.date=v; renderManager(); }
 /* derive the actual checklist (items, done state, notes, evidence photos) for a submission */
 function mgrSubTasks(s){
@@ -2078,10 +2154,17 @@ function mgrReview(id){
   const meta=(((DB.checklist&&DB.checklist.deptMeta)||{})[s.department])||{color:'#0f766e'};
   const doneN=tasks.filter(t=>t.done).length, outN=tasks.length-doneN, photoN=tasks.reduce((n,t)=>n+t.photos.length,0);
   const existingNote=s.verifyNote||'';
+  State.mgrV={id:s.id, photos:(s.verifyPhotos||[]).slice()};
+  // managers/admins for this store to populate "Verified by"
+  const mgrNames=[]; const seenN={};
+  (DB.staff||[]).filter(x=>x.store===s.store && (staffIsAdmin(x)||/manager|supervisor/i.test(x.role||''))).forEach(x=>{ if(x.name&&!seenN[x.name]){seenN[x.name]=1;mgrNames.push(x.name);} });
+  const curName=(State.account&&State.account.name)||'Manager'; if(!seenN[curName]) mgrNames.unshift(curName);
+  const verifiedBy=s.verifiedBy||curName, overall=s.overallResult||'', issues=s.issuesFound||'', action=s.actionResponsible||'';
+  const disabled=s.status==='Verified'?'disabled':'';
   const rows=tasks.map(t=>`<div class="mr-task ${t.done?'done':'todo'}">
       <div class="mr-tk"><span class="mr-check">${t.done?'✓':'○'}</span><div class="mr-name">${esc(t.task)}<small>${esc(t.area)}</small></div>${t.temp?`<span class="badge ${t.temp.ok?'ok':'warn'}">${esc(t.temp.label)}</span>`:''}</div>
       ${t.note?`<div class="mr-note">📝 ${esc(t.note)}</div>`:''}
-      ${t.photos.length?`<div class="mr-photos">${t.photos.map(p=>`<a href="${imgSrc(p)}" target="_blank" rel="noopener"><img src="${imgSrc(p)}"></a>`).join('')}</div>`:(t.photoReq&&!t.done?`<div class="mr-nophoto">📷 Photo required — not attached</div>`:'')}
+      ${t.photos.length?`<div class="mr-photos">${t.photos.map(p=>`<img src="${imgSrc(p)}" onclick="openLightbox('${ckJS(imgSrc(p))}')" style="cursor:zoom-in">`).join('')}</div>`:(t.photoReq&&!t.done?`<div class="mr-nophoto">📷 Photo required — not attached</div>`:'')}
     </div>`).join('');
   $('#drawer').innerHTML=`<div class="drawer-head"><div class="dh-ic" style="background:${meta.color}1f;color:${meta.color}">✅</div>
     <div><div style="font-weight:840;font-size:16px">${esc(s.department)} · ${esc(s.session)}</div>
@@ -2092,12 +2175,24 @@ function mgrReview(id){
       <div class="mr-prog"><span class="pbar" style="flex:1"><i style="width:${s.progress}%;background:${meta.color}"></i></span><b>${s.progress}%</b></div>
       <div class="mr-list">${rows||'<div class="empty">No tasks for this session.</div>'}</div>
       <div class="mr-eval">
-        <label>Manager assessment note</label>
-        <textarea id="mgr-note" ${s.status==='Verified'?'disabled':''} placeholder="Assessment note for the store manager">${esc(existingNote)}</textarea>
+        <div class="field"><label>Verified by</label>
+          <select id="mgr-by" ${disabled}>${mgrNames.map(n=>`<option ${n===verifiedBy?'selected':''}>${esc(n)}</option>`).join('')}</select></div>
+        <div class="field"><label>Overall result</label>
+          <select id="mgr-overall" ${disabled}><option value="">— Select —</option>${['Good','Need improving','Critical'].map(o=>`<option ${o===overall?'selected':''}>${o}</option>`).join('')}</select></div>
+        <div class="field"><label>Issues found</label>
+          <textarea id="mgr-issues" ${disabled} placeholder="Describe issues…">${esc(issues)}</textarea></div>
+        <div class="field"><label>Action / Responsible</label>
+          <textarea id="mgr-action" ${disabled} placeholder="What needs doing & who is responsible">${esc(action)}</textarea></div>
+        <div class="field"><label>Manager note</label>
+          <textarea id="mgr-note" ${disabled} placeholder="Additional note for the store manager / department lead">${esc(existingNote)}</textarea></div>
+        <div class="field"><label>Attach photos (annotate problem areas)</label>
+          ${s.status==='Verified'?'':'<input type="file" id="mgr-photo-in" accept="image/*" multiple onchange="mgrAddVerifyPhotos(event)">'}
+          <div id="mgr-vphotos" class="mr-photos" style="margin-top:8px">${(State.mgrV.photos||[]).map(p=>`<span style="position:relative;display:inline-block"><img src="${imgSrc(p)}" onclick="openLightbox('${ckJS(imgSrc(p))}')" style="cursor:zoom-in">${s.status==='Verified'?'':`<span class="ck-rm" onclick="mgrRmVerifyPhoto('${ckJS(p)}')">✕</span>`}</span>`).join('')}</div>
+        </div>
       </div>
       ${s.status==='Verified'
-        ? `<div class="rail-tip" style="margin-top:16px">✅ This checklist is already verified.</div>`
-        : `<button class="btn primary block lg" style="margin-top:16px" onclick="mgrVerify('${s.id}')"><i class="fas fa-check-double"></i>&nbsp; Verify this checklist</button>
+        ? `<div class="rail-tip" style="margin-top:16px">✅ Verified by ${esc(s.verifiedBy||'—')}${s.overallResult?' · '+esc(s.overallResult):''}.</div>`
+        : `<button class="btn primary block lg" style="margin-top:16px" onclick="mgrVerify('${s.id}')"><i class="fas fa-check-double"></i>&nbsp; Verify &amp; notify department lead</button>
            ${outN?`<div class="fhint" style="text-align:center;margin-top:8px">⚠️ ${outN} task(s) still outstanding</div>`:''}`}
     </div>`;
   $('#drawer').classList.add('open'); $('#drawer-mask').classList.add('open');
@@ -2260,7 +2355,7 @@ function renderWhatsapp(){
   if(!State.wa) State.wa={period:'Opening'};
   const period=State.wa.period, C=DB.checklist;
   const byDept={};
-  C.items.forEach((it,i)=>{ const r=ckItem(it,i); if(!ckStoreOk(r)) return; const when=it[3], inP=period==='Opening'?(when==='O'||when==='A'):(when==='C'||when==='A'); if(!inP) return;
+  C.items.forEach((it,i)=>{ const r=ckItem(it,i); if(!ckStoreOk(r)) return; const when=it[3], inP=period==='Opening'?(when==='O'||when==='A'):period==='Mid-afternoon'?(when==='M'):(when==='C'||when==='A'); if(!inP) return;
     const dept=it[0], ps=photoSpec(it[4]), st=(State.chk&&State.chk.state[i])||{};
     const d=byDept[dept]=byDept[dept]||{total:0,done:0,photos:[],reqMissing:0,tempBad:0,meta:C.deptMeta[dept]||{}};
     d.total++; if(st.done)d.done++; (st.photos||[]).forEach(u=>d.photos.push(u)); if(ps&&ps.req&&!(st.photos||[]).length)d.reqMissing++; if(st.temp&&st.temp.inRange===false)d.tempBad++; });
@@ -2291,8 +2386,8 @@ function renderWhatsapp(){
       <div class="wa-date">📅 ${date} · ${period} report</div>
       <h2><i class="fab fa-whatsapp"></i>&nbsp; ${period} Report — ready to share</h2>
       <p>Auto-built from today’s checklist, photo evidence and open items. Tap Share to send it straight to your team WhatsApp group.</p>
-      <div class="wa-toggle"><button class="${period==='Opening'?'active':''}" onclick="waPeriod('Opening')">☀️ Opening</button><button class="${period==='Closing'?'active':''}" onclick="waPeriod('Closing')">🌙 Closing</button></div>
-      <div class="wa-actions"><button class="wa-share" onclick="waShare()"><i class="fab fa-whatsapp"></i>&nbsp; Share to WhatsApp</button>
+      <div class="wa-toggle"><button class="${period==='Opening'?'active':''}" onclick="waPeriod('Opening')">☀️ Opening</button><button class="${period==='Mid-afternoon'?'active':''}" onclick="waPeriod('Mid-afternoon')">🌤️ Mid-afternoon</button><button class="${period==='Closing'?'active':''}" onclick="waPeriod('Closing')">🌙 Closing</button></div>
+      <div class="wa-actions"><button class="wa-share" onclick="waSharePDF()"><i class="fab fa-whatsapp"></i>&nbsp; Share PDF to WhatsApp</button>
         <button class="wa-dl" onclick="waCopy()"><i class="fas fa-copy"></i>&nbsp; Copy summary</button></div>
     </div>
     ${tempBadTotal?`<div class="rail-tip" style="margin-top:14px;background:#fef2f2;border-color:#f3c9c9;color:#b91c1c">⚠️ <b>${tempBadTotal} temperature reading(s) out of range</b> today — included in the report.</div>`:''}
@@ -2300,12 +2395,13 @@ function renderWhatsapp(){
     <div class="wa-cards">${deptCards||'<div class="empty">No checklist tasks for this period.</div>'}</div>
     <div class="section-title">Operations snapshot</div>
     <div class="kpi-grid">${snap.map(s=>`<div class="kpi"><div class="k-top"><div class="k-ic" style="background:${s[4]}1f;color:${s[4]}">${s[0]}</div></div><div class="k-val" style="color:${s[4]}">${s[2]}</div><div class="k-lbl">${s[1]} ${s[3]}</div></div>`).join('')}</div>
-    ${allPhotos.length?`<div class="section-title">Photo evidence · ${allPhotos.length}</div><div class="wa-gallery">${allPhotos.map(u=>`<img src="${imgSrc(u)}">`).join('')}</div>`:''}
+    ${allPhotos.length?`<div class="section-title">Photo evidence · ${allPhotos.length}</div><div class="wa-gallery">${allPhotos.map(u=>`<img src="${imgSrc(u)}" onclick="openLightbox('${ckJS(imgSrc(u))}')" style="cursor:zoom-in">`).join('')}</div>`:''}
     <div class="section-title">Message preview</div>
     <div class="card card-pad"><textarea id="wa-msg" style="min-height:170px;font-family:monospace">${esc(msg)}</textarea>
-      <div class="fhint" style="margin-top:8px">💡 Photos are attached automatically. Scheduled auto-send daily at 10:30 AM (opening) and 9:30 PM (closing).</div></div>`;
+      <div class="fhint" style="margin-top:8px">💡 <b>Share PDF</b> builds a branded report (checklist + photos + temperature alerts) for the selected period and opens the WhatsApp share sheet. “Copy summary” copies the text version.</div></div>`;
 }
 function waPeriod(p){ State.wa.period=p; renderWhatsapp(); }
+function waSharePDF(){ const p=(State.wa&&State.wa.period)||'Opening'; return ckSharePDF(p); }   // builds branded PDF (checklist + photos + temp alerts) and shares
 function waShare(){ const txt=$('#wa-msg')?$('#wa-msg').value:''; const t=encodeURIComponent(txt);
   if(navigator.share){ navigator.share({title:'MCQ Daily Report',text:txt}).catch(()=>window.open('https://wa.me/?text='+t,'_blank')); }
   else window.open('https://wa.me/?text='+t,'_blank'); }
@@ -2314,7 +2410,7 @@ function waCopy(){ navigator.clipboard?.writeText($('#wa-msg').value); toast('Su
 /* ============================================================ EMAIL NOTIFICATIONS */
 /* ============================================================ EMAIL SENDING (copies the restaurant: Brevo HTTP API + Gmail-compose / mailto) */
 window.mcqEmail={
-  cfg(){ return DB.emailConfig||(DB.emailConfig={channel:'preview',apiKey:'',fromEmail:'',fromName:'MCQ Supermarket'}); },
+  cfg(){ const c=DB.emailConfig||(DB.emailConfig={channel:'brevo',apiKey:'',fromEmail:'mcqcafe.notify@gmail.com',fromName:'MCQ Supermarket Notification'}); c.channel='brevo'; return c; },
   recipients(eventType,meta){ const recips=DB.emailRecipients||[]; let keys;
     if(eventType==='checklist') keys=(DB.checklistEmailRoutes&&DB.checklistEmailRoutes[meta&&meta.dept])||[];
     else if(eventType==='issue') keys=(DB.issueEmailRoutes&&DB.issueEmailRoutes[meta&&meta.cat])||[];
@@ -2342,20 +2438,34 @@ window.mcqEmail={
     if(cfg.channel==='gmail'){ this._gmail(to,subject,body); return 'compose'; }
     return 'queued';
   },
+  log(to,subject,ok,error){
+    try{ DB.emailLog=DB.emailLog||[];
+      DB.emailLog.unshift({ts:new Date().toISOString(), to:(to||[]).map(r=>r.email||r).filter(Boolean), subject:subject||'', ok:!!ok, error:error||'', store:(window.State&&State.branch)||''});
+      if(DB.emailLog.length>100) DB.emailLog.length=100;
+      if(window.persist) window.persist();
+      if(window.State&&State.route==='email' && typeof renderEmail==='function' && document.getElementById('email-log-body')) renderEmailLog();
+    }catch(e){}
+  },
   _brevo(to,subject,body,cfg){
-    cfg=cfg||this.cfg();
+    cfg=cfg||this.cfg(); const self=this;
     if(window.MCQ_EMAIL_RELAY){   // preferred: server holds the key (nothing secret in the browser/repo)
       fetch(window.MCQ_EMAIL_RELAY,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+((window.localStorage&&localStorage.getItem('mcq_token'))||'')},
         body:JSON.stringify({to:to.map(r=>({email:r.email,name:r.name})),subject,html:this._html(subject,body),fromEmail:cfg.fromEmail,fromName:cfg.fromName})})
-        .then(r=>r.json().catch(()=>({}))).then(d=>{ toast(d&&d.ok?`📧 Sent to ${to.length} (Brevo)`:('📧 Not sent: '+((d&&d.error)||'set BREVO_API_KEY on the server'))); })
-        .catch(()=>toast('📧 Email server unreachable'));
+        .then(r=>r.json().catch(()=>({}))).then(d=>{ const ok=!!(d&&d.ok); self.log(to,subject,ok,ok?'':((d&&d.error)||'set BREVO_API_KEY on the server')); toast(ok?`📧 Sent to ${to.length} (Brevo)`:('📧 Not sent: '+((d&&d.error)||'set BREVO_API_KEY on the server'))); })
+        .catch(()=>{ self.log(to,subject,false,'email server unreachable'); toast('📧 Email server unreachable'); });
       return;
     }
-    if(!(cfg.apiKey&&cfg.fromEmail)){ toast('📧 Brevo not configured'); return; }
+    if(!(cfg.apiKey&&cfg.fromEmail)){ this.log(to,subject,false,'Brevo not configured'); toast('📧 Brevo not configured'); return; }
     fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'accept':'application/json','content-type':'application/json','api-key':cfg.apiKey},
       body:JSON.stringify({sender:{name:cfg.fromName||'MCQ Supermarket',email:cfg.fromEmail},to:to.map(r=>({email:r.email,name:r.name})),subject,htmlContent:this._html(subject,body)})})
-      .then(r=>{ if(r.ok) toast(`📧 Sent to ${to.length} via Brevo`); else toast('📧 Brevo error '+r.status+' — check API key / sender'); })
-      .catch(()=>toast('📧 Browser blocked Brevo (CORS) — deploy on the server to send silently')); },
+      .then(r=>{ self.log(to,subject,r.ok,r.ok?'':('Brevo error '+r.status)); if(r.ok) toast(`📧 Sent to ${to.length} via Brevo`); else toast('📧 Brevo error '+r.status+' — check API key / sender'); })
+      .catch(()=>{ self.log(to,subject,false,'CORS blocked'); toast('📧 Browser blocked Brevo (CORS) — deploy on the server to send silently'); }); },
+  sendPdf(to,subject,body,base64,filename){ const self=this, cfg=this.cfg();
+    if(!window.MCQ_EMAIL_RELAY){ this._brevo(to,subject,body,cfg); return; }   // no relay → send body only
+    fetch(window.MCQ_EMAIL_RELAY,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+((window.localStorage&&localStorage.getItem('mcq_token'))||'')},
+      body:JSON.stringify({to:to.map(r=>({email:r.email,name:r.name})),subject,html:this._html(subject,body),fromEmail:cfg.fromEmail,fromName:cfg.fromName,attachment:[{content:base64,name:filename}]})})
+      .then(r=>r.json().catch(()=>({}))).then(d=>{ const ok=!!(d&&d.ok); self.log(to,subject,ok,ok?'':((d&&d.error)||'send failed')); toast(ok?`📧 PDF sent to ${to.length}`:('📧 Not sent: '+((d&&d.error)||'check server'))); })
+      .catch(()=>{ self.log(to,subject,false,'email server unreachable'); toast('📧 Email server unreachable'); }); },
   _gmail(to,subject,body){ window.open('https://mail.google.com/mail/?view=cm&fs=1&to='+encodeURIComponent(to.map(r=>r.email).join(','))+'&su='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body),'_blank'); },
   _mailto(to,subject,body){ return 'mailto:'+encodeURIComponent(to.map(r=>r.email).join(','))+'?subject='+encodeURIComponent(subject)+'&body='+encodeURIComponent(body); },
   test(){ const cfg=this.cfg(), to=(DB.emailRecipients||[]).filter(r=>r.email).slice(0,1); if(!to.length){toast('No recipients with an email');return;}
@@ -2395,30 +2505,92 @@ function renderEmail(){
         <button class="btn sm" onclick="emailToggleChk('${r.key}')">Customise ${open?'▲':'▾'}</button>
       </div>${dd}</div>`;
   }).join('');
-  const chan=[['preview','🧪 Demo (preview only)'],['brevo','📨 Brevo (auto-send)'],['gmail','✉️ Gmail compose'],['mailto','📧 Mail app']];
-  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic" style="background:#e8f1fe">✉️</div><div><h2>Email Notifications</h2><p>For each person, tick which Report-Issue categories and which checklists they get emailed. Violation alerts always go to everyone.</p></div><div class="ph-actions"><button class="btn sm primary" onclick="emailTest()"><i class="fas fa-paper-plane"></i>&nbsp; Send test</button></div></div>
-    <div class="card" style="margin-bottom:16px"><div class="card-head"><h3><i class="fas fa-gear"></i>&nbsp; Sending method</h3><span class="ch-sub">Same approach as the restaurant — Brevo HTTP API, or Gmail compose</span></div>
+  const relayOn=!!window.MCQ_EMAIL_RELAY;
+  // editable recipient rows (name + email + delete)
+  const recipEditRows=recips.map(r=>`<div class="email-row" style="gap:8px">
+      <div class="avatar">${esc((r.name||'?').slice(0,1))}</div>
+      <input class="login-input" style="flex:1;min-width:120px" value="${esc(r.name||'')}" placeholder="Name / role" oninput="recipSet('${r.key}','name',this.value)">
+      <input class="login-input" style="flex:1.4;min-width:150px" type="email" value="${esc(r.email||'')}" placeholder="email@address.com" oninput="recipSet('${r.key}','email',this.value)">
+      <button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="recipDel('${r.key}')" title="Delete recipient">🗑</button>
+    </div>`).join('');
+  // department-lead block (per store)
+  const leadStore=isSuper()?(State.emailLeadStore||DB.stores[0]):State.branch;
+  const leadStorePicker=isSuper()?`<select class="login-input" style="max-width:220px" onchange="emailLeadStore(this.value)">${(DB.stores||[]).map(s=>`<option ${s===leadStore?'selected':''}>${esc(s)}</option>`).join('')}</select>`:'';
+  const leadBlocks=chkDepts.map(d=>{ const meta=dm[d]||{}; const list=leadList(leadStore,d);
+    const rows=list.map((l,i)=>`<div class="email-row" style="gap:8px;padding:6px 0">
+        <input class="login-input" style="flex:1;min-width:110px" value="${esc(l.name||'')}" placeholder="Lead name" oninput="leadSet('${ckJS(leadStore)}','${ckJS(d)}',${i},'name',this.value)">
+        <input class="login-input" style="flex:1.4;min-width:150px" type="email" value="${esc(l.email||'')}" placeholder="lead@email.com" oninput="leadSet('${ckJS(leadStore)}','${ckJS(d)}',${i},'email',this.value)">
+        <button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="leadDel('${ckJS(leadStore)}','${ckJS(d)}',${i})">🗑</button>
+      </div>`).join('');
+    return `<div class="card" style="margin-bottom:10px"><div class="card-head"><h3 style="font-size:14px"><i class="fas ${meta.icon||'fa-list-check'}" style="color:${meta.color||'#0e9f6e'}"></i>&nbsp; ${esc(d)}</h3><span class="ch-sub">${list.length} lead(s)</span></div>
+      <div class="card-pad">${rows||'<div class="fhint" style="margin:0 0 8px">No leads yet for this department.</div>'}
+        <button class="btn sm" style="margin-top:6px" onclick="leadAdd('${ckJS(leadStore)}','${ckJS(d)}')">＋ Add lead</button></div></div>`;
+  }).join('');
+  // super: daily-digest recipients (server scheduled 9pm)
+  const digestCard=isSuper()?`<div class="card" style="margin-bottom:16px"><div class="card-head"><h3><i class="fas fa-clock"></i>&nbsp; Daily summary recipients (Super Admin)</h3><span class="ch-sub">Automatic 9 PM all-store PDF digest is emailed to these addresses</span></div>
+      <div class="card-pad" id="digest-recips"><div class="fhint">Loading…</div></div></div>`:'';
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic" style="background:#e8f1fe">✉️</div><div><h2>Email Notifications</h2><p>Emails send automatically in the background via Brevo. Set who receives what below.</p></div><div class="ph-actions"><button class="btn sm" onclick="emailHistoryOpen()"><i class="fas fa-clock-rotate-left"></i>&nbsp; Sent history</button><button class="btn sm primary" onclick="emailTest()"><i class="fas fa-paper-plane"></i>&nbsp; Send test</button></div></div>
+    <div class="card" style="margin-bottom:16px"><div class="card-head"><h3><i class="fas fa-paper-plane"></i>&nbsp; Sending</h3><span class="ch-sub">Automatic · Brevo (server-side key)</span></div>
       <div class="card-pad"><div class="grid2">
-        <div class="field"><label>Channel</label><select onchange="emailCfgChannel(this.value)">${chan.map(c=>`<option value="${c[0]}" ${cfg.channel===c[0]?'selected':''}>${esc(c[1])}</option>`).join('')}</select></div>
-        <div class="field"><label>From name</label><input value="${esc(cfg.fromName||'')}" oninput="emailCfgSet('fromName',this.value)" placeholder="MCQ Supermarket"></div>
-        ${cfg.channel==='brevo'?`<div class="field"><label>Brevo API key</label><input type="password" value="${esc(cfg.apiKey||'')}" oninput="emailCfgSet('apiKey',this.value)" placeholder="xkeysib-…"></div>
-        <div class="field"><label>Verified sender email</label><input value="${esc(cfg.fromEmail||'')}" oninput="emailCfgSet('fromEmail',this.value)" placeholder="ops@mcqinternational.com"></div>`:''}
+        <div class="field"><label>From name</label><input value="${esc(cfg.fromName||'')}" oninput="emailCfgSet('fromName',this.value)" placeholder="MCQ Supermarket Notification"></div>
+        <div class="field"><label>Status</label><input value="${relayOn?'✅ Connected — emails send silently':'⚠️ Server relay not detected'}" disabled></div>
       </div>
-      <div class="rail-tip" style="margin-top:12px">${cfg.channel==='brevo'?'📨 <b>Brevo</b> auto-sends over HTTPS (300/day free) — paste your API key + a verified sender. If your browser blocks it (CORS), use Gmail compose or relay through a tiny server.':cfg.channel==='gmail'?'✉️ <b>Gmail compose</b> opens a pre-filled Gmail window so you click Send — works everywhere, no setup.':cfg.channel==='mailto'?'📧 <b>Mail app</b> opens your device email client pre-filled.':'🧪 <b>Demo</b> only shows who would be notified. Pick Brevo or Gmail to actually send.'}</div>
+      <div class="rail-tip" style="margin-top:12px">📨 Emails are sent <b>automatically and silently</b> through the server (Brevo). No API key needed here — it lives safely on the server. Use <b>Sent history</b> to confirm delivery.</div>
       </div></div>
-    <div class="card" style="margin-bottom:16px"><div class="card-head"><h3><i class="fas fa-user-shield"></i>&nbsp; Store Admin · verify-note (silent)</h3><span class="ch-sub">${isSuper()?'When Super Admin verifies a store’s checklist with a note, the note is sent to that store’s admin — silently if Brevo is set up, otherwise via Gmail compose.':'When a '+esc(State.branch)+' checklist is verified with a note, it is emailed to this store admin.'}</span></div>
+    <div class="card" style="margin-bottom:16px"><div class="card-head"><h3><i class="fas fa-user-shield"></i>&nbsp; Store Admin · verify-note recipient</h3><span class="ch-sub">${isSuper()?'When a store’s checklist is verified with a note, it is emailed to that store’s admin.':'When a '+esc(State.branch)+' checklist is verified with a note, it is emailed to this store admin.'}</span></div>
       <div class="card-pad"><div class="grid2">
         <div class="field"><label>Store admin name</label><input value="${esc(cfg.managerName||'')}" oninput="emailCfgSet('managerName',this.value)" placeholder="Store admin name"></div>
         <div class="field"><label>Store admin email</label><input type="email" value="${esc(cfg.managerEmail||'')}" oninput="emailCfgSet('managerEmail',this.value)" placeholder="admin@store.com"></div>
       </div>
-      <div class="rail-tip" style="margin-top:12px">🔒 Per-store setting — every store's notifications work independently. ${cfg.channel==='brevo'&&cfg.apiKey&&cfg.fromEmail?'✅ Brevo is set up — verify notes send <b>silently</b> in the background.':'⚠️ To send <b>silently</b> (no Gmail window), set Channel = <b>Brevo</b> with an API key + verified sender above.'} Staff flagged <b>Admin</b> with an email also receive these.</div>
+      <div class="rail-tip" style="margin-top:12px">🔒 Per-store setting — staff flagged <b>Admin</b> with an email also receive these.</div>
       </div></div>
+    ${digestCard}
     <div class="rail-tip" style="margin-bottom:16px;background:var(--bad-bg);border-color:#f3c9c9">⚠️ <b>Violation alerts</b> are sent to <b>all recipients</b> by default — no per-category opt-out.</div>
+    <div class="card" style="margin-bottom:16px"><div class="card-head"><h3>📇 Recipients</h3><span class="ch-sub">${recips.length} people · edit name/email or add</span></div>
+      <div class="card-pad">${recipEditRows||'<div class="fhint">No recipients yet.</div>'}<button class="btn sm primary" style="margin-top:10px" onclick="recipAdd()">＋ Add recipient</button></div></div>
     <div class="section-title">Report Issue · who receives which category</div>
     <div class="email-list">${cards||'<div class="empty">No recipients.</div>'}</div>
     <div class="section-title" style="margin-top:24px">Checklist submissions · who receives which checklist</div>
-    <div class="email-list">${chkCards||'<div class="empty">No recipients.</div>'}</div>`;
+    <div class="email-list">${chkCards||'<div class="empty">No recipients.</div>'}</div>
+    <div class="section-title" style="margin-top:24px">Department leaders · verified-note recipients ${leadStorePicker}</div>
+    <p class="fhint" style="margin:-4px 0 12px">When a manager verifies a checklist with an assessment note, the leader(s) below for that department receive a branded PDF report. ${isSuper()?'Pick a store above — each store has its own leaders.':'These are for <b>'+esc(State.branch)+'</b>.'}</p>
+    ${leadBlocks||'<div class="empty">No checklist departments.</div>'}
+    <div id="email-log-modal" class="lb-overlay" style="display:none" onclick="if(event.target===this)emailHistoryClose()"><div class="lb-panel" onclick="event.stopPropagation()"><div class="card-head" style="padding:14px 16px"><h3>📜 Sent history</h3><button class="x-btn" onclick="emailHistoryClose()">✕</button></div><div id="email-log-body" class="card-pad" style="max-height:60vh;overflow:auto"></div></div></div>`;
+  if(isSuper()) digestRender();
 }
+function renderEmailLog(){
+  const el=document.getElementById('email-log-body'); if(!el) return;
+  const log=DB.emailLog||[];
+  el.innerHTML = log.length ? `<table class="grid"><thead><tr><th>Time</th><th>To</th><th>Subject</th><th>Status</th></tr></thead><tbody>${log.map(e=>`<tr><td>${esc((e.ts||'').slice(0,16).replace('T',' '))}</td><td><div class="wrap">${esc((e.to||[]).join(', '))}</div></td><td><div class="wrap">${esc(e.subject||'')}</div></td><td>${e.ok?'<span class="badge ok">✓ Sent</span>':'<span class="badge bad">✗ '+esc(e.error||'failed')+'</span>'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">No emails sent yet.</div>';
+}
+function emailHistoryOpen(){ const m=document.getElementById('email-log-modal'); if(m){ m.style.display='flex'; renderEmailLog(); } }
+function emailHistoryClose(){ const m=document.getElementById('email-log-modal'); if(m) m.style.display='none'; }
+/* ---- recipients CRUD ---- */
+function recipAdd(){ DB.emailRecipients=DB.emailRecipients||[]; DB.emailRecipients.push({key:'r'+Date.now().toString(36),name:'',email:''}); if(window.persist) window.persist(); renderEmail(); }
+function recipSet(key,field,val){ const r=(DB.emailRecipients||[]).find(x=>x.key===key); if(r){ r[field]=val; if(window.persist) window.persist(); } }
+function recipDel(key){ if(!confirm('Remove this recipient?')) return; DB.emailRecipients=(DB.emailRecipients||[]).filter(x=>x.key!==key); if(window.persist) window.persist(); renderEmail(); }
+/* ---- per-store department-lead emails ---- */
+function leadList(store,dept){ const m=DB.checklistLeadEmails||(DB.checklistLeadEmails={}); return ((m[store]||{})[dept])||[]; }
+function leadAdd(store,dept){ const m=DB.checklistLeadEmails=DB.checklistLeadEmails||{}; m[store]=m[store]||{}; m[store][dept]=m[store][dept]||[]; m[store][dept].push({name:'',email:''}); if(window.persist) window.persist(); renderEmail(); }
+function leadSet(store,dept,i,field,val){ const a=leadList(store,dept); if(a[i]){ a[i][field]=val; if(window.persist) window.persist(); } }
+function leadDel(store,dept,i){ const a=leadList(store,dept); if(i>=0&&i<a.length){ a.splice(i,1); if(window.persist) window.persist(); renderEmail(); } }
+function emailLeadStore(s){ State.emailLeadStore=s; renderEmail(); }
+/* ---- super-admin daily-digest recipients (server-side settings) ---- */
+function digestRender(){
+  const el=document.getElementById('digest-recips'); if(!el) return;
+  const draw=(emails)=>{ State.digestEmails=emails||[];
+    el.innerHTML=(State.digestEmails.length?State.digestEmails.map((e,i)=>`<div class="email-row" style="gap:8px;padding:6px 0"><input class="login-input" style="flex:1" type="email" value="${esc(e)}" placeholder="superadmin@email.com" oninput="digestSet(${i},this.value)"><button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="digestDel(${i})">🗑</button></div>`).join(''):'<div class="fhint">No recipients yet — add the super-admin email(s) that should receive the 9 PM all-store summary.</div>')
+      +`<button class="btn sm primary" style="margin-top:8px" onclick="digestAdd()">＋ Add email</button>`; };
+  if(window.mcqSettings){ mcqSettings.get('digest_emails').then(d=>{ let v=d&&d.value; if(typeof v==='string'){ try{v=JSON.parse(v);}catch(e){v=[];} } draw(Array.isArray(v)?v:[]); }); }
+  else draw(State.digestEmails||[]);
+}
+function digestSave(){ if(window.mcqSettings) mcqSettings.set('digest_emails',State.digestEmails||[]).then(()=>toast('💾 Daily-summary recipients saved')); }
+function digestAdd(){ State.digestEmails=State.digestEmails||[]; State.digestEmails.push(''); digestRenderInline(); }
+function digestSet(i,v){ State.digestEmails=State.digestEmails||[]; State.digestEmails[i]=v; clearTimeout(window._digestT); window._digestT=setTimeout(digestSave,800); }
+function digestDel(i){ State.digestEmails.splice(i,1); digestSave(); digestRenderInline(); }
+function digestRenderInline(){ const el=document.getElementById('digest-recips'); if(!el) return;
+  el.innerHTML=(State.digestEmails.length?State.digestEmails.map((e,i)=>`<div class="email-row" style="gap:8px;padding:6px 0"><input class="login-input" style="flex:1" type="email" value="${esc(e)}" placeholder="superadmin@email.com" oninput="digestSet(${i},this.value)"><button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="digestDel(${i})">🗑</button></div>`).join(''):'<div class="fhint">No recipients yet.</div>')
+    +`<button class="btn sm primary" style="margin-top:8px" onclick="digestAdd()">＋ Add email</button>`; }
 function emailToggleDD(k){ State.emailOpen=State.emailOpen===k?null:k; renderEmail(); }
 function emailRefreshCount(k){ const cats=DB.issueCategories||{}; const n=Object.keys(cats).filter(c=>(DB.issueEmailRoutes[c]||[]).includes(k)).length; const el=document.getElementById('email-cnt-'+k); if(el) el.textContent=n+' categories'; }
 function emailToggleChk(k){ State.emailOpenChk=State.emailOpenChk===k?null:k; renderEmail(); }
@@ -2645,16 +2817,25 @@ function renderRules(){
 
 /* ============================================================ FACE ID */
 function renderFaceId(){
-  setAccent('#15803d'); setCrumb('🪪','Face ID','Passwordless sign-in for this device');
-  const devices=[['iPhone 15 — Tony',true,'Today'],['MacBook Pro — Office',true,'2 days ago']];
-  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🪪</div><div><h2>Face ID &amp; Passkeys</h2><p>Register this device so you can sign in with Face ID / Touch ID instead of a password.</p></div></div>
+  setAccent('#15803d'); setCrumb('🪪','Face ID',isSuper()?'Manage Face ID on this device':'Face ID for '+State.branch);
+  try{ if(window.MCQFace&&MCQFace.syncFromDB) MCQFace.syncFromDB(); }catch(e){}
+  const scope=isSuper()?'':State.branch;
+  const list=(window.MCQFace&&MCQFace.listFor)?MCQFace.listFor(scope):[];
+  const scopeLabel=isSuper()?'all stores (this device)':State.branch;
+  const rows=list.map(c=>`<tr><td><b>${esc(c.label||c.branch)}</b><div class="cell-sub">${esc(c.role||'')}${c.branch?' · '+esc(c.branch):''}</div></td>
+      <td><div class="cell-sub">Enrolled ${esc(c.created||'—')}</div></td>
+      <td><span class="badge ok"><span class="bdot"></span>Active</span></td>
+      <td><button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="faceRemoveInApp('${ckJS(c.id)}')">Remove</button></td></tr>`).join('');
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🪪</div><div><h2>Face ID &amp; Passkeys</h2><p>Sign in to <b>${esc(scopeLabel)}</b> with Face ID / Touch ID on this device.</p></div></div>
     <div class="form-shell"><div class="card card-pad" style="text-align:center">
-        <div class="fid-hero">🪪</div><h3 style="margin:6px 0">Set up Face ID on this device</h3>
-        <p style="color:var(--muted);font-size:13px;max-width:380px;margin:0 auto 16px">Uses your device’s secure biometric (WebAuthn). Your face never leaves the device — only a secure key is stored.</p>
-        <button class="btn primary" onclick="faceIdLogin()">🪪 Register / Test Face ID</button>
-        <p class="login-hint" style="margin-top:12px">For live camera &amp; real passkeys, open the app on <b>https</b> or <b>localhost</b>.</p>
+        <div class="fid-hero">🪪</div><h3 style="margin:6px 0">Enrol this device</h3>
+        <p style="color:var(--muted);font-size:13px;max-width:420px;margin:0 auto 16px">Uses your device’s secure biometric (WebAuthn). Your face never leaves the device — only a secure key is stored, mapped to <b>${esc(scopeLabel)}</b>.</p>
+        <button class="btn primary" onclick="faceEnrollInApp()">＋ Enrol Face ID on this device</button>
+        <button class="btn" style="margin-left:8px" onclick="faceIdLogin()">🪪 Test Face ID</button>
+        <p class="login-hint" style="margin-top:12px">For real passkeys, open the app on <b>https</b> or <b>localhost</b>.</p>
       </div>
-      <aside class="form-rail"><div class="card rail-card"><h4>Registered devices</h4>
-        <table class="grid"><tbody>${devices.map(d=>`<tr><td><b>${esc(d[0])}</b><div class="cell-sub">Last used ${esc(d[2])}</div></td><td>${d[1]?'<span class="badge ok"><span class="bdot"></span>Active</span>':''}</td><td><button class="btn sm" onclick="toast('Removed (demo)')">Remove</button></td></tr>`).join('')}</tbody></table></div>
-        <div class="card rail-card"><h4>Security</h4><ul><li>Auto-logout after 30 min idle</li><li>Hard limit 8 hours per session</li><li>Per-store password + admin password</li></ul></div></aside></div>`;
+      <aside class="form-rail"><div class="card rail-card"><h4>Face IDs for ${esc(scopeLabel)}</h4>
+        <div class="table-wrap"><table class="grid"><tbody>${rows||'<tr><td colspan="4"><div class="empty compact"><div class="e-ic">🪪</div>No Face ID enrolled on this device yet.</div></td></tr>'}</tbody></table></div></div>
+        <div class="card rail-card"><h4>Security</h4><ul><li>Device-bound — enrol on each device used</li><li>Auto-logout after 30 min idle</li><li>Enrolments are saved &amp; synced (never lost)</li></ul></div></aside></div>`;
 }
+function faceRemoveInApp(id){ if(!confirm('Remove this Face ID from this device?')) return; try{ if(window.MCQFace) MCQFace.remove(id); }catch(e){} toast('Face ID removed'); renderFaceId(); }
