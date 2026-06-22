@@ -2550,7 +2550,13 @@ function renderData(){
     ['Record identity','New IDs include store prefix, module prefix and date for audit clarity'],
     ['Audit trail','Create, edit, delete and verify actions store user, role, time and changed fields']
   ];
-  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🗄️</div><div><h2>Data Management</h2><p>Export data, run backups and clean up old records.</p></div></div>
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🗄️</div><div><h2>Data Management</h2><p>Export data, run backups and clean up old records.</p></div>
+      <div class="ph-actions"><button class="btn primary" onclick="dataBackupAll()">💾 Backup / Download all data</button></div></div>
+    <div class="card" style="margin-bottom:14px"><div class="card-pad" style="display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+      <div style="font-size:26px">💾</div>
+      <div style="flex:1;min-width:220px"><b>Full backup</b><div style="color:var(--muted);font-size:12.5px">Downloads <b>every record, staff member, checklist submission, schedule, bin record and audit log</b> ${isSuper()?'across <b>all stores</b>':'for <b>'+esc(State.branch)+'</b>'} as a single JSON file you can keep safe or re-import.</div></div>
+      <button class="btn primary" onclick="dataBackupAll()">💾 Download all data</button>
+    </div></div>
     <div class="card store-isolation-card">
       <div class="card-head"><h3>Store data isolation</h3><span class="ch-sub">${esc(scope)}</span></div>
       <div class="card-pad">
@@ -2607,6 +2613,25 @@ function renderData(){
         ${isSuper()?`<div class="section-title" style="margin-top:18px">Reset a single store</div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">${DB.stores.map(s=>`<button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="dataResetStore('${ckJS(s)}')">Reset ${esc(s)}</button>`).join('')}</div>`:''}
       </div></div>`;
+}
+function dataStoreSnapshot(store){
+  const inS=r=>!store||r.store===store; const modules={};
+  Object.entries(DB.modules).forEach(([id,m])=>{ modules[id]=(m.records||[]).filter(inS); });
+  return { store, modules, staff:(DB.staff||[]).filter(inS), checklistSubs:(DB.checklistSubs||[]).filter(inS),
+    scheduleHistory:(DB.scheduleHistory||[]).filter(inS), auditLogs:(DB.auditLogs||[]).filter(inS),
+    binAdmin:DB.binAdmin||{}, checklistItems:(DB.checklist&&DB.checklist.items)||[], scheduleTasks:DB.scheduleTasks||[] };
+}
+function dataBackupAll(){
+  try{
+    const FB=window.MCQDB; const build=(FB&&FB.buildStoreState)?(s=>FB.buildStoreState(s)):dataStoreSnapshot;
+    const stamp=new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+    const list=isSuper()?(DB.stores||DB.branches||[]):[State.branch];
+    const stores={}; list.forEach(s=>{ try{ stores[s]=build(s); }catch(e){ stores[s]=dataStoreSnapshot(s); } });
+    const payload={ type:'mcq-backup', app:'MCQ Supermarket', scope:isSuper()?'all-stores':State.branch, generated:new Date().toISOString(), storeCount:list.length, stores };
+    const json=JSON.stringify(payload,null,2); const blob=new Blob([json],{type:'application/json'});
+    expDownload(blob, 'MCQ-backup-'+(isSuper()?'all-stores':dataStoreId(State.branch))+'-'+stamp+'.json');
+    toast('💾 Backup downloaded — '+list.length+' store(s), '+dataFmtSize(blob.size));
+  }catch(e){ toast('Backup failed: '+((e&&e.message)||e)); }
 }
 
 /* ============================================================ RULES */

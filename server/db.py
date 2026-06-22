@@ -28,8 +28,8 @@ STORES = ['Morley', 'Mirrabooka', 'Malaga', 'Subiaco', 'Armadale',
 SUPER_PW = '99999'
 # Per-store admin passwords (each store admin has its own). Change here, then the next
 # app start re-seeds new ones (existing data is untouched).
-ADMIN_PW = {'Morley':'Morley2026','Mirrabooka':'Mirra2026','Malaga':'Malaga2026','Subiaco':'Subiaco2026',
-            'Armadale':'Armadale2026','Beechboro Fresh':'Beechboro2026','Market West':'MarketW2026','Warehouse':'Warehouse2026'}
+ADMIN_PW = {'Morley':'1010','Mirrabooka':'2020','Malaga':'3030','Subiaco':'4040',
+            'Armadale':'5050','Beechboro Fresh':'6060','Market West':'7070','Warehouse':'8080'}
 BRANCH_PW = {'Morley':'1111','Mirrabooka':'2222','Malaga':'3333','Subiaco':'4444',
              'Armadale':'5555','Beechboro Fresh':'6666','Market West':'7000','Warehouse':'8000'}
 
@@ -102,14 +102,19 @@ def init_db():
     for s in STORES:
         conn.execute('INSERT OR IGNORE INTO stores(id,name,active,created_at) VALUES(?,?,1,?)', (s, s, now()))
     # seed users (passwords server-side only)
-    def add_user(role, store, pw):
+    def add_user(role, store, pw, sync=False):
         cur = conn.execute('SELECT 1 FROM users WHERE role=? AND IFNULL(store_id,"")=?', (role, store or ''))
         if not cur.fetchone():
             conn.execute('INSERT INTO users(role,store_id,password_hash,created_at) VALUES(?,?,?,?)',
                          (role, store, hash_pw(pw), now()))
-    add_user('super', None, SUPER_PW)
+        elif sync:
+            # keep the stored password in sync with the constant above (lets us
+            # change admin/super passwords by editing this file + restarting)
+            conn.execute('UPDATE users SET password_hash=? WHERE role=? AND IFNULL(store_id,"")=?',
+                         (hash_pw(pw), role, store or ''))
+    add_user('super', None, SUPER_PW, sync=True)
     for s, pw in ADMIN_PW.items():
-        add_user('admin', s, pw)
+        add_user('admin', s, pw, sync=True)
     for s, pw in BRANCH_PW.items():
         add_user('staff', s, pw)
     conn.commit(); conn.close()

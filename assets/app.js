@@ -658,6 +658,11 @@ function field(f){
   const rq=f.required?' data-req="1"':'';
   if(f.key==='store' && !isSuper()) ctrl=`<input type="hidden" name="store" value="${esc(State.branch)}"><input value="${esc(State.branch)}" disabled>`;
   else if(f.type==='select') ctrl=`<select name="${f.key}"${rq}><option value="">-- Select --</option>${opts(f.options)}</select>`;
+  else if(f.type==='staffadd'){
+    const listId='dl_'+f.key; const base=(f.options||[]).slice();
+    try{ (DB.staff||[]).forEach(s=>{ if((isSuper()||s.store===State.branch) && s.active!==0 && /driv/i.test((s.role||'')+' '+(s.dept||'')) && !base.includes(s.name)) base.push(s.name); }); }catch(e){}
+    ctrl=`<input list="${listId}" name="${f.key}"${rq} autocomplete="off" placeholder="Pick a name, or type a new one to add"><datalist id="${listId}">${base.map(n=>`<option value="${esc(n)}"></option>`).join('')}</datalist>`;
+  }
   else if(f.type==='textarea') ctrl=`<textarea name="${f.key}"${rq} placeholder="${esc(f.placeholder||'')}"></textarea>`;
   else if(f.type==='radio') ctrl=`<div class="radios">${f.options.map(o=>`<label class="radio-pill"><input type="radio" name="${f.key}" value="${esc(o)}">${esc(o)}</label>`).join('')}</div>`;
   else if(f.type==='checks') ctrl=`<div class="checks">${f.options.map(o=>`<label class="check-row"><input type="checkbox" name="${f.key}" value="${esc(o)}">${esc(o)}</label>`).join('')}</div>`;
@@ -683,9 +688,22 @@ function submitForm(e,modId){
     issue:obj.issueDescription,shortDescription:obj.shortDescription,category:obj.category||obj.issueCategory||obj.concernCategory,
     equipment:obj.equipmentName,type:obj.incidentType,employee:obj.employeeName,step:obj.step||obj.disciplinaryStep,department:obj.department,age:0},obj);
   rec.store=storeForWrite(rec.store);
+  // Delivery driver name: if a brand-new name was typed, register them as a Driver staff member
+  if(modId==='delivery' && obj.driverName) ensureDriverStaff(obj.driverName, rec.store);
   auditLog('create',modId,rec.id,rec.store,null,rec);
   m.records.unshift(rec); if(window.persist) window.persist(); e.target.reset();
   toast(`${m.short} submitted — ${id}`); buildSidebar(); go(modId,'records');
+}
+function ensureDriverStaff(name, store){
+  name=String(name||'').trim(); if(!name) return;
+  store=store||State.branch;
+  if((DB.staff||[]).some(s=>s.name===name && s.store===store)) return;  // already a staff member here
+  const rec={ id:(typeof storeCode==='function'?storeCode(store):'STF')+'-'+String(20000+Math.floor(Math.random()*9000)),
+    name, role:'Driver', dept:'Logistics', store, phone:'', email:'', gender:'', dob:'',
+    start:new Date().toISOString().slice(0,10), active:1 };
+  DB.staff=DB.staff||[]; DB.staff.unshift(rec);
+  try{ auditLog('create','staff',rec.id,store,null,rec); }catch(e){}
+  toast(`👤 ${name} added to Staff Members (Driver)`);
 }
 
 /* ============================================================ DETAIL DRAWER */

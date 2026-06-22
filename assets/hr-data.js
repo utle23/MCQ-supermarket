@@ -10,8 +10,8 @@
 DB.branches = ['Morley','Mirrabooka','Malaga','Subiaco','Armadale','Beechboro Fresh','Market West','Warehouse'];
 DB.auth = {
   adminPasswords: {                       // each store has its OWN admin password
-    'Morley':'Morley2026', 'Mirrabooka':'Mirra2026', 'Malaga':'Malaga2026', 'Subiaco':'Subiaco2026',
-    'Armadale':'Armadale2026', 'Beechboro Fresh':'Beechboro2026', 'Market West':'MarketW2026', 'Warehouse':'Warehouse2026',
+    'Morley':'1010', 'Mirrabooka':'2020', 'Malaga':'3030', 'Subiaco':'4040',
+    'Armadale':'5050', 'Beechboro Fresh':'6060', 'Market West':'7070', 'Warehouse':'8080',
   },
   superAdminPassword: '99999',             // super admin — ALL stores + cross-store compare
   branchPasswords: {                      // each branch has its OWN staff password
@@ -484,7 +484,7 @@ DB.staff = [
   {"id": "E0125", "name": "GAYLEK TASHI NAMGYEL", "store": "Malaga", "dept": "GROCERY", "role": "STORE ASSISTANT", "classification": "STORE ASSISTANT", "status": "Active", "active": 1, "cardId": "253883580", "gender": "Male", "address": "", "suburb": "Dianella WA 6059", "dob": "2004-09-16", "phone": "0451221604", "country": "", "email": "gaylektnamgyel2004@gmail.com", "tfn": "253 883 580", "start": "2026-01-30", "basis": "", "category": "", "estatus": ""},
   {"id": "E0126", "name": "DUC THANG TONG", "store": "Malaga", "dept": "MANAGER", "role": "RETAIL MANAGER", "classification": "RETAIL MANAGER", "status": "Active", "active": 1, "cardId": "512909598", "gender": "Male", "address": "", "suburb": "Beechboro WA 6063", "dob": "1990-10-08", "phone": "0493546986", "country": "", "email": "thangtd810@gmail.com", "tfn": "512 909 598", "start": "2026-05-11", "basis": "", "category": "", "estatus": ""},
 ];
-DB.staffRoles = ['Head Office','Store Manager','Assistant Manager','Supervisor','Cashier / Front End','FV Team','Grocery Team','Butcher','Café','Warehouse / Logistics','Cleaner'];
+DB.staffRoles = ['Head Office','Store Manager','Assistant Manager','Supervisor','Cashier / Front End','FV Team','Grocery Team','Butcher','Café','Warehouse / Logistics','Driver','Cleaner'];
 
 /* ============================================================
    ORG STRUCTURE  (for the staff-structure org chart)

@@ -267,8 +267,8 @@ DB.modules = {
       { title:'Trip', hint:'Who delivered, where and when.', fields:[
         { key:'date', label:'Date', type:'date', required:true },
         { key:'store', label:'Store / Location', type:'select', options:STORES, required:true },
-        { key:'department', label:'Department', type:'select', options:['GROCERY & FV','MEAT','Other'], required:true },
-        { key:'driverName', label:'Driver name', type:'select', options:DRIVERS, required:true },
+        { key:'department', label:'Department', type:'select', options:['Butcher','Fruit','Vege','Grocery','Other'], required:true },
+        { key:'driverName', label:'Driver name', type:'staffadd', options:DRIVERS, role:'driver', required:true, hint:'Pick a driver, or type a new name to add them as a staff member.' },
         { key:'receiverName', label:'Receiver name', type:'text', required:true },
         { key:'timeArrived', label:'Time arrived', type:'time', required:true },
         { key:'timeDeparted', label:'Time departed', type:'time', required:true },
