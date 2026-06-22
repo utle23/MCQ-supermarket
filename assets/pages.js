@@ -1932,7 +1932,8 @@ function mgrSubs(){
   const real=(DB.checklistSubs||[]).map(s=>({ id:s.id, date:s.date, dayName:s.dayName||new Date(s.date+'T00:00').toLocaleDateString(undefined,{weekday:'long'}),
     store:s.store, department:s.dept, session:s.session, by:s.by||s.responsible||'Staff',
     total:s.total, done:s.done, progress:s.progress, status:s.status||'Submitted', real:true, items:s.items,
-    verifyNote:s.verifyNote||'', verifiedAt:s.verifiedAt||'', verifiedBy:s.verifiedBy||'' }));
+    verifyNote:s.verifyNote||'', verifiedAt:s.verifiedAt||'', verifiedBy:s.verifiedBy||'',
+    overallResult:s.overallResult||'', issuesFound:s.issuesFound||'', actionResponsible:s.actionResponsible||'', verifyPhotos:s.verifyPhotos||[] }));
   return mcqDemoMode() ? real.concat(mgrSynthSubs()) : real;
 }
 /* ---------- daily operations pulse + "needs attention" (real data only) ---------- */
@@ -2045,11 +2046,22 @@ async function mgrAddVerifyPhotos(e){
   for(const f of files){ const preview=URL.createObjectURL(f); State.mgrV.photos.push(preview);
     try{ const d=await compressImage(f); const ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d; const idx=State.mgrV.photos.indexOf(preview); if(idx>=0){ State.mgrV.photos[idx]=ref; try{URL.revokeObjectURL(preview);}catch(_){} } }catch(_){}
   }
-  e.target.value=''; mgrDrawVerifyPhotos();
+  e.target.value=''; mgrDrawVerifyPhotos(); if(State.mgrV.id) mgrSaveVerifyDraft(State.mgrV.id);
 }
-function mgrRmVerifyPhoto(p){ State.mgrV.photos=(State.mgrV.photos||[]).filter(x=>x!==p); mgrDrawVerifyPhotos(); }
+function mgrRmVerifyPhoto(p){ State.mgrV.photos=(State.mgrV.photos||[]).filter(x=>x!==p); mgrDrawVerifyPhotos(); if(State.mgrV.id) mgrSaveVerifyDraft(State.mgrV.id); }
 function mgrDrawVerifyPhotos(){ const el=document.getElementById('mgr-vphotos'); if(!el) return;
   el.innerHTML=(State.mgrV.photos||[]).map(p=>`<span style="position:relative;display:inline-block"><img src="${imgSrc(p)}" onclick="openLightbox('${ckJS(imgSrc(p))}')" style="cursor:zoom-in"><span class="ck-rm" onclick="mgrRmVerifyPhoto('${ckJS(p)}')">✕</span></span>`).join(''); }
+/* ---- verify-note DRAFT: survives closing the drawer; cleared only when Verified ---- */
+function mgrVfKey(s){ const store=(s&&s.store)||State.branch; return 'mcq_vfdraft_'+dataStoreId(store)+'_'+((s&&s.id)||State.mgrV&&State.mgrV.id||''); }
+function mgrSaveVerifyDraft(id){
+  const s=mgrSubs().find(x=>x.id===id); if(!s||s.status==='Verified') return;
+  const a=mgrAssessment();
+  try{ localStorage.setItem(mgrVfKey(s), JSON.stringify({verifiedBy:a.verifiedBy,overallResult:a.overallResult,issuesFound:a.issuesFound,actionResponsible:a.actionResponsible,verifyNote:a.verifyNote,photos:a.verifyPhotos,ts:Date.now()})); }catch(e){}
+}
+function mgrLoadVerifyDraft(s){ try{ const raw=localStorage.getItem(mgrVfKey(s)); if(!raw) return null; const d=JSON.parse(raw);
+    // only treat as a draft if it actually has content
+    if(d&&(d.verifyNote||d.issuesFound||d.actionResponsible||(d.overallResult&&d.overallResult!=='')||(d.photos&&d.photos.length))) return d; }catch(e){} return null; }
+function mgrClearVerifyDraft(s){ try{ localStorage.removeItem(mgrVfKey(s)); }catch(e){} }
 function mgrAssessment(){
   const g=id=>{ const el=document.getElementById(id); return el?String(el.value||'').trim():''; };
   return { verifiedBy:g('mgr-by')||((State.account&&State.account.name)||'Manager'), overallResult:g('mgr-overall'),
@@ -2064,6 +2076,7 @@ function mgrVerify(id){
   if(s) apply(s);
   const real=(DB.checklistSubs||[]).find(x=>x.id===id && x.store===s.store);
   if(real){ const before=JSON.parse(JSON.stringify(real)); apply(real); auditLog('verify','checklistSubmission',real.id,real.store,before,real,a.verifyNote); if(window.persist) window.persist(); }
+  mgrClearVerifyDraft(s);   // committed → the draft is no longer needed (it now lives in the verified record)
   // notify store admin (existing behaviour) when there's any written assessment
   const hasContent=a.verifyNote||a.issuesFound||a.actionResponsible||a.overallResult;
   const sent=hasContent&&s&&mgrEmailVerifyNote(s,mgrAssessmentText(a));
@@ -2153,14 +2166,17 @@ function mgrReview(id){
   const tasks=mgrSubTasks(s);
   const meta=(((DB.checklist&&DB.checklist.deptMeta)||{})[s.department])||{color:'#0f766e'};
   const doneN=tasks.filter(t=>t.done).length, outN=tasks.length-doneN, photoN=tasks.reduce((n,t)=>n+t.photos.length,0);
-  const existingNote=s.verifyNote||'';
-  State.mgrV={id:s.id, photos:(s.verifyPhotos||[]).slice()};
+  // restore an in-progress draft (saved if the manager closed the drawer without verifying)
+  const draft=s.status==='Verified'?null:mgrLoadVerifyDraft(s);
+  const existingNote=(draft&&draft.verifyNote)||s.verifyNote||'';
+  State.mgrV={id:s.id, photos:((draft&&draft.photos)||s.verifyPhotos||[]).slice()};
   // managers/admins for this store to populate "Verified by"
   const mgrNames=[]; const seenN={};
   (DB.staff||[]).filter(x=>x.store===s.store && (staffIsAdmin(x)||/manager|supervisor/i.test(x.role||''))).forEach(x=>{ if(x.name&&!seenN[x.name]){seenN[x.name]=1;mgrNames.push(x.name);} });
   const curName=(State.account&&State.account.name)||'Manager'; if(!seenN[curName]) mgrNames.unshift(curName);
-  const verifiedBy=s.verifiedBy||curName, overall=s.overallResult||'', issues=s.issuesFound||'', action=s.actionResponsible||'';
+  const verifiedBy=(draft&&draft.verifiedBy)||s.verifiedBy||curName, overall=(draft&&draft.overallResult)||s.overallResult||'', issues=(draft&&draft.issuesFound)||s.issuesFound||'', action=(draft&&draft.actionResponsible)||s.actionResponsible||'';
   const disabled=s.status==='Verified'?'disabled':'';
+  if(draft) setTimeout(()=>toast('📝 Draft restored — your unsaved notes are back'),300);
   const rows=tasks.map(t=>`<div class="mr-task ${t.done?'done':'todo'}">
       <div class="mr-tk"><span class="mr-check">${t.done?'✓':'○'}</span><div class="mr-name">${esc(t.task)}<small>${esc(t.area)}</small></div>${t.temp?`<span class="badge ${t.temp.ok?'ok':'warn'}">${esc(t.temp.label)}</span>`:''}</div>
       ${t.note?`<div class="mr-note">📝 ${esc(t.note)}</div>`:''}
@@ -2176,15 +2192,15 @@ function mgrReview(id){
       <div class="mr-list">${rows||'<div class="empty">No tasks for this session.</div>'}</div>
       <div class="mr-eval">
         <div class="field"><label>Verified by</label>
-          <select id="mgr-by" ${disabled}>${mgrNames.map(n=>`<option ${n===verifiedBy?'selected':''}>${esc(n)}</option>`).join('')}</select></div>
+          <select id="mgr-by" ${disabled} onchange="mgrSaveVerifyDraft('${s.id}')">${mgrNames.map(n=>`<option ${n===verifiedBy?'selected':''}>${esc(n)}</option>`).join('')}</select></div>
         <div class="field"><label>Overall result</label>
-          <select id="mgr-overall" ${disabled}><option value="">— Select —</option>${['Good','Need improving','Critical'].map(o=>`<option ${o===overall?'selected':''}>${o}</option>`).join('')}</select></div>
+          <select id="mgr-overall" ${disabled} onchange="mgrSaveVerifyDraft('${s.id}')"><option value="">— Select —</option>${['Good','Need improving','Critical'].map(o=>`<option ${o===overall?'selected':''}>${o}</option>`).join('')}</select></div>
         <div class="field"><label>Issues found</label>
-          <textarea id="mgr-issues" ${disabled} placeholder="Describe issues…">${esc(issues)}</textarea></div>
+          <textarea id="mgr-issues" ${disabled} oninput="mgrSaveVerifyDraft('${s.id}')" placeholder="Describe issues…">${esc(issues)}</textarea></div>
         <div class="field"><label>Action / Responsible</label>
-          <textarea id="mgr-action" ${disabled} placeholder="What needs doing & who is responsible">${esc(action)}</textarea></div>
+          <textarea id="mgr-action" ${disabled} oninput="mgrSaveVerifyDraft('${s.id}')" placeholder="What needs doing & who is responsible">${esc(action)}</textarea></div>
         <div class="field"><label>Manager note</label>
-          <textarea id="mgr-note" ${disabled} placeholder="Additional note for the store manager / department lead">${esc(existingNote)}</textarea></div>
+          <textarea id="mgr-note" ${disabled} oninput="mgrSaveVerifyDraft('${s.id}')" placeholder="Additional note for the store manager / department lead">${esc(existingNote)}</textarea></div>
         <div class="field"><label>Attach photos (annotate problem areas)</label>
           ${s.status==='Verified'?'':'<input type="file" id="mgr-photo-in" accept="image/*" multiple onchange="mgrAddVerifyPhotos(event)">'}
           <div id="mgr-vphotos" class="mr-photos" style="margin-top:8px">${(State.mgrV.photos||[]).map(p=>`<span style="position:relative;display:inline-block"><img src="${imgSrc(p)}" onclick="openLightbox('${ckJS(imgSrc(p))}')" style="cursor:zoom-in">${s.status==='Verified'?'':`<span class="ck-rm" onclick="mgrRmVerifyPhoto('${ckJS(p)}')">✕</span>`}</span>`).join('')}</div>
@@ -2238,7 +2254,8 @@ function renderManager(){
       <button class="btn primary block sm" onclick="mgrReview('${s.id}')"><i class="fas fa-eye"></i>&nbsp; Review &amp; Verify</button></div>`;}).join('');
   $('#content').innerHTML=`
     <div class="page-head"><div class="ph-ic">🛡️</div><div><h2>Manager Panel</h2><p>Verify today’s checklists and action open issues across ${esc(storeTitle)}.</p></div>
-      <div class="ph-actions"><input type="date" class="mgr-date" value="${esc(State.mgr.date)}" max="${todayStr}" onchange="mgrDate(this.value)"><button class="btn sm" onclick="mgrSort()"><i class="fas fa-arrow-down-wide-short"></i>&nbsp; ${State.mgr.sort==='newest'?'Newest first':'Oldest first'}</button></div></div>
+      <div class="ph-actions"><input type="date" class="mgr-date" value="${esc(State.mgr.date)}" max="${todayStr}" onchange="mgrDate(this.value)"><button class="btn sm" onclick="mgrSort()"><i class="fas fa-arrow-down-wide-short"></i>&nbsp; ${State.mgr.sort==='newest'?'Newest first':'Oldest first'}</button><button class="btn sm primary" onclick="mgrRecordsOpen()"><i class="fas fa-folder-open"></i>&nbsp; Verified records</button></div></div>
+    <div id="mgr-rec-modal" class="lb-overlay" style="display:none" onclick="if(event.target===this)mgrRecordsClose()"><div class="lb-panel" onclick="event.stopPropagation()"><div class="card-head" style="padding:14px 16px"><h3>📁 Verified records</h3><button class="x-btn" onclick="mgrRecordsClose()">✕</button></div><div class="card-pad"><div class="field" style="max-width:220px"><label>Date</label><input type="date" id="mgr-rec-date" value="${esc(State.mgr.date)}" max="${todayStr}" onchange="mgrRecDate(this.value)"></div><div id="mgr-rec-body" style="max-height:56vh;overflow:auto;margin-top:8px"></div></div></div></div>
     <div class="kpi-grid">${stats.map(s=>`<div class="kpi tone-${s[3]}"><div class="k-top"><div class="k-ic">${s[0]}</div></div><div class="k-val">${s[1]}</div><div class="k-lbl">${esc(s[2])}</div></div>`).join('')}</div>
     ${storeCards}
     <div class="section-title"><i class="fas fa-clock" style="color:#f59e0b"></i> Pending Verification · ${esc(storeTitle)} · ${esc(State.mgr.date)}${State.mgr.date===todayStr?' (Today)':''} · ${pending.length}${pending.length>capN?` (showing ${capN})`:''}</div>
@@ -2251,6 +2268,33 @@ function renderManager(){
     <div class="card"><div class="feed">${mgrActivity(storeScope).map(f=>`<div class="feed-row"><div class="feed-ic" style="background:${soft(f.accent)};color:${f.accent}">${f.icon}</div><div class="feed-main"><div class="fm-t">${esc(f.title)}</div><div class="fm-s">${esc(f.sub)}</div></div><div class="feed-time">${esc(f.time)}</div></div>`).join('')||'<div class="empty">No recent activity.</div>'}</div></div>`;
 }
 function mgrSort(){ State.mgr.sort=State.mgr.sort==='newest'?'oldest':'newest'; renderManager(); }
+/* ---- Verified records archive (browse verified checklists by date) ---- */
+function mgrRecordsOpen(){ const m=document.getElementById('mgr-rec-modal'); if(m){ m.style.display='flex'; mgrRecRender(); } }
+function mgrRecordsClose(){ const m=document.getElementById('mgr-rec-modal'); if(m) m.style.display='none'; }
+function mgrRecDate(v){ State.mgr.recDate=v; mgrRecRender(); }
+function mgrRecRender(){
+  const el=document.getElementById('mgr-rec-body'); if(!el) return;
+  const date=State.mgr.recDate||($('#mgr-rec-date')&&$('#mgr-rec-date').value)||State.mgr.date;
+  const storeScope=isSuper()?(State.mgr&&State.mgr.store||'ALL'):State.branch;
+  const inStore=store=>isSuper()?(storeScope==='ALL'||store===storeScope):store===State.branch;
+  const recs=mgrSubs().filter(s=>s.status==='Verified'&&s.date===date&&inStore(s.store))
+    .sort((a,b)=>String(b.verifiedAt||'').localeCompare(String(a.verifiedAt||'')));
+  const tone=r=>r==='Critical'?'bad':r==='Need improving'?'warn':'ok';
+  el.innerHTML = recs.length ? recs.map(s=>`<div class="card" style="margin-bottom:10px"><div class="card-pad">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <b>${esc(s.department)} · ${esc(s.session)}</b>
+        ${isSuper()?`<span class="badge info">🏪 ${esc(s.store)}</span>`:''}
+        ${s.overallResult?`<span class="badge ${tone(s.overallResult)}">${esc(s.overallResult)}</span>`:''}
+        <span class="badge ok">${s.done||0}/${s.total||0}</span>
+        <span style="margin-left:auto;color:var(--muted);font-size:12px">✅ ${esc(s.verifiedBy||'—')}${s.verifiedAt?(' · '+esc(String(s.verifiedAt).slice(0,16).replace('T',' '))):''}</span>
+      </div>
+      ${s.issuesFound?`<div style="margin-top:6px;font-size:13px"><b>Issues:</b> ${esc(s.issuesFound)}</div>`:''}
+      ${s.actionResponsible?`<div style="margin-top:2px;font-size:13px"><b>Action:</b> ${esc(s.actionResponsible)}</div>`:''}
+      ${s.verifyNote?`<div style="margin-top:2px;font-size:13px;color:#64748b">📝 ${esc(s.verifyNote)}</div>`:''}
+      ${(s.verifyPhotos&&s.verifyPhotos.length)?`<div class="mr-photos" style="margin-top:8px">${s.verifyPhotos.map(p=>`<img src="${imgSrc(p)}" onclick="openLightbox('${ckJS(imgSrc(p))}')" style="cursor:zoom-in">`).join('')}</div>`:''}
+      <div style="margin-top:8px"><button class="btn sm" onclick="mgrRecordsClose();mgrReview('${s.id}')"><i class="fas fa-eye"></i>&nbsp; Open full</button></div>
+    </div></div>`).join('') : `<div class="empty">No verified checklists on ${esc(date)}.</div>`;
+}
 
 /* ============================================================ ANALYTICS */
 function renderAnalytics(){
