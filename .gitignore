@@ -19,3 +19,6 @@ EMPLOYEE MASTER FILE*.xlsx
 server/data/
 server/uploads/
 server/__pycache__/
+
+# generated user guide (local only — has screenshots)
+MCQ_Supermarket_User_Guide.pdf
