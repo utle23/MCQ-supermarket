@@ -1408,7 +1408,7 @@ function checklistExportMenu(){
     </div></div>`;
 }
 function ckHexToRgb(hex){ const m=/^#?([0-9a-f]{6})$/i.exec(hex||''); if(!m) return {r:14,g:159,b:110}; const n=parseInt(m[1],16); return {r:(n>>16)&255,g:(n>>8)&255,b:n&255}; }
-function ckImgData(url,max){ return new Promise(res=>{ const img=new Image(); img.onload=()=>{ const s=Math.min(1,max/Math.max(img.width||max,img.height||max)); const w=Math.max(1,Math.round((img.width||max)*s)), h=Math.max(1,Math.round((img.height||max)*s)); try{ const c=document.createElement('canvas'); c.width=w; c.height=h; c.getContext('2d').drawImage(img,0,0,w,h); res({data:c.toDataURL('image/jpeg',0.72),w,h}); }catch(e){ res(null); } }; img.onerror=()=>res(null); img.src=url; }); }
+function ckImgData(url,max,quality){ max=max||1400; quality=quality||0.9; return new Promise(res=>{ const img=new Image(); img.onload=()=>{ const s=Math.min(1,max/Math.max(img.width||max,img.height||max)); const w=Math.max(1,Math.round((img.width||max)*s)), h=Math.max(1,Math.round((img.height||max)*s)); try{ const c=document.createElement('canvas'); c.width=w; c.height=h; const ctx=c.getContext('2d'); ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high'; ctx.drawImage(img,0,0,w,h); res({data:c.toDataURL('image/jpeg',quality),w,h}); }catch(e){ res(null); } }; img.onerror=()=>res(null); img.src=url; }); }
 /* Build a branded, photo-rich PDF for ONE session (Opening / Mid-afternoon /
    Closing) across all departments of the store, then share it to WhatsApp.
    Each of the three menu items generates its own session deliberately, so you
@@ -1424,7 +1424,7 @@ async function ckSharePDF(session){
   let outCount=0; rows.forEach(r=>{ const st=State.chk.state[r.i]||{}; if(st.temp&&st.temp.inRange===false) outCount++; });
   // preload + downscale photos
   const urls=[]; rows.forEach(r=>{ const st=State.chk.state[r.i]||{}; (st.photos||[]).forEach(u=>urls.push(u)); });
-  const pmap={}; await Promise.all([...new Set(urls)].map(async u=>{ const d=await ckImgData(imgSrc(u),900); if(d) pmap[u]=d; }));
+  const pmap={}; await Promise.all([...new Set(urls)].map(async u=>{ const d=await ckImgData(imgSrc(u),1400); if(d) pmap[u]=d; }));
   const { jsPDF }=window.jspdf; const doc=new jsPDF({unit:'pt',format:'a4',orientation:'landscape'});
   const PW=doc.internal.pageSize.getWidth(), PH=doc.internal.pageSize.getHeight(), M=40; let y=96;
   const ensure=h=>{ if(y+h>PH-44){ doc.addPage(); y=44; } };
@@ -1459,7 +1459,7 @@ async function ckSharePDF(session){
         if(noteLines.length){ doc.setTextColor(115); doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.text(noteLines,M+24,yy+10); yy+=noteLines.length*11; }
         y=yy+10;
         const ph=(st.photos||[]).map(u=>pmap[u]).filter(Boolean);
-        if(ph.length){ const box=200, th=152, gap=10; let x=M+24; ensure(th+12);
+        if(ph.length){ const box=250, th=188, gap=12; let x=M+24; ensure(th+12);
           ph.forEach(d=>{ if(x+box>PW-M){ x=M+24; y+=th+gap; ensure(th+12); }
             const ar=(d.w&&d.h)?d.w/d.h:4/3; let iw=box, ih=iw/ar; if(ih>th){ ih=th; iw=ih*ar; }
             try{ doc.addImage(d.data,'JPEG',x,y,iw,ih); }catch(e){} doc.setDrawColor(205); doc.setLineWidth(0.6); doc.rect(x,y,iw,ih); doc.setLineWidth(0.2); x+=box+gap; });
@@ -1573,7 +1573,7 @@ function schedCompleteSet(field,value){ State.schedComplete=State.schedComplete|
 async function schedCompletePhoto(input){
   const f=input.files&&input.files[0]; if(!f) return;
   const c=State.schedComplete||{}, t=(DB.scheduleTasks||[]).find(x=>x.id===c.taskId)||{};
-  let ref; try{ const d=await compressImage(f,1200,.62); ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d,{module:'scheduleHistory',store:c.store,taskId:c.taskId,day:c.day,date:c.date,type:t.type}):d; }catch(e){ ref=URL.createObjectURL(f); }
+  let ref; try{ const d=await compressImage(f,1600,.82); ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d,{module:'scheduleHistory',store:c.store,taskId:c.taskId,day:c.day,date:c.date,type:t.type}):d; }catch(e){ ref=URL.createObjectURL(f); }
   c.photo=ref; schedCompleteDrawer(); toast('Photo evidence attached');
 }
 function schedCompleteDrawer(){
@@ -1777,7 +1777,7 @@ function binRecordsForWeek(){
 async function binPhoto(input){
   const f=input.files&&input.files[0]; if(!f) return;
   const s=binState();
-  let ref; try{ const d=await compressImage(f,1200,.62); ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d,{module:'binAdmin',store:binStore(),day:s.day,date:binDayKey(s.day,s.week||0)}):d; }catch(e){ ref=URL.createObjectURL(f); }
+  let ref; try{ const d=await compressImage(f,1600,.82); ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d,{module:'binAdmin',store:binStore(),day:s.day,date:binDayKey(s.day,s.week||0)}):d; }catch(e){ ref=URL.createObjectURL(f); }
   s.photo=ref; renderBinAdmin(); toast('Photo evidence attached');
 }
 function binSubmit(){
@@ -2180,8 +2180,8 @@ async function mgrSendLeadPDF(s,a,leads){
       doc.setTextColor(60); doc.setFont('helvetica','normal'); doc.setFontSize(10); out.slice(0,30).forEach(t=>{ const l=doc.splitTextToSize('• '+t.task+(t.area?(' ('+t.area+')'):''),PW-2*M); ensure(l.length*12); doc.text(l,M,y); y+=l.length*12+2; }); y+=6; }
     // annotated photos from the manager
     const photoIds=(a.verifyPhotos||[]); if(photoIds.length){ ensure(16); doc.setTextColor(90); doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.text('Manager photos',M,y); y+=14;
-      const pmap={}; await Promise.all([...new Set(photoIds)].map(async u=>{ const d=await ckImgData(imgSrc(u),900); if(d) pmap[u]=d; }));
-      const box=160, th=120, gap=10; let x=M; photoIds.forEach(u=>{ const d=pmap[u]; if(!d) return; if(x+box>PW-M){ x=M; y+=th+gap; } ensure(th+12);
+      const pmap={}; await Promise.all([...new Set(photoIds)].map(async u=>{ const d=await ckImgData(imgSrc(u),1400); if(d) pmap[u]=d; }));
+      const box=230, th=173, gap=12; let x=M; photoIds.forEach(u=>{ const d=pmap[u]; if(!d) return; if(x+box>PW-M){ x=M; y+=th+gap; } ensure(th+12);
         const ar=(d.w&&d.h)?d.w/d.h:4/3; let iw=box, ih=iw/ar; if(ih>th){ ih=th; iw=ih*ar; } try{ doc.addImage(d.data,'JPEG',x,y,iw,ih); }catch(e){} doc.setDrawColor(205); doc.rect(x,y,iw,ih); x+=box+gap; }); y+=th+14; }
     const n=doc.internal.getNumberOfPages(); for(let i=1;i<=n;i++){ doc.setPage(i); doc.setFontSize(8); doc.setTextColor(150); doc.text('MCQ Supermarket · '+s.store+' · Confidential',M,PH-18); doc.text('Page '+i+' / '+n,PW-M,PH-18,{align:'right'}); }
     const fileName=`MCQ_${String(s.store).replace(/\s+/g,'_')}_${String(s.department).replace(/\s+/g,'')}_${s.session}_${s.date}.pdf`;
@@ -2308,7 +2308,7 @@ function renderManager(){
   $('#content').innerHTML=`
     <div class="page-head"><div class="ph-ic">🛡️</div><div><h2>Manager Panel</h2><p>Verify today’s checklists and action open issues across ${esc(storeTitle)}.</p></div>
       <div class="ph-actions"><input type="date" class="mgr-date" value="${esc(State.mgr.date)}" max="${todayStr}" onchange="mgrDate(this.value)"><button class="btn sm" onclick="mgrSort()"><i class="fas fa-arrow-down-wide-short"></i>&nbsp; ${State.mgr.sort==='newest'?'Newest first':'Oldest first'}</button><button class="btn sm primary" onclick="mgrRecordsOpen()"><i class="fas fa-folder-open"></i>&nbsp; Verified records</button></div></div>
-    <div id="mgr-rec-modal" class="lb-overlay" style="display:none" onclick="if(event.target===this)mgrRecordsClose()"><div class="lb-panel" onclick="event.stopPropagation()"><div class="card-head" style="padding:14px 16px"><h3>📁 Verified records</h3><button class="x-btn" onclick="mgrRecordsClose()">✕</button></div><div class="card-pad"><div class="field" style="max-width:220px"><label>Date</label><input type="date" id="mgr-rec-date" value="${esc(State.mgr.date)}" max="${todayStr}" onchange="mgrRecDate(this.value)"></div><div id="mgr-rec-body" style="max-height:56vh;overflow:auto;margin-top:8px"></div></div></div></div>
+    <div id="mgr-rec-modal" class="lb-overlay" style="display:none" onclick="if(event.target===this)mgrRecordsClose()"><div class="lb-panel" onclick="event.stopPropagation()"><div class="card-head" style="padding:14px 16px"><h3>📁 Verified records</h3><button class="x-btn" onclick="mgrRecordsClose()">✕</button></div><div class="card-pad"><div style="display:flex;gap:12px;flex-wrap:wrap"><div class="field" style="max-width:200px"><label>Date</label><input type="date" id="mgr-rec-date" value="${esc(State.mgr.date)}" max="${todayStr}" onchange="mgrRecDate(this.value)"></div>${isSuper()?`<div class="field" style="max-width:220px"><label>Store</label><select id="mgr-rec-store" onchange="mgrRecStore(this.value)"><option value="ALL">All stores</option>${DB.stores.map(s=>`<option value="${esc(s)}" ${(State.mgr.store||'ALL')===s?'selected':''}>${esc(s)}</option>`).join('')}</select></div>`:''}</div><div id="mgr-rec-body" style="max-height:52vh;overflow:auto;margin-top:8px"></div></div></div></div>
     <div class="kpi-grid">${stats.map(s=>`<div class="kpi tone-${s[3]}"><div class="k-top"><div class="k-ic">${s[0]}</div></div><div class="k-val">${s[1]}</div><div class="k-lbl">${esc(s[2])}</div></div>`).join('')}</div>
     ${storeCards}
     <div class="section-title"><i class="fas fa-clock" style="color:#f59e0b"></i> Pending Verification · ${esc(storeTitle)} · ${esc(State.mgr.date)}${State.mgr.date===todayStr?' (Today)':''} · ${pending.length}${pending.length>capN?` (showing ${capN})`:''}</div>
@@ -2325,10 +2325,11 @@ function mgrSort(){ State.mgr.sort=State.mgr.sort==='newest'?'oldest':'newest'; 
 function mgrRecordsOpen(){ const m=document.getElementById('mgr-rec-modal'); if(m){ m.style.display='flex'; mgrRecRender(); } }
 function mgrRecordsClose(){ const m=document.getElementById('mgr-rec-modal'); if(m) m.style.display='none'; }
 function mgrRecDate(v){ State.mgr.recDate=v; mgrRecRender(); }
+function mgrRecStore(v){ State.mgr.store=v; mgrRecRender(); }
 function mgrRecRender(){
   const el=document.getElementById('mgr-rec-body'); if(!el) return;
   const date=State.mgr.recDate||($('#mgr-rec-date')&&$('#mgr-rec-date').value)||State.mgr.date;
-  const storeScope=isSuper()?(State.mgr&&State.mgr.store||'ALL'):State.branch;
+  const storeScope=isSuper()?(($('#mgr-rec-store')&&$('#mgr-rec-store').value)||State.mgr.store||'ALL'):State.branch;
   const inStore=store=>isSuper()?(storeScope==='ALL'||store===storeScope):store===State.branch;
   const recs=mgrSubs().filter(s=>s.status==='Verified'&&s.date===date&&inStore(s.store))
     .sort((a,b)=>String(b.verifiedAt||'').localeCompare(String(a.verifiedAt||'')));

@@ -86,9 +86,11 @@
   const LOADING_IMG = 'data:image/svg+xml;utf8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="90" height="70"><rect width="100%" height="100%" rx="8" fill="#eef2f7"/><text x="50%" y="54%" font-size="10" fill="#94a3b8" text-anchor="middle" font-family="sans-serif">loading…</text></svg>');
   let _rrTimer; function rerenderSoon(){ clearTimeout(_rrTimer); _rrTimer=setTimeout(()=>{ try{ if(window.State&&State.account&&typeof render==='function') render(); }catch(e){} }, 150); }
 
-  // resize to <= maxDim on the long edge, return a JPEG data URL (~40–120KB)
+  // resize to <= maxDim on the long edge, return a JPEG data URL. Photos are stored as
+  // SEPARATE files (not in the state blob) and uploaded asynchronously, so higher quality
+  // here keeps PDFs/exports crisp without slowing the data save or the UI.
   window.compressImage = function(file, maxDim, quality){
-    maxDim=maxDim||1000; quality=quality||0.55;
+    maxDim=maxDim||1600; quality=quality||0.82;
     return new Promise((resolve,reject)=>{
       const img=new Image(), url=URL.createObjectURL(file);
       img.onload=()=>{ let w=img.naturalWidth||img.width, h=img.naturalHeight||img.height;
@@ -455,7 +457,7 @@
     // less than the latest local data — even if the server save is delayed or fails.
     try{ const acct=State.account, store=acct.role==='super'?'All stores':acct.branch; if(store&&!isAllStore(store)) writeCache(store, buildState(store)); }catch(e){}
     if(!FB.enabled) return;
-    clearTimeout(timer); timer=setTimeout(()=>{ FB.saveAll&&FB.saveAll(); }, 800); };
+    clearTimeout(timer); timer=setTimeout(()=>{ FB.saveAll&&FB.saveAll(); }, 450); };
   // safety net: poll for changes every 5s and push if the data changed
   setInterval(()=>{ if(!FB.enabled || !(window.State&&State.account)) return; const h=snapshotHash(); if(h!==lastHash){ lastHash=h; FB.saveAll&&FB.saveAll(); } }, 5000);
   window.addEventListener('beforeunload', ()=>{ if(FB.enabled&&FB.saveAll) FB.saveAll(); });
