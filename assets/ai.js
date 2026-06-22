@@ -36,7 +36,8 @@
   // OCR via ChatGPT Vision (server endpoint, key on server). No on-device OCR.
   async function aiOcr(file){
     const ep=window.MCQ_VISION_TEXT_ENDPOINT; if(!ep||!file) return '';
-    try{ const fd=new FormData(); fd.append('image',file,'scan.jpg');
+    try{ const up=(window.ckDownscaleBlob?await ckDownscaleBlob(file,1280,0.72).catch(()=>file):file);
+      const fd=new FormData(); fd.append('image',up,'scan.jpg');
       const tok=(window.localStorage&&localStorage.getItem('mcq_token'))||'';
       const res=await fetch(ep,{method:'POST',headers:tok?{Authorization:'Bearer '+tok}:{},body:fd});
       const d=await res.json().catch(()=>({})); return d.text||''; }catch(e){ return ''; } }

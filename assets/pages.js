@@ -580,14 +580,23 @@ function ckRetakeTemp(i){
   ckDraw();
   toast('Temperature photo cleared. Take a new close-up photo.');
 }
+/* downscale a photo to a small JPEG Blob before upload — big speed win (a 3-4 MB
+   camera photo → ~150-300 KB) and fewer image tokens for the vision model. */
+function ckDownscaleBlob(file,max,q){ return new Promise(res=>{ const img=new Image(); img.onload=()=>{
+  const s=Math.min(1,(max||1280)/Math.max(img.width||max,img.height||max));
+  const w=Math.max(1,Math.round((img.width||max)*s)), h=Math.max(1,Math.round((img.height||max)*s));
+  try{ const c=document.createElement('canvas'); c.width=w; c.height=h; c.getContext('2d').drawImage(img,0,0,w,h);
+    c.toBlob(b=>{ try{URL.revokeObjectURL(img.src);}catch(e){} res(b||file); },'image/jpeg',q||0.72); }
+  catch(e){ res(file); } }; img.onerror=()=>res(file); img.src=URL.createObjectURL(file); }); }
 /* AI Vision temperature reader — ChatGPT (OpenAI) via the server endpoint.
    The OpenAI key lives ONLY on the server (env OPENAI_API_KEY); nothing runs on-device. */
 async function ckVisionValue(fileName,file,r,i){
   const endpoint=window.MCQ_AI_VISION_ENDPOINT||localStorage.getItem('mcq_ai_vision_endpoint');
   if(!endpoint||!file) return {error:true,message:'AI Vision is not available here. Enter the temperature manually.',manualAllowed:true};
   try{
+    const up=await ckDownscaleBlob(file,1280,0.72).catch(()=>file);
     const body=new FormData();
-    body.append('image',file,fileName||'temperature.jpg');
+    body.append('image',up,'temperature.jpg');
     body.append('equipment',r.meta.equipment||'');
     body.append('type',r.meta.type||'fridge');
     const tok=(window.localStorage&&localStorage.getItem('mcq_token'))||'';
