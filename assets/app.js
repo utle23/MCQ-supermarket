@@ -319,6 +319,10 @@ function enterApp(){
   startIdleWatch();
 }
 function logout(reason){
+  // flush any unsaved work BEFORE clearing the account, otherwise a pending debounced
+  // save fires after logout, sees no account and skips → last edits (e.g. a new
+  // violation) would be lost. saveAll() captures the data synchronously here.
+  try{ if(window.MCQDB && MCQDB.saveAll && State.account) MCQDB.saveAll(); }catch(e){}
   dataSyncRun++;
   State.superFullSyncStarted=false;
   State.superFullSyncFailedAt=0;
