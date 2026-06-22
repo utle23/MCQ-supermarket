@@ -1417,8 +1417,9 @@ async function ckSharePDF(session){
   const C=DB.checklist;
   const rows=C.items.map(ckItem).filter(r=>ckStoreOk(r)&&ckInSession(r,session));
   if(!rows.length){ toast('No '+session+' tasks for this store'); return; }
-  if(!(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine loading — using printable report'); return ckSessionPrint(session,rows); }
   toast('Building '+session+' PDF…');
+  try{ if(window.ensureJsPDF) await ensureJsPDF(); }catch(e){}
+  if(!(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine loading — using printable report'); return ckSessionPrint(session,rows); }
   const date=new Date().toISOString().slice(0,10);
   const store=isSuper()?'All stores':State.branch;
   let outCount=0; rows.forEach(r=>{ const st=State.chk.state[r.i]||{}; if(st.temp&&st.temp.inRange===false) outCount++; });
@@ -2155,6 +2156,7 @@ async function mgrSendLeadPDF(s,a,leads){
   const text=mgrAssessmentText(a);
   const subject=`MCQ ${s.store} · ${s.department} ${s.session} — verified (${a.overallResult||'reviewed'})`;
   try{
+    try{ if(window.ensureJsPDF) await ensureJsPDF(); }catch(e){}
     if(!(window.jspdf&&window.jspdf.jsPDF)) throw new Error('no jspdf');
     const tasks=mgrSubTasks(s), doneN=tasks.filter(t=>t.done).length;
     const { jsPDF }=window.jspdf; const doc=new jsPDF({unit:'pt',format:'a4'});

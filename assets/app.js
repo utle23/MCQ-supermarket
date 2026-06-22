@@ -314,6 +314,8 @@ function enterApp(){
   if(!location.hash || location.hash==='#') location.hash='#/home'; else render();
   buildTopbar(); buildSidebar(); render();
   startIdleWatch();
+  // warm the rarely-used modules in the background so deep pages open instantly later
+  try{ const idle=window.requestIdleCallback||function(f){return setTimeout(f,1200);}; idle(()=>{ try{ ensureLazyModules(); }catch(e){} }); }catch(e){}
 }
 async function logout(reason){
   // flush any unsaved work and WAIT for the server to confirm BEFORE clearing the account,
@@ -457,6 +459,12 @@ function render(){
   if(DB.customPages[mod]){
     const page=DB.customPages[mod];
     if((page.admin&&!isAdmin())||(page.super&&!isSuper())){ location.hash='#/home'; return; }
+    // the render fn may live in a lazily-loaded module (pages2.js / ai.js) — load it, then render
+    if(typeof window[page.render]!=='function'){
+      const c=$('#content'); if(c) c.innerHTML='<div class="empty"><div class="e-ic">⏳</div>Loading…</div>';
+      ensureLazyModules().then(()=>{ if(typeof window[page.render]==='function') window[page.render](page); else if(c) c.innerHTML='<div class="empty">Could not load this page. Please refresh.</div>'; }).catch(()=>{});
+      return;
+    }
     return window[page.render](page);
   }
   if(mod==='checklist') return renderChecklist();
@@ -826,9 +834,31 @@ function cmdK(){
 function cmdKClose(){ const ov=$('#cmdk'); if(ov) ov.classList.remove('show'); }
 document.addEventListener('keydown',function(e){ if((e.metaKey||e.ctrlKey)&&(e.key==='k'||e.key==='K')){ if(!State.account) return; e.preventDefault(); cmdK(); } });
 
+/* ============================================================ LAZY LOADERS
+   Heavy libraries (Chart.js, jsPDF) and rarely-used local modules (pages2.js,
+   ai.js) are loaded ON DEMAND so the login/first paint is fast. None of this
+   touches data save/load. */
+const _mcqScripts={};
+function mcqLoadScript(src){ if(_mcqScripts[src]) return _mcqScripts[src];
+  _mcqScripts[src]=new Promise((res,rej)=>{ const s=document.createElement('script'); s.src=src; s.async=true;
+    s.onload=()=>res(true); s.onerror=()=>{ delete _mcqScripts[src]; rej(new Error('load '+src)); };
+    document.head.appendChild(s); });
+  return _mcqScripts[src]; }
+function ensureChart(){ return window.Chart?Promise.resolve(true):mcqLoadScript('https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js').catch(()=>false); }
+function ensureJsPDF(){ return (window.jspdf&&window.jspdf.jsPDF)?Promise.resolve(true):mcqLoadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js').catch(()=>false); }
+function _assetVer(){ try{ const s=[...document.scripts].find(x=>/assets\/app\.js/.test(x.src||'')); const m=s&&(s.src.match(/\?v=[\w.-]+/)); return m?m[0]:''; }catch(e){ return ''; } }
+let _lazyModsP;
+function ensureLazyModules(){ if(_lazyModsP) return _lazyModsP; const v=_assetVer();
+  _lazyModsP=Promise.all(['assets/pages2.js','assets/ai.js'].map(a=>mcqLoadScript(a+v).catch(()=>false)));
+  return _lazyModsP; }
+window.ensureJsPDF=ensureJsPDF; window.ensureChart=ensureChart; window.ensureLazyModules=ensureLazyModules;
+
 /* ============================================================ CHARTS */
 function destroyCharts(){ State.charts.forEach(c=>{try{c.destroy()}catch(e){}}); State.charts=[]; }
-function mkChart(id,cfg){ const el=$('#'+id); if(!el||!window.Chart) return; State.charts.push(new Chart(el,cfg)); }
+function mkChart(id,cfg){ const el=$('#'+id); if(!el) return;
+  if(window.Chart){ State.charts.push(new Chart(el,cfg)); return; }
+  // lazy: page paints now, the chart fills in a moment later once Chart.js loads
+  ensureChart().then(()=>{ const e=$('#'+id); if(e && window.Chart) State.charts.push(new Chart(e,cfg)); }).catch(()=>{}); }
 function baseOpts({indexAxis='x',legend=false,donut=false}={}){
   const o={responsive:true,maintainAspectRatio:false,indexAxis,
     plugins:{legend:{display:legend,position:'bottom',labels:{boxWidth:9,boxHeight:9,usePointStyle:true,pointStyle:'circle',padding:14,font:{family:'Inter',size:11,weight:'600'},color:'#475569'}},

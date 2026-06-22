@@ -54,7 +54,9 @@
   var api = function(p){ return (BASE||'') + p; };
   function headers(json){ var h={}; if(json) h['Content-Type']='application/json'; if(TOKEN) h['Authorization']='Bearer '+TOKEN; return h; }
   function setToken(t){ TOKEN=t||''; try{ TOKEN?localStorage.setItem('mcq_token',TOKEN):localStorage.removeItem('mcq_token'); }catch(e){} }
-  function stores(){ return (window.DB&&(DB.branches||DB.stores))||[]; }
+  // NB: DB is a top-level `const` (NOT on window), so use the lexical DB, not window.DB
+  // (the old `window.DB && ...` made this return [] → Super Admin never saved!).
+  function stores(){ try{ var b=DB.branches||DB.stores||[]; return b&&b.length?b:[]; }catch(e){ return []; } }
 
   FB._api = true;
   FB.enabled = true;
@@ -77,8 +79,9 @@
   function setSave(status,msg){ FB.lastSync={status:status,message:msg};
     try{ if(window.State) State.dataSync={status:status,message:msg}; if(window.refreshSyncUi) refreshSyncUi(); }catch(e){} }
   var saveDirty=false;   // a save failed → keep retrying until the server confirms
-  function postState(store){
-    var state = FB.buildStoreState ? FB.buildStoreState(store) : null;
+  var _storeHash={};     // store -> JSON of the last state successfully saved (super: skip unchanged stores)
+  function postState(store, prebuilt){
+    var state = prebuilt || (FB.buildStoreState ? FB.buildStoreState(store) : null);
     // mirror locally FIRST so the data survives even if the network/tab dies before the POST lands
     try{ if(state && FB.writeCache) FB.writeCache(store, state); }catch(e){}
     // NOTE: no `keepalive` — the full state often exceeds the 64KB keepalive limit, which would
@@ -126,12 +129,23 @@
     // NOTE: server save is MERGE/upsert (never deletes), so saving any time is safe —
     // we deliberately do NOT gate on _loaded (that previously disabled saves for a whole
     // session after one load hiccup → silent data loss).
-    setSave('loading','Saving…');
     if(acct.role==='super'){
-      return Promise.all(stores().map(function(s){ return postState(s); }))
-        .then(function(){ saveDirty=false; setSave('synced','Saved · all stores'); })
+      // Only upload stores whose CONTENT changed since the last successful save (per-store
+      // hash). Content-based → it can never miss a real change; it just skips the unchanged
+      // stores, removing the cost of POSTing all 9 every time. On failure the hash is NOT
+      // updated for that store, so the retry resends it.
+      var first=Object.keys(_storeHash).length===0;   // nothing saved yet → save everything (and seed hashes)
+      var skipVolatile=function(k,v){ return k==='updatedAt'?undefined:v; };  // ignore the per-build timestamp
+      var changed=[];
+      stores().forEach(function(s){ var st=FB.buildStoreState?FB.buildStoreState(s):null; if(!st) return;
+        var h=JSON.stringify(st, skipVolatile); if(first || h!==_storeHash[s]) changed.push({s:s, st:st, h:h}); });
+      if(!changed.length){ setSave('synced','Saved · all stores'); return Promise.resolve(); }
+      setSave('loading','Saving…');
+      return Promise.all(changed.map(function(c){ return postState(c.s, c.st).then(function(){ _storeHash[c.s]=c.h; }); }))
+        .then(function(){ saveDirty=false; setSave('synced','Saved · '+changed.length+' store'+(changed.length>1?'s':'')); })
         .catch(function(){ saveDirty=true; setSave('error','Save failed — retrying'); });
     }
+    setSave('loading','Saving…');
     return postState(acct.branch).then(function(){ saveDirty=false; setSave('synced','Saved · '+acct.branch); })
       .catch(function(){ saveDirty=true; setSave('error','Save failed — retrying'); });
   };
