@@ -184,8 +184,9 @@ function renderChecklist(){
    <div id="chk-prog" class="ck-progbar"></div>
    <div id="ck-temp-report"></div>
    <div id="chk-body"></div>
-   ${viewing?'':`<div class="ck-submit"><button class="btn primary lg" onclick="chkSubmit()">✓ Submit ${s.session} checklist</button></div>`}`;
-  if(viewing){ const b=$('#chk-body'); if(b) b.innerHTML=ckPastHTML(); } else ckDraw();
+   ${viewing?'':`<div class="ck-submit-help">💾 Đã tự lưu — bạn có thể rời đi rồi quay lại làm tiếp. Chỉ bấm Submit khi <b>đã làm xong tất cả section</b>. Task nào không làm được thì ghi lý do vào ô note.</div>
+   <div class="ck-submit"><button id="ck-submit-btn" class="btn primary lg" onclick="chkSubmit()">✓ Submit ${s.session} checklist</button></div>`}`;
+  if(viewing){ const b=$('#chk-body'); if(b) b.innerHTML=ckPastHTML(); } else { ckDraw(); ckUpdateSubmitBtn(); }
 }
 function ckSetDate(v){ State.chk.date=v||ckTodayStr(); State.chk.editing=null; State.chk.editDeptH=null; State.chk.editArea=null; renderChecklist(); }
 function ckSubmittedFor(dept,session,date){ return (DB.checklistSubs||[]).some(x=>(isSuper()||x.store===State.branch)&&x.dept===dept&&x.session===session&&x.date===date); }
@@ -224,7 +225,7 @@ function ckAreaChips(){
   if(areas.length<=1 && !admin){ s.area='ALL'; return ''; }            // staff: nothing to switch
   if(areas.length>1 && !areas.includes(s.area)) s.area=areas[0];
   if(areas.length<=1) s.area='ALL';
-  const chips=areas.map(a=>`<button class="area-chip ${a===s.area?'active':''}" ${admin?`ondblclick="ckSectionEdit('${ckJS(s.dept)}','${ckJS(a)}')" title="Double-click to rename / delete"`:''} onclick="ckArea('${ckJS(a)}')">${esc(a)}</button>`).join('')
+  const chips=areas.map(a=>{ const done=ckAreaDone(a); return `<button class="area-chip ${a===s.area?'active':''} ${done?'sec-ok':'sec-pending'}" ${admin?`ondblclick="ckSectionEdit('${ckJS(s.dept)}','${ckJS(a)}')" title="Double-click to rename / delete"`:''} onclick="ckArea('${ckJS(a)}')">${done?'✓ ':'○ '}${esc(a)}</button>`; }).join('')
     + (admin?`<button class="area-chip ghost" onclick="ckAddSection('${ckJS(s.dept)}')" title="Add a section"><i class="fas fa-plus"></i>&nbsp;Section</button>`:'');
   return `<div class="ck-subtoolbar"><span>Sections</span><div class="area-chips">${chips}</div>${admin?'<span class="ck-sub-hint">double-click a section to rename / delete</span>':''}</div>`;
 }
@@ -268,7 +269,8 @@ function ckDraw(){
           <button class="mini" onclick="ckCancelHeads()">Cancel</button>
           <button class="mini ck-del" onclick="ckDelSection('${ckJS(dept)}','${ckJS(area)}')"><i class="fas fa-trash"></i> Delete section</button></div>`;
       }else{
-        html+=`<div class="ck-area-h" ${isAdmin()?`ondblclick="ckSectionEdit('${ckJS(dept)}','${ckJS(area)}')" title="Double-click to rename / delete"`:''}>${esc(area)}</div>`;
+        const aOk=items.filter(r=>!ckTaskIssue(r,State.chk.state[r.i])).length, aTot=items.length, aDone=aOk===aTot;
+        html+=`<div class="ck-area-h" ${isAdmin()?`ondblclick="ckSectionEdit('${ckJS(dept)}','${ckJS(area)}')" title="Double-click to rename / delete"`:''}>${esc(area)}<span class="ck-sec-badge ${aDone?'ok':'pending'}">${aDone?'✓ ':''}${aOk}/${aTot}</span></div>`;
       }
       items.forEach(r=>{ const st=State.chk.state[r.i]||{}; const done=st.done;
         if(isAdmin() && State.chk.editing===r.i){
@@ -353,6 +355,47 @@ function ckProgress(){
   const el=$('#chk-prog'); if(el) el.innerHTML=`<span class="count-chip">✅ ${done}/${total} done</span><span class="count-chip">📷 ${pdone}/${preq} photo tasks</span>
     ${hasTemp?`<span class="count-chip temp-ok">🌡️ ${tok} in range</span><span class="count-chip temp-bad">⚠️ ${tbad} out</span><span class="count-chip temp-scan">AI ${tscan} scanning</span>`:''}
     <span class="pwrap" style="flex:1;min-width:160px"><span class="pbar" style="flex:1"><i style="width:${pct}%"></i></span><b>${pct}%</b></span>`;
+  ckUpdateSubmitBtn();
+}
+/* ---- completeness gate: a task is "done OR has a reason note"; photo/temp still required when ticked ---- */
+function ckTaskIssue(r,st){
+  st=st||{};
+  if(st.done){
+    if(r.meta&&r.meta.temp && !st.defrosting && (!st.temp || st.aiStatus==='scanning')) return 'temperature not read';
+    if(r.photo && !(r.meta&&r.meta.temp&&st.defrosting) && (st.photos||[]).length<1) return 'photo required';
+    return null;   // satisfied
+  }
+  if(String(st.note||'').trim()) return null;   // not done but a reason was written → OK
+  return 'not ticked — add a reason in the note';
+}
+// evaluate ALL sections in the current department+session (not just the visible area)
+function ckGate(){
+  const rows=ckRows(true), areas={};
+  rows.forEach(r=>{ (areas[r.area]=areas[r.area]||[]).push(r); });
+  const sections=[]; let firstPending=null;
+  Object.entries(areas).forEach(([area,items])=>{
+    let ok=0; const issues=[];
+    items.forEach(r=>{ const st=State.chk.state[r.i]||{}; const why=ckTaskIssue(r,st);
+      if(!why) ok++; else { issues.push({i:r.i,task:r.task,why}); if(firstPending==null) firstPending=r.i; } });
+    sections.push({area, total:items.length, ok, complete:ok===items.length, issues});
+  });
+  const resp=(State.chk.resp||{})[State.chk.dept]||{};
+  const respOk=!!(String(resp.p1||'').trim() && String(resp.submittedBy||'').trim());
+  const incompleteSections=sections.filter(s=>!s.complete).map(s=>s.area);
+  return {sections, incompleteSections, respOk, firstPending, complete: incompleteSections.length===0 && respOk};
+}
+function ckAreaDone(area){ const rows=ckRows(true).filter(r=>r.area===area); return rows.length>0 && rows.every(r=>!ckTaskIssue(r,State.chk.state[r.i])); }
+function ckUpdateSubmitBtn(){
+  const btn=document.getElementById('ck-submit-btn'); if(!btn) return;
+  const g=ckGate();
+  if(g.complete){ btn.className='btn primary lg'; btn.innerHTML=`✓ Submit ${esc(State.chk.session)} checklist`; }
+  else{
+    btn.className='btn lg ck-locked';
+    const bits=[];
+    if(g.incompleteSections.length) bits.push((g.incompleteSections.length)+' section'+(g.incompleteSections.length>1?'s':'')+': '+g.incompleteSections.join(', '));
+    if(!g.respOk) bits.push('Responsible Person');
+    btn.innerHTML=`🔒 Finish first — ${esc(bits.join(' · '))}`;
+  }
 }
 function ckTick(i){
   const st=State.chk.state[i]=State.chk.state[i]||{};
@@ -377,7 +420,7 @@ function ckTick(i){
   if(row){row.classList.toggle('done',st.done);row.querySelector('.ck-check').textContent=st.done?'✓':'';}
   ckProgress(); ckSaveDraft();
 }
-function ckNote(i,v){const st=State.chk.state[i]=State.chk.state[i]||{};st.note=v;ckSaveDraft();}
+function ckNote(i,v){const st=State.chk.state[i]=State.chk.state[i]||{};st.note=v;ckSaveDraft();ckUpdateSubmitBtn();}
 async function ckPhoto(input,i){
   const f=input.files&&input.files[0]; if(!f)return;
   const r=ckItem(DB.checklist.items[i],i), st=State.chk.state[i]=State.chk.state[i]||{};
@@ -725,39 +768,47 @@ function ckTempReportHTML(){
   </div>`;
 }
 function chkSubmit(){
-  const rows=ckList();
-  const missingResp=[...new Set(rows.map(r=>r.dept))].filter(dept=>{
-    const rec=(State.chk.resp||{})[dept]||{};
-    return !String(rec.p1||'').trim()||!String(rec.submittedBy||'').trim();
-  });
-  if(missingResp.length){
-    ckMarkRespMissing(missingResp);
-    toast(`Enter Responsible Person 1 and Submitted by for ${missingResp.length} department(s)`);
+  const g=ckGate();
+  if(!g.complete){
+    if(!g.respOk) ckMarkRespMissing([State.chk.dept]);
+    ckBlockModal(g);
     return;
   }
-  const missingPhotos=rows.filter(r=>{
-    const st=State.chk.state[r.i]||{}, skip=r.meta.temp&&st.defrosting;
-    return r.photo&&!skip&&((st.photos||[]).length<1);
-  });
-  if(missingPhotos.length){
-    ckMarkPhotoMissing(missingPhotos);
-    toast(`📷 ${missingPhotos.length} photo task(s) need at least 1 photo before submit`);
-    return;
-  }
-  const pendingTemps=rows.filter(r=>{
-    const st=State.chk.state[r.i]||{};
-    return r.meta.temp&&!st.defrosting&&(!st.temp||st.aiStatus!=='done'||!st.done);
-  });
-  if(pendingTemps.length){
-    ckMarkTempMissing(pendingTemps);
-    toast(`AI Vision must finish and mark done for ${pendingTemps.length} temperature check(s)`);
-    return;
-  }
-  const done=rows.filter(r=>(State.chk.state[r.i]||{}).done).length;
-  if(!done){ toast('Tick at least one task before submitting'); return; }
-  const out=rows.filter(r=>r.meta.temp&&(State.chk.state[r.i]||{}).temp&&!((State.chk.state[r.i]||{}).temp.inRange)).length;
+  ckConfirmSubmit(g);
+}
+// persistent, can't-miss list of what's still incomplete (per section) — replaces the easy-to-miss toast
+function ckBlockModal(g){
+  const secHtml=g.sections.map(s=>{
+    const list=s.complete?'':`<ul class="ck-block-list">${s.issues.slice(0,10).map(it=>`<li><button class="ck-block-jump" onclick="ckJumpTo(${it.i})">${esc(it.task)}</button> <span class="muted">— ${esc(it.why)}</span></li>`).join('')}${s.issues.length>10?`<li>…and ${s.issues.length-10} more</li>`:''}</ul>`;
+    return `<div class="ck-block-sec"><div class="ck-block-sec-h ${s.complete?'ok':'bad'}">${s.complete?'✅':'⛔'} ${esc(s.area)} — ${s.ok}/${s.total}</div>${list}</div>`;
+  }).join('');
+  const respHtml=g.respOk?'':`<div class="ck-block-sec"><div class="ck-block-sec-h bad">⛔ Responsible Person — required</div><ul class="ck-block-list"><li>Enter Responsible Person 1 and Submitted by</li></ul></div>`;
+  const ov=document.createElement('div'); ov.className='lb-overlay ck-block-ov'; ov.style.display='flex';
+  ov.onclick=e=>{ if(e.target===ov) ov.remove(); };
+  ov.innerHTML=`<div class="lb-panel"><div class="card-head" style="padding:14px 16px"><h3>⛔ Chưa thể submit — còn việc chưa xong</h3><button class="x-btn" onclick="this.closest('.ck-block-ov').remove()">✕</button></div>
+    <div class="card-pad" style="max-height:62vh;overflow:auto"><p class="fhint" style="margin:0 0 10px">Làm xong tất cả section bên dưới, hoặc ghi <b>lý do</b> vào ô note cho task không làm được. Dữ liệu đã tự lưu — không mất.</p>${respHtml}${secHtml}</div></div>`;
+  document.body.appendChild(ov);
+}
+function ckJumpTo(i){ document.querySelectorAll('.ck-block-ov').forEach(n=>n.remove());
+  const r=ckItem(DB.checklist.items[i],i);
+  if(State.chk.area!=='ALL' && r && r.area!==State.chk.area){ State.chk.area=r.area; renderChecklist(); }
+  setTimeout(()=>{ const row=document.getElementById('ck-row-'+i); if(row){ row.scrollIntoView({behavior:'smooth',block:'center'}); row.classList.add('ck-flash'); setTimeout(()=>row.classList.remove('ck-flash'),1600); } },120);
+}
+// final confirmation — makes clear this submits the WHOLE department checklist
+function ckConfirmSubmit(g){
+  const total=g.sections.reduce((n,s)=>n+s.total,0), ok=g.sections.reduce((n,s)=>n+s.ok,0);
+  const ov=document.createElement('div'); ov.className='lb-overlay ck-block-ov'; ov.style.display='flex';
+  ov.onclick=e=>{ if(e.target===ov) ov.remove(); };
+  ov.innerHTML=`<div class="lb-panel" style="max-width:440px"><div class="card-head" style="padding:14px 16px"><h3>Submit toàn bộ checklist?</h3><button class="x-btn" onclick="this.closest('.ck-block-ov').remove()">✕</button></div>
+    <div class="card-pad"><p>Bạn đang nộp <b>TOÀN BỘ</b> checklist <b>${esc(State.chk.dept)} · ${esc(State.chk.session)}</b> cho <b>${esc(State.branch)}</b>.</p>
+    <p class="fhint">${g.sections.length} section · ${ok}/${total} mục hoàn thành. Sau khi nộp sẽ chuyển cho quản lý duyệt.</p>
+    <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px"><button class="btn" onclick="this.closest('.ck-block-ov').remove()">Huỷ</button><button class="btn primary" onclick="this.closest('.ck-block-ov').remove();ckDoSubmit()">✓ Nộp checklist</button></div></div></div>`;
+  document.body.appendChild(ov);
+}
+function ckDoSubmit(){
   // ---- persist a REAL submission (Manager verify / Performance / records all read this) ----
   const allRows=DB.checklist.items.map(ckItem).filter(r=>ckStoreOk(r) && r.dept===State.chk.dept && ckInSession(r,State.chk.session));
+  const out=allRows.filter(r=>r.meta.temp&&(State.chk.state[r.i]||{}).temp&&!((State.chk.state[r.i]||{}).temp.inRange)).length;
   const items=allRows.map(r=>{ const st=State.chk.state[r.i]||{};
     return {task:r.task, area:r.area, done:!!st.done, note:st.note||'', photos:(st.photos||[]).slice(), temp: st.temp?{value:st.temp.value,inRange:!!st.temp.inRange,defrosting:!!st.defrosting,source:st.temp.source||'',manual:!!st.temp.manual,confirmedBy:st.temp.confirmedBy||'',suggestedValue:st.temp.suggestedValue??null,rawReading:st.temp.rawReading||''}:null }; });
   const doneN=items.filter(i=>i.done).length, totalN=items.length;
