@@ -1189,3 +1189,8 @@ table.jobduty td{vertical-align:top}
 .th-body img{max-width:100%;border-radius:8px}
 .th-reply{border-top:1px solid #e5e7eb;padding-top:12px;display:flex;flex-direction:column;gap:8px}
 .th-reply textarea{width:100%;border:1px solid var(--line,#e5e7eb);border-radius:10px;padding:10px;font:inherit;resize:vertical}
+/* ---- CKEditor 5 in modals ---- */
+.mcq-modal-body .ck.ck-editor{width:100%}
+.mcq-modal-body .ck-editor__editable{min-height:160px;max-height:46vh}
+.ck-body-wrapper{z-index:100000 !important}   /* toolbars/dropdowns above the modal overlay */
+.ck.ck-balloon-panel{z-index:100001 !important}

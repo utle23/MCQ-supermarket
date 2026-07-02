@@ -367,7 +367,7 @@ function mcqModal(title, inner, opts){
     <div class="card-pad mcq-modal-body">${inner}</div></div>`;
   document.body.appendChild(ov); return ov;
 }
-function mcqModalClose(){ const ov=document.getElementById('mcq-modal'); if(ov) ov.remove(); }
+function mcqModalClose(){ try{ if(window.ckDestroy){ ckDestroy('cmp-body'); ckDestroy('th-reply-txt'); ckDestroy('ann-body'); ckDestroy('mail-body'); } }catch(e){} const ov=document.getElementById('mcq-modal'); if(ov) ov.remove(); }
 // render trusted-ish HTML (from our own composer) with scripts/handlers stripped
 function safeHtml(html){ const d=document.createElement('div'); d.innerHTML=String(html==null?'':html);
   d.querySelectorAll('script,iframe,object,embed,link,meta,style,form').forEach(e=>e.remove());
@@ -417,11 +417,12 @@ function inboxShowThread(threadId,msgs){
   const reply=canReply?`<div class="th-reply"><textarea id="th-reply-txt" rows="3" placeholder="Write a reply…"></textarea>
     <button class="btn primary" onclick="inboxReply('${ckJS(threadId)}')"><i class="fas fa-paper-plane"></i>&nbsp; Send reply</button></div>`:'';
   mcqModal('📥 Conversation', `<div class="th-scroll">${bubbles}</div>${reply}`, {wide:true});
+  if(canReply && window.ckMount) ckMount('th-reply-txt');
 }
 function inboxReply(threadId){
-  const el=document.getElementById('th-reply-txt'); const txt=(el&&el.value||'').trim();
-  if(!txt){ toast('Write a reply first'); return; }
-  mcqMsgSend({kind:'reply', thread_id:threadId, subject:'Reply', body_html:esc(txt).replace(/\n/g,'<br>')}).then(r=>{
+  const html=(window.ckHtml?ckHtml('th-reply-txt'):''); const plain=String(html).replace(/<[^>]+>/g,'').trim();
+  if(!plain){ toast('Write a reply first'); return; }
+  mcqMsgSend({kind:'reply', thread_id:threadId, subject:'Reply', body_html:html}).then(r=>{
     if(r&&r.ok){ toast('✓ Reply sent'); mcqModalClose(); renderInbox(); } else toast('Could not send reply'); });
 }
 // Manager/Super compose a document → a specific employee or all staff of a store
@@ -441,15 +442,48 @@ function composeSend(){
   const store=isSuper()?(document.getElementById('cmp-store')?.value||State.branch):State.branch;
   const target=document.getElementById('cmp-target')?.value||'all';
   const subj=(document.getElementById('cmp-subj')?.value||'').trim();
-  const raw=(document.getElementById('cmp-body')?.value||'').trim();
-  const body=(window.ckRead?ckRead('cmp-body'):'')||esc(raw).replace(/\n/g,'<br>');
-  if(!raw && !(window.ckRead&&ckRead('cmp-body'))){ toast('Write a message first'); return; }
+  const body=(window.ckHtml?ckHtml('cmp-body'):(document.getElementById('cmp-body')?.value||''));
+  if(!String(body).replace(/<[^>]+>/g,'').trim()){ toast('Write a message first'); return; }
   const payload={kind:'document', store, subject:subj||'Document', body_html:body};
   if(target==='all') payload.to_store_all=true; else if(target.indexOf('id:')===0) payload.to_staff_id=target.slice(3);
   mcqMsgSend(payload).then(r=>{ if(r&&r.ok){ toast('✓ Document sent'); mcqModalClose(); renderInbox(); } else toast('Could not send'); });
 }
 window.renderInbox=renderInbox; window.inboxOpen=inboxOpen; window.inboxReply=inboxReply;
 window.composeOpen=composeOpen; window.composeStoreChange=composeStoreChange; window.composeSend=composeSend;
+
+/* ============================================================ CKEditor 5 (lazy CDN, graceful fallback)
+   Upgrades any <textarea id="…"> to a rich-text editor. If the CDN is unreachable the plain
+   textarea keeps working, so composing/replying never breaks (offline-safe). */
+const _ckInst={};
+let _ckLoadP=null;
+const CKE_CDN='https://cdn.ckeditor.com/ckeditor5/40.2.0/super-build/ckeditor.js';
+function ensureCKE(){
+  if(window.CKEDITOR && window.CKEDITOR.ClassicEditor) return Promise.resolve(window.CKEDITOR);
+  if(_ckLoadP) return _ckLoadP;
+  _ckLoadP=(window.mcqLoadScript?mcqLoadScript(CKE_CDN):Promise.reject()).then(()=>window.CKEDITOR||null).catch(()=>{ _ckLoadP=null; return null; });
+  return _ckLoadP;
+}
+// plugins in the super-build that need a licence / server (removed so create() never throws)
+const CKE_REMOVE=['RealTimeCollaborativeComments','RealTimeCollaborativeTrackChanges','RealTimeCollaborativeRevisionHistory','RealTimeCollaborativeEditing','PresenceList','Comments','TrackChanges','TrackChangesData','RevisionHistory','Pagination','WProofreader','MathType','SlashCommand','Template','DocumentOutline','FormatPainter','TableOfContents','CaseChange','AIAssistant','MultiLevelList','PasteFromOfficeEnhanced','ExportPdf','ExportWord','ImportWord','CKBox','CKFinder','EasyImage','CloudServices'];
+function ckMount(elId){
+  const el=document.getElementById(elId); if(!el || _ckInst[elId]) return;
+  ensureCKE().then(CK=>{
+    const Editor=CK&&(CK.ClassicEditor||CK.Editor); const node=document.getElementById(elId);
+    if(!Editor||!node) return;   // no CDN → keep the textarea
+    Editor.create(node, {
+      removePlugins:CKE_REMOVE,
+      toolbar:{items:['undo','redo','|','heading','|','fontFamily','fontSize','fontColor','fontBackgroundColor','|','bold','italic','underline','strikethrough','|','link','bulletedList','numberedList','todoList','|','alignment','outdent','indent','|','blockQuote','insertTable','horizontalLine','specialCharacters','|','removeFormat'],shouldNotGroupWhenFull:true},
+      image:{toolbar:['imageTextAlternative','imageStyle:inline','imageStyle:block']},
+      table:{contentToolbar:['tableColumn','tableRow','mergeTableCells']}
+    }).then(ed=>{ _ckInst[elId]=ed; }).catch(()=>{ /* fallback: textarea stays usable */ });
+  });
+}
+function ckRead(elId){ const ed=_ckInst[elId]; try{ if(ed) return ed.getData(); }catch(e){} const el=document.getElementById(elId); return el?el.value:''; }
+function ckHtml(elId){ const ed=_ckInst[elId]; try{ if(ed) return ed.getData(); }catch(e){} const el=document.getElementById(elId); return el?esc(el.value||'').replace(/\n/g,'<br>'):''; }
+function ckDestroy(elId){ const ed=_ckInst[elId]; if(ed){ try{ ed.destroy(); }catch(e){} delete _ckInst[elId]; } }
+function ckSet(elId,html){ const ed=_ckInst[elId]; try{ if(ed){ ed.setData(html||''); return; } }catch(e){} const el=document.getElementById(elId); if(el) el.value=String(html||'').replace(/<[^>]+>/g,''); }
+function ckMounted(elId){ return !!_ckInst[elId]; }
+window.ckMount=ckMount; window.ckRead=ckRead; window.ckHtml=ckHtml; window.ckDestroy=ckDestroy; window.ckSet=ckSet; window.ckMounted=ckMounted;
 
 /* ============================================================ CHÚ BA — read-only checklist viewer (all stores) */
 function baSetStore(v){ State.ba.store=v; renderBaView(); }
