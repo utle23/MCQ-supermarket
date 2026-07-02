@@ -336,6 +336,10 @@ function renderEmployeeProfile(){
       <div><h2 style="margin:0">${esc(s.name||'My profile')}</h2><p class="muted">${esc(s.role||'Staff')} · MCQ ${esc(s.store||State.branch||'')}${s.id?' · '+esc(s.id):''}</p>
         <p class="muted" style="font-size:12px">Tap the photo to upload a new one, then press Save.</p></div>
     </div>
+    <div class="ep-login" id="ep-login"><i class="fas fa-key"></i>&nbsp; Your login password: <b id="ep-pw">••••••</b>
+      <button class="btn xs" onclick="empTogglePw()" id="ep-pw-btn">Show</button>
+      <button class="btn xs" onclick="empCopyPw()">Copy</button>
+      <span class="muted" style="font-size:11.5px">— use this number to sign in on the Staff tab</span></div>
     <div class="grid2" style="margin-top:12px">
       <div class="field"><label>Full name</label><input id="ep-name" value="${esc(s.name||'')}"></div>
       <div class="field"><label>Phone</label><input id="ep-phone" value="${esc(s.phone||'')}" placeholder="0400 000 000"></div>
@@ -352,7 +356,13 @@ function renderEmployeeProfile(){
     </div>
     <div style="display:flex;gap:10px;margin-top:14px"><button class="btn primary" onclick="empProfileSave()">💾 Save my profile</button></div>
   </div></div>`;
+  State.__myPw=''; if(window.mcqMyPassword) mcqMyPassword().then(r=>{ State.__myPw=(r&&r.password)||''; }).catch(()=>{});
 }
+function empTogglePw(){ const el=document.getElementById('ep-pw'), btn=document.getElementById('ep-pw-btn'); if(!el) return;
+  const showing=el.dataset.shown==='1'; if(showing){ el.textContent='••••••'; el.dataset.shown='0'; if(btn)btn.textContent='Show'; }
+  else { el.textContent=State.__myPw||'(not set — ask your manager)'; el.dataset.shown='1'; if(btn)btn.textContent='Hide'; } }
+function empCopyPw(){ if(!State.__myPw){ toast('No password on file — ask your manager'); return; } try{ navigator.clipboard.writeText(State.__myPw); toast('🔑 Password copied'); }catch(e){ toast(State.__myPw); } }
+window.empTogglePw=empTogglePw; window.empCopyPw=empCopyPw;
 async function empPhotoPick(inp){
   const f=inp.files&&inp.files[0]; if(!f) return;
   let ref; try{ const d=await compressImage(f,900,.85); ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d; }catch(e){ ref=URL.createObjectURL(f); }
@@ -402,14 +412,17 @@ if(!window._mcqImgZoom){ window._mcqImgZoom=true;
   }, true); }
 
 /* ============================================================ INBOX / MESSAGING */
-const MSG_KINDS={feedback:['💡','Feedback','#7c3aed'],issue:['🚩','Report Issue','#e53935'],violation:['⚖️','Violation','#b45309'],document:['📄','Document','#0891b2'],reply:['↩️','Reply','#0e9f6e'],announcement:['📣','Announcement','#7c3aed']};
+const MSG_KINDS={feedback:['💡','Feedback','#7c3aed'],issue:['🚩','Report Issue','#e53935'],violation:['⚖️','Violation','#b45309'],document:['📄','Document','#0891b2'],reply:['↩️','Reply','#0e9f6e'],announcement:['📣','Announcement','#7c3aed'],message:['✉️','Message','#0891b2']};
 function renderInbox(){
   setAccent('#0891b2');
   const sub=isSuper()?'Feedback, violations & report-issues from all stores':(isAdmin()?('Violations & report-issues · MCQ '+(State.branch||'')):(isEmployee()?'Documents & notices sent to you':'Store messages'));
   setCrumb('📥','Inbox',sub);
   const canCompose=isAdmin()||isSuper();
+  const composeBtn = canCompose
+    ? `<button class="btn primary" onclick="composeOpen()"><i class="fas fa-pen-to-square"></i>&nbsp; Compose</button>`
+    : (isEmployee()?`<button class="btn primary" onclick="staffCompose()"><i class="fas fa-pen-to-square"></i>&nbsp; Message management</button>`:'');
   $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">📥</div><div><h2>${isEmployee()?'My Inbox':(isSuper()?'Inbox':'Store Inbox')}</h2><p>${esc(sub)}.</p></div>
-    ${canCompose?`<div class="ph-actions"><button class="btn primary" onclick="composeOpen()"><i class="fas fa-pen-to-square"></i>&nbsp; Compose</button></div>`:''}</div>
+    ${composeBtn?`<div class="ph-actions">${composeBtn}</div>`:''}</div>
     <div id="inbox-body"><div class="empty"><div class="e-ic">⏳</div>Loading messages…</div></div>`;
   if(!window.mcqMsgList){ const b=$('#inbox-body'); if(b) b.innerHTML='<div class="empty">Sign in online to use your inbox.</div>'; return; }
   mcqMsgList().then(r=>{ window.__inboxUnread=(r&&r.unread)||0; if(window.buildSidebar) buildSidebar(); inboxPaint((r&&r.messages)||[]); })
@@ -494,6 +507,23 @@ function inboxSearch(v){ window.__inboxQ=v; inboxPaint(); const el=document.getE
 window.inboxSearch=inboxSearch;
 window.renderInbox=renderInbox; window.inboxOpen=inboxOpen; window.inboxReply=inboxReply; window.inboxSetStore=inboxSetStore;
 window.composeOpen=composeOpen; window.composeStoreChange=composeStoreChange; window.composeSend=composeSend;
+// staff → their store's Manager + Super (a message, not a reply)
+function staffCompose(){
+  mcqModal('✉️ Message management', `
+    <div class="ai-asst-note" style="margin-bottom:8px">Goes to your store’s Manager and Super Admin. They can reply here in your inbox.</div>
+    <div class="field"><label>Subject</label><input id="scm-subj" placeholder="e.g. Shift swap request"></div>
+    <div class="field"><label>Message</label><textarea id="scm-body" rows="7" placeholder="Write your message…"></textarea></div>
+    <div style="display:flex;gap:10px;margin-top:10px"><button class="btn primary" onclick="staffComposeSend()"><i class="fas fa-paper-plane"></i>&nbsp; Send</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>`, {wide:true});
+  if(window.ckMount) ckMount('scm-body');
+}
+function staffComposeSend(){
+  const subj=(document.getElementById('scm-subj')?.value||'').trim();
+  const body=(window.ckHtml?ckHtml('scm-body'):(document.getElementById('scm-body')?.value||''));
+  if(!String(body).replace(/<[^>]+>/g,'').trim()){ toast('Write a message first'); return; }
+  if(window.mcqMsgSend) mcqMsgSend({kind:'message', subject:subj||'Message', body_html:body}).then(r=>{ toast(r&&r.ok?'✉️ Sent to management':'Could not send'); });
+  mcqModalClose();
+}
+window.staffCompose=staffCompose; window.staffComposeSend=staffComposeSend;
 
 /* ============================================================ CKEditor 5 (lazy CDN, graceful fallback)
    Upgrades any <textarea id="…"> to a rich-text editor. If the CDN is unreachable the plain

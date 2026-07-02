@@ -325,7 +325,19 @@ def _route_for(kind):
     if k == 'issue':     return (1, 1, 0)   # super + this store's Manager/Dept-Lead
     if k == 'violation': return (1, 0, 0)   # super sees every violation; employee gets it via to_staff_id
     if k == 'reply':     return (1, 1, 0)   # replies visible to super + store managers
+    if k == 'message':   return (1, 1, 0)   # staff → their store's Manager/Dept-Lead + Super
     return (0, 0, 0)                        # document/other → explicit targeting only
+
+def get_my_password(au):
+    """An employee can view their own numeric login password."""
+    if au.get('role') != 'employee': return None
+    conn = connect()
+    try:
+        row = conn.execute('SELECT password FROM staff_accounts WHERE store_id=? AND staff_id=?',
+                           (au.get('store_id'), str(au.get('staff_id')))).fetchone()
+        return row['password'] if row else None
+    finally:
+        conn.close()
 
 def send_message(au, store, kind, subject, body_html, to_staff_id=None, to_store_all=False,
                  thread_id=None, to_super=None, to_managers=None):

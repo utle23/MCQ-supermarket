@@ -53,6 +53,7 @@
   window.mcqMsgList=function(){ return _authFetch('/api/messages'); };
   window.mcqMsgRead=function(id){ return _authFetch('/api/message/read',{method:'POST',body:JSON.stringify({id:id})}); };
   window.mcqThread=function(threadId){ return _authFetch('/api/thread/'+encodeURIComponent(threadId)); };
+  window.mcqMyPassword=function(){ return _authFetch('/api/my-password'); };   // employee views their own login password
   // cached unread count for sidebar/topbar badges (refreshed by the light poll)
   window.__inboxUnread=0;
   window.inboxUnread=function(){ return window.__inboxUnread||0; };
@@ -61,7 +62,7 @@
     return _authFetch('/api/messages/unread').then(function(r){ var n=(r&&r.unread)||0; var changed=(n!==window.__inboxUnread); window.__inboxUnread=n;
       if(changed){ try{ if(window.buildSidebar)buildSidebar(); if(window.refreshInboxBadge)refreshInboxBadge(); }catch(e){} } return n; }).catch(function(){ return window.__inboxUnread; }); };
   // ---- AI Assistant (parse only; execution stays on the normal store-scoped endpoints) ----
-  window.mcqAiCommand=function(text,roster,stores){ return _authFetch('/api/ai-command',{method:'POST',body:JSON.stringify({text:text,roster:roster||[],stores:stores||[]})}); };
+  window.mcqAiCommand=function(text,roster,stores,rules){ return _authFetch('/api/ai-command',{method:'POST',body:JSON.stringify({text:text,roster:roster||[],stores:stores||[],rules:rules||[]})}); };
   // ---- announcements ----
   window.mcqAnnList=function(){ return _authFetch('/api/announcements'); };
   window.mcqAnnPost=function(payload){ return _authFetch('/api/announcement',{method:'POST',body:JSON.stringify(payload||{})}); };

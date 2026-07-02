@@ -103,11 +103,16 @@ def staff_profile():
 # ---------- inbox / messaging ----------
 # who may originate each kind of message
 _MSG_ALLOWED = {
-    'employee': {'feedback', 'issue', 'reply'},
-    'staff':    {'feedback', 'issue', 'reply'},
-    'admin':    {'feedback', 'issue', 'reply', 'document', 'violation'},
-    'super':    {'feedback', 'issue', 'reply', 'document', 'violation', 'announcement'},
+    'employee': {'feedback', 'issue', 'reply', 'message'},
+    'staff':    {'feedback', 'issue', 'reply', 'message'},
+    'admin':    {'feedback', 'issue', 'reply', 'document', 'violation', 'message'},
+    'super':    {'feedback', 'issue', 'reply', 'document', 'violation', 'announcement', 'message'},
 }
+
+@api.route('/api/my-password', methods=['GET'])
+def my_password():
+    au = require_auth()
+    return jsonify(ok=True, password=db.get_my_password(au))
 @api.route('/api/message', methods=['POST'])
 def message_send():
     au = require_auth(); require_write(au)   # Chú Ba (ba) can't send
@@ -478,20 +483,26 @@ def ai_command():
     if not text: return jsonify(ok=False, error='empty'), 200
     stores = d.get('stores') or []
     roster = (d.get('roster') or [])[:400]                # names + stores only (no PII to the model)
+    rules = d.get('rules') or []                           # violation rule titles to choose from
     sys_prompt = (
         "You convert a manager's instruction into ONE JSON action for a supermarket staff app. "
         "Return ONLY compact JSON, no prose. Schema: "
         "{\"action\":\"violation|document|email|announcement|unknown\", "
-        "\"staff\":\"<employee name exactly as written, or ''>\", "
+        "\"staff\":\"<one OR MORE employee names, comma-separated, exactly as written; '' if none>\", "
         "\"store\":\"<one of the stores or ''>\", \"subject\":\"<short subject>\", "
-        "\"body\":\"<message body as simple HTML paragraphs>\", \"rule\":\"<violation reason/rule>\", "
+        "\"body\":\"<the message/description as short, professional, office-appropriate HTML paragraphs>\", "
+        "\"reason\":\"<the raw reason phrase, e.g. 'lateness'>\", "
+        "\"rule\":\"<for a violation, the CLOSEST matching rule title from the list below>\", "
         "\"severity\":\"Minor|Moderate|Major|Critical\", "
         "\"step\":\"Verbal Discussion|Written Warning|Final Warning|Termination\", "
         "\"scope\":\"store|all\"}. "
         "Choose 'violation' for warnings/discipline; 'document' to send a note/letter to an "
         "employee's inbox; 'email' to email an employee; 'announcement' for store or company news. "
-        "For violation/document/email you MUST identify the employee (staff). Write body in the "
-        "SAME language as the instruction. If the request is unclear, use action='unknown'.\n"
+        "The instruction may name SEVERAL employees (possibly at different stores) — list them all in 'staff'. "
+        "For a violation, set 'rule' to the closest rule title from the list, and write 'body' as a polished, "
+        "professional disciplinary description — do NOT just repeat the instruction text. "
+        "Write body in the SAME language as the instruction. If the request is unclear, use action='unknown'.\n"
+        "Violation rules (pick the closest for 'rule'): " + '; '.join(rules) + "\n"
         "Stores: " + ', '.join(stores) + "\n"
         "Employees (name @ store): " + '; '.join(
             '%s @ %s' % (r.get('name', ''), r.get('store', '')) for r in roster if r.get('name')))
