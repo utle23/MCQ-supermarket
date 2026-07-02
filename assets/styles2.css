@@ -1347,3 +1347,9 @@ html,body{max-width:100%}
 .ann-hmeta{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0}
 .ann-del{margin-left:auto}
 .ann-title{margin:12px 0 8px;font-size:19px;font-weight:800;color:#111827}
+/* ---- Share Your Thought: identified sender + larger editor ---- */
+.fb-sender{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;font-size:13px;font-weight:600;padding:9px 13px;border-radius:10px;margin:0 0 14px;text-align:center}
+.fb-form .ck-editor__editable{min-height:260px;max-height:60vh}
+.fb-form #fb-msg{min-height:220px}
+/* keep images inserted in ANY CKEditor a sane size while composing */
+.ck-content img{max-height:280px;height:auto}

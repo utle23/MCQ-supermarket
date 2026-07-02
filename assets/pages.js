@@ -209,14 +209,14 @@ function ckSetDate(v){ State.chk.date=v||ckTodayStr(); State.chk.editing=null; S
 
 /* ============================================================ SHARE YOUR THOUGHT (confidential feedback → owner) */
 function fbSubmit(){
-  const name=($('#fb-name')&&$('#fb-name').value.trim())||'';
+  const acct=State.account||{};
+  const senderName=(acct.staffName||acct.name||'Staff');   // always the signed-in account — owner sees who it is
   // rich text from CKEditor when available; plain textarea otherwise
   const html=(window.ckHtml?ckHtml('fb-msg'):'')||($('#fb-msg')?esc($('#fb-msg').value).replace(/\n/g,'<br>'):'');
   const msg=String(html).replace(/<[^>]+>/g,' ').replace(/&nbsp;/g,' ').replace(/\s+/g,' ').trim();   // plain text for the feedback list
-  const anon=$('#fb-anon')&&$('#fb-anon').checked;
   if(!msg){ toast('Please write your message first'); return; }
-  const rec={ id:'FB-'+Date.now().toString(36), store:State.branch, name:anon?'(anonymous)':(name||'(unnamed)'),
-    role:(State.account&&State.account.role)||'staff', message:msg, ts:new Date().toISOString() };
+  const rec={ id:'FB-'+Date.now().toString(36), store:State.branch, name:senderName,
+    role:acct.role||'staff', message:msg, ts:new Date().toISOString() };
   DB.feedback=DB.feedback||[]; DB.feedback.unshift(rec);
   if(window.persist) window.persist();
   // also email the owner/office silently if recipients exist (confidential — not shown to store admin)
@@ -237,10 +237,9 @@ function renderFeedback(){
   $('#content').innerHTML=`<div class="form-shell"><div class="card card-pad fb-form">
       <div class="fb-hero">💬</div>
       <h2>Share your thought</h2>
-      <p class="fb-intro">This is your safe space. Share any feedback, idea, concern or complaint <b>directly and privately with the owner</b>. Your store manager will <b>not</b> see this — please speak freely and honestly. Your voice matters. 💚</p>
-      <div class="field"><label>Your name (optional)</label>${staffPick('fb-name','', (State.account&&State.account.name)||'', 'Search your name…',{fallbackAll:true})}</div>
-      <label class="check-row" style="margin:6px 0 12px"><input type="checkbox" id="fb-anon"> Send anonymously (hide my name)</label>
-      <div class="field"><label>Your message</label><textarea id="fb-msg" rows="6" placeholder="Write anything you'd like the owner to know…"></textarea></div>
+      <p class="fb-intro">This is your space. Share any feedback, idea, concern or complaint <b>directly with the owner</b>. Please speak freely and honestly — your voice matters. 💚</p>
+      <div class="fb-sender">✍️ Sending as <b>${esc((State.account&&(State.account.staffName||State.account.name))||'You')}</b>${State.branch?' · MCQ '+esc(State.branch):''}</div>
+      <div class="field"><label>Your message</label><textarea id="fb-msg" rows="12" placeholder="Write anything you'd like the owner to know…"></textarea></div>
       <button class="btn primary lg block" onclick="fbSubmit()"><i class="fas fa-paper-plane"></i>&nbsp; Send privately to the owner</button>
       <p class="fb-note">🔒 Confidential — delivered only to the owner.</p>
     </div></div>`;
@@ -1569,6 +1568,7 @@ function renderIssueRecords(){
   let all=[]; regMods.forEach(id=>DB.modules[id].records.forEach(r=>all.push({mod:id,icon:DB.modules[id].icon,short:DB.modules[id].short,...r})));
   if(!isSuper()) all=all.filter(r=>r.store===State.branch);
   else if(State.superStore && State.superStore!=='ALL') all=all.filter(r=>r.store===State.superStore);   // honour the global Super store filter
+  if(isEmployee()){ const mine=(myStaff().name||(State.account&&(State.account.staffName||State.account.name))||''); all=all.filter(r=>(r.reportedBy||'')===mine); }   // staff see only their own reports
   const from=State.iss.recFrom||'', to=State.iss.recTo||'';
   all=all.filter(r=>{ const d=String(r.created||r.date||'').slice(0,10); if(from&&(!d||d<from)) return false; if(to&&(!d||d>to)) return false; return true; });
   all.sort((a,b)=>String(b.created||b.date||'').localeCompare(String(a.created||a.date||'')));
