@@ -748,11 +748,12 @@ function ckDraw(){
             photoHtml=`<div class="ck-photos" id="ck-photo-${r.i}"><div class="ck-photos-h">${photoChip(r.photo)} <span class="ck-pc ${have>=need?'ok':''}">${have}/${need}</span></div><div class="ck-slots">${slots}</div></div>`;
           }
         }
-        html+=`<div class="ck-task ${done?'done':''}" id="ck-row-${r.i}" ${isAdmin()?`ondblclick="ckEditTask(${r.i})" title="Double-click to edit / delete"`:''}>
+        const needNote = !done && !String(st.note||'').trim();   // unticked + no reason → must add a note
+        html+=`<div class="ck-task ${done?'done':''} ${needNote?'ck-need':''}" id="ck-row-${r.i}" ${isAdmin()?`ondblclick="ckEditTask(${r.i})" title="Double-click to edit / delete"`:''}>
           <button class="ck-check" onclick="ckTick(${r.i})">${done?'✓':''}</button>
-          <div class="ck-main"><div class="ck-name">${esc(r.task)}</div>
+          <div class="ck-main"><div class="ck-name">${esc(r.task)}<span class="ck-need-note" style="display:${needNote?'':'none'}">⚠️ Chưa tick — ghi lý do</span></div>
             ${r.meta.temp?ckTempBox(r,st):''}
-            <div class="ck-note-row"><input class="ck-note" placeholder="Add note / reason…" value="${esc(st.note||'')}" oninput="ckNote(${r.i},this.value)">${photoHtml}</div></div></div>`;
+            <div class="ck-note-row"><input id="ck-note-${r.i}" class="ck-note ${needNote?'needs-note':''}" placeholder="Add note / reason…" value="${esc(st.note||'')}" oninput="ckNote(${r.i},this.value)">${photoHtml}</div></div></div>`;
       });
       if(isAdmin()) html+=`<button class="ck-add-ghost" onclick="ckAddTask('${ckJS(dept)}','${ckJS(area)}')"><i class="fas fa-plus"></i> Add task</button>`;
     });
@@ -845,7 +846,9 @@ function ckUpdateSubmitBtn(){
   }else{
     btn.className='btn lg ck-locked';
     const left=[]; if(g.incompleteSections.length) left.push(...g.incompleteSections); if(!g.respOk) left.push('Responsible Person');
-    if(note){ note.className='ck-submit-note pending'; note.innerHTML=`<b>${left.length}</b> to finish before submitting — <span>${esc(left.join(', '))}</span>`; }
+    // how many tasks are simply unticked with no note (the "add a reason" case)
+    let needNote=0; g.sections.forEach(s=>s.issues.forEach(it=>{ const st=State.chk.state[it.i]||{}; if(!st.done && !String(st.note||'').trim()) needNote++; }));
+    if(note){ note.className='ck-submit-note pending'; note.innerHTML=`<b>${left.length}</b> to finish before submitting — <span>${esc(left.join(', '))}</span>${needNote?` · <b>${needNote}</b> task${needNote>1?'s':''} need a tick or a note`:''}`; }
   }
 }
 function ckTick(i){
@@ -869,10 +872,16 @@ function ckTick(i){
     return;
   }
   st.done=!st.done; const row=document.getElementById('ck-row-'+i);
-  if(row){row.classList.toggle('done',st.done);row.querySelector('.ck-check').textContent=st.done?'✓':'';}
+  if(row){row.classList.toggle('done',st.done);row.querySelector('.ck-check').textContent=st.done?'✓':'';ckNeedNoteUi(i);}
   ckProgress(); ckSaveDraft();
 }
-function ckNote(i,v){const st=State.chk.state[i]=State.chk.state[i]||{};st.note=v;ckSaveDraft();ckUpdateSubmitBtn();}
+// live-toggle the amber "needs a note" flag on a task card (no full re-render)
+function ckNeedNoteUi(i){ const st=State.chk.state[i]||{}, row=document.getElementById('ck-row-'+i); if(!row) return;
+  const need=!st.done && !String(st.note||'').trim();
+  row.classList.toggle('ck-need',need);
+  const inp=document.getElementById('ck-note-'+i); if(inp) inp.classList.toggle('needs-note',need);
+  const chip=row.querySelector('.ck-need-note'); if(chip) chip.style.display=need?'':'none'; }
+function ckNote(i,v){const st=State.chk.state[i]=State.chk.state[i]||{};st.note=v;ckNeedNoteUi(i);ckSaveDraft();ckUpdateSubmitBtn();}
 async function ckPhoto(input,i){
   const f=input.files&&input.files[0]; if(!f)return;
   const r=ckItem(DB.checklist.items[i],i), st=State.chk.state[i]=State.chk.state[i]||{};
@@ -1245,7 +1254,8 @@ function ckBlockModal(g){
 function ckJumpTo(i){ document.querySelectorAll('.ck-block-ov').forEach(n=>n.remove());
   const r=ckItem(DB.checklist.items[i],i);
   if(State.chk.area!=='ALL' && r && r.area!==State.chk.area){ State.chk.area=r.area; renderChecklist(); }
-  setTimeout(()=>{ const row=document.getElementById('ck-row-'+i); if(row){ row.scrollIntoView({behavior:'smooth',block:'center'}); row.classList.add('ck-flash'); setTimeout(()=>row.classList.remove('ck-flash'),1600); } },120);
+  setTimeout(()=>{ const row=document.getElementById('ck-row-'+i); if(row){ row.scrollIntoView({behavior:'smooth',block:'center'}); row.classList.add('ck-flash'); setTimeout(()=>row.classList.remove('ck-flash'),1600);
+    const note=document.getElementById('ck-note-'+i); if(note){ try{ note.focus({preventScroll:true}); }catch(e){ note.focus(); } } } },160);
 }
 // final confirmation — makes clear this submits the WHOLE department checklist
 function ckConfirmSubmit(g){
