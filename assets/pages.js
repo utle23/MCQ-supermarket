@@ -297,15 +297,32 @@ function empBirthdayInfo(dob){
   }catch(e){ return ''; }
 }
 function renderMyViolations(){
-  setAccent('#b45309'); setCrumb('⚖️','My Violations','Your record');
+  setAccent('#b45309'); setCrumb('⚖️','My Violations','Your standing & record');
   const rows=myRegRecords('violation').slice().sort((a,b)=>String(b.created||b.date||'').localeCompare(String(a.created||a.date||'')));
-  const body=rows.length?rows.map(r=>{
+  // current warning level = the highest escalation step reached across the staff's violations
+  const steps=(typeof DB!=='undefined'&&DB.warningSteps)||['Verbal Discussion','Written Warning','Final Warning','Termination Referral'];
+  const COL=['#f59e0b','#fb8c00','#d32f2f','#7b1b1b'];
+  const idx=rows.reduce((mx,r)=>Math.max(mx, steps.indexOf(r.step||r.status||'')), -1);
+  const level=idx>=0?steps[idx]:null, sc=idx>=0?COL[Math.min(idx,COL.length-1)]:'#0e9f6e';
+  const ladder=steps.map((s,i)=>`<div class="vio-step-pill ${i<=idx?'on':''} ${i===idx?'cur':''}" style="--sc:${COL[Math.min(i,COL.length-1)]}"><span class="vsp-dot">${i<idx?'✓':(i===idx?'●':'')}</span>${esc(s)}</div>`).join('');
+  const standing = level
+    ? `<div class="vio-standing" style="--sc:${sc}">
+         <div class="vio-standing-h"><span class="vio-standing-badge">${esc(level)}</span>
+           <div class="vio-standing-txt"><b>Your current warning level</b><small>${rows.length} violation${rows.length>1?'s':''} on record</small></div></div>
+         <div class="vio-ladder">${ladder}</div>
+         ${idx>=2?`<div class="vio-standing-warn">⚠️ This is a serious stage. Please speak with your manager as soon as possible.</div>`:''}
+       </div>`
+    : `<div class="vio-standing good"><div class="vio-standing-h"><span class="vio-standing-badge ok">✓ Good standing</span>
+         <div class="vio-standing-txt"><b>No violations on record</b><small>Keep up the great work! 👏</small></div></div></div>`;
+  const body=rows.map(r=>{
     const imgs=(r.photos||(r.photo?[r.photo]:[])).map(u=>`<img class="ba-thumb" src="${imgSrc(u)}" onclick="openLightbox('${ckJS(imgSrc(u))}')">`).join('');
-    return `<div class="fb-card"><div class="fb-card-h"><b>${esc(r.category||r.type||'Violation')}</b><span>${esc((r.date||r.created||'').slice(0,10))}${r.severity?' · '+esc(r.severity):''}</span></div>
+    const stepBadge=r.step||r.status?`<span class="badge" style="background:${COL[Math.max(0,steps.indexOf(r.step||r.status))]||'#64748b'};color:#fff">${esc(r.step||r.status)}</span>`:'';
+    return `<div class="fb-card"><div class="fb-card-h"><b>${esc(r.category||r.type||'Violation')}</b><span>${esc((r.date||r.created||'').slice(0,10))}${r.severity?' · '+esc(r.severity):''} ${stepBadge}</span></div>
       <div class="fb-msg">${esc(r.summary||r.description||r.note||r.detail||'—')}</div>${r.action?`<div class="emp-vio-action"><b>Action:</b> ${esc(r.action)}</div>`:''}${imgs?`<div class="ba-thumbs">${imgs}</div>`:''}</div>`;
-  }).join(''):'<div class="empty"><div class="e-ic">✅</div>No violations on record. Keep it up!</div>';
-  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">⚖️</div><div><h2>My Violations</h2><p>Records logged against you at MCQ ${esc((myStaff().store)||State.branch||'')}. Read-only.</p></div></div>
-    <div class="fb-list">${body}</div>`;
+  }).join('');
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">⚖️</div><div><h2>My Violations</h2><p>Your disciplinary standing at MCQ ${esc((myStaff().store)||State.branch||'')}. Read-only.</p></div></div>
+    ${standing}
+    ${rows.length?`<div class="section-title">History</div><div class="fb-list">${body}</div>`:''}`;
 }
 function renderEmployeeProfile(){
   setAccent('#475569'); setCrumb('🪪','My Profile','Keep your details up to date');
@@ -1525,6 +1542,7 @@ function renderIssueRecords(){
   const regMods=['issue','maintenance','incident','complaint'];
   let all=[]; regMods.forEach(id=>DB.modules[id].records.forEach(r=>all.push({mod:id,icon:DB.modules[id].icon,short:DB.modules[id].short,...r})));
   if(!isSuper()) all=all.filter(r=>r.store===State.branch);
+  else if(State.superStore && State.superStore!=='ALL') all=all.filter(r=>r.store===State.superStore);   // honour the global Super store filter
   const from=State.iss.recFrom||'', to=State.iss.recTo||'';
   all=all.filter(r=>{ const d=String(r.created||r.date||'').slice(0,10); if(from&&(!d||d<from)) return false; if(to&&(!d||d>to)) return false; return true; });
   all.sort((a,b)=>String(b.created||b.date||'').localeCompare(String(a.created||a.date||'')));
@@ -1535,7 +1553,7 @@ function renderIssueRecords(){
       <div class="filter f-daterange"><label>Date</label><input type="date" value="${esc(from)}" onchange="issRecDate('recFrom',this.value)"><span>→</span><input type="date" value="${esc(to)}" onchange="issRecDate('recTo',this.value)"></div>
       ${from||to?`<button class="btn sm" onclick="issRecDate('recFrom','');State.iss.recTo='';renderIssueRecords()">✕ Clear</button>`:''}
       <div class="tb-spacer"></div>${exportBtns('iss-rec-table','Report Issue Records')}</div>
-    <div class="card"><div class="card-head"><h3>${isSuper()?'All stores':esc(State.branch)} · ${all.length} reports</h3></div><div class="table-wrap"><table class="grid" id="iss-rec-table"><thead><tr><th>Ref</th><th>Register</th><th>Title</th><th>Store</th><th>Priority</th><th>Status</th><th>Date</th></tr></thead><tbody>
+    <div class="card"><div class="card-head"><h3>${isSuper()?((State.superStore&&State.superStore!=='ALL')?esc(State.superStore):'All stores'):esc(State.branch)} · ${all.length} reports</h3></div><div class="table-wrap"><table class="grid" id="iss-rec-table"><thead><tr><th>Ref</th><th>Register</th><th>Title</th><th>Store</th><th>Priority</th><th>Status</th><th>Date</th></tr></thead><tbody>
     ${all.length?all.map(r=>`<tr onclick='openDetail("${r.mod}","${esc(r.id)}","${ckJS(r.store||'')}")'><td class="cell-id">${esc(r.id)}</td><td><span class="reg-tag">${r.icon} ${esc(r.short)}</span></td><td><div class="wrap">${esc(r.title||r.equipment||r.summary||r.shortDescription||r.category||'')}</div></td><td>${esc(r.store||'')}</td><td>${(r.priority||r.severity)?badge(r.priority||r.severity):''}</td><td>${r.status?badge(r.status):''}</td><td>${esc((r.created||r.date||'').slice(0,16))}</td></tr>`).join(''):'<tr><td colspan="7"><div class="empty">No reports in this range.</div></td></tr>'}
     </tbody></table></div></div>`;
 }

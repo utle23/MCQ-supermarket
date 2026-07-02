@@ -115,11 +115,11 @@ function showLogin(notice){
       <p class="login-p">Sign in to your store operations workspace.</p>
       ${notice?`<div class="login-note"><i>⏱️</i> ${esc(notice)}</div>`:''}
       <div class="seg" id="login-mode">
-        <button class="seg-btn active" data-mode="employee">🧑‍🏭 Staff</button>
-        <button class="seg-btn" data-mode="staff">🧑‍💼 Dept Lead</button>
-        <button class="seg-btn" data-mode="admin">🛡️ Manager</button>
-        <button class="seg-btn" data-mode="super">👑 Super</button>
-        <button class="seg-btn" data-mode="ba">👓 Chú Ba</button>
+        <button class="seg-btn active" data-mode="employee"><i class="fas fa-user"></i><span>Staff</span></button>
+        <button class="seg-btn" data-mode="staff"><i class="fas fa-user-tie"></i><span>Dept Lead</span></button>
+        <button class="seg-btn" data-mode="admin"><i class="fas fa-user-shield"></i><span>Manager</span></button>
+        <button class="seg-btn" data-mode="super"><i class="fas fa-crown"></i><span>Super</span></button>
+        <button class="seg-btn" data-mode="ba"><i class="fas fa-binoculars"></i><span>Chú Ba</span></button>
       </div>
       <div id="login-store-row">
         <label class="login-lbl">Store / Branch</label>
