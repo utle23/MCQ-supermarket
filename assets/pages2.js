@@ -576,14 +576,24 @@ function structEditor(){
       <div class="field"><label>Colour</label><input type="color" value="${d.color||'#0e9f6e'}" oninput="structSet(${i},'color',this.value)"></div>
     </div>
     <div class="grid2" style="margin-top:12px">
-      <div class="field"><label>Level 2 · Staff under lead <small style="color:var(--muted)">(one per line)</small></label><textarea rows="5" oninput="structSetMembers(${i},this.value)">${esc((d.members||[]).join('\n'))}</textarea></div>
-      <div class="field"><label>Level 3 · New staff / trainees <small style="color:var(--muted)">(one per line)</small></label><textarea rows="5" oninput="structSetNewStaff(${i},this.value)">${esc((d.newStaff||[]).join('\n'))}</textarea></div>
+      <div class="field"><label>Level 2 · Staff under lead <small style="color:var(--muted)">(one per line)</small></label><textarea rows="5" oninput="structSetMembers(${i},this.value)">${esc((d.members||[]).join('\n'))}</textarea>
+        <input class="login-input" style="margin-top:6px" list="struct-staff-dl" placeholder="＋ Pick a staff member to add…" onchange="structAddMember(${i},'members',this.value);this.value='';"></div>
+      <div class="field"><label>Level 3 · New staff / trainees <small style="color:var(--muted)">(one per line)</small></label><textarea rows="5" oninput="structSetNewStaff(${i},this.value)">${esc((d.newStaff||[]).join('\n'))}</textarea>
+        <input class="login-input" style="margin-top:6px" list="struct-staff-dl" placeholder="＋ Pick a staff member to add…" onchange="structAddMember(${i},'newStaff',this.value);this.value='';"></div>
     </div>
     ${i>0?`<button class="btn sm" style="margin-top:10px;color:var(--bad);border-color:#f3c9c9" onclick="structDelDept(${i})"><i class="fas fa-trash"></i>&nbsp; Delete branch</button>`:''}
   </div></div>`;
-  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🏢</div><div><h2>Staff Structure · Live editor</h2><p>Edit departments, leads &amp; members — changes apply instantly. Add new branches/levels or rename.</p></div>
+  // one shared datalist of real staff (name + role/store) for the "pick a staff member" inputs
+  const staffOpts=(DB.staff||[]).filter(s=>s.active!==0 && (isSuper()||s.store===State.branch))
+    .map(s=>`<option value="${esc(s.name)}" label="${esc((s.role||'Staff')+(isSuper()&&s.store?' · '+s.store:''))}"></option>`).join('');
+  $('#content').innerHTML=`<datalist id="struct-staff-dl">${staffOpts}</datalist>
+    <div class="page-head"><div class="ph-ic">🏢</div><div><h2>Staff Structure · Live editor</h2><p>Edit departments, leads &amp; members — pick real staff from the dropdown or type. Changes apply instantly.</p></div>
       <div class="ph-actions"><button class="btn" onclick="structAddDept()">＋ Add department</button><button class="btn primary" onclick="structEditToggle()">✓ Done</button></div></div>
     ${card(DB.structure[0],0)}
     <div class="section-title">Departments / branches</div>
     <div class="struct-edit-grid">${DB.structure.slice(1).map((d,k)=>card(d,k+1)).join('')}</div>`;
 }
+function structAddMember(i,tier,name){ name=(name||'').trim(); if(!name||!DB.structure[i]) return;
+  const arr=DB.structure[i][tier]=DB.structure[i][tier]||[]; if(!arr.includes(name)) arr.push(name);
+  structPersist(); renderStructure(); }
+window.structAddMember=structAddMember;

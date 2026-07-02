@@ -210,7 +210,9 @@ function ckSetDate(v){ State.chk.date=v||ckTodayStr(); State.chk.editing=null; S
 /* ============================================================ SHARE YOUR THOUGHT (confidential feedback → owner) */
 function fbSubmit(){
   const name=($('#fb-name')&&$('#fb-name').value.trim())||'';
-  const msg=($('#fb-msg')&&$('#fb-msg').value.trim())||'';
+  // rich text from CKEditor when available; plain textarea otherwise
+  const html=(window.ckHtml?ckHtml('fb-msg'):'')||($('#fb-msg')?esc($('#fb-msg').value).replace(/\n/g,'<br>'):'');
+  const msg=String(html).replace(/<[^>]+>/g,' ').replace(/&nbsp;/g,' ').replace(/\s+/g,' ').trim();   // plain text for the feedback list
   const anon=$('#fb-anon')&&$('#fb-anon').checked;
   if(!msg){ toast('Please write your message first'); return; }
   const rec={ id:'FB-'+Date.now().toString(36), store:State.branch, name:anon?'(anonymous)':(name||'(unnamed)'),
@@ -219,8 +221,8 @@ function fbSubmit(){
   if(window.persist) window.persist();
   // also email the owner/office silently if recipients exist (confidential — not shown to store admin)
   try{ if(window.mcqEmail&&mcqEmail.notify) mcqEmail.notify('feedback', `Staff feedback · ${State.branch}`, `From: ${rec.name} (${rec.role})\nStore: ${State.branch}\n\n${msg}`, {}); }catch(e){}
-  // → Superadmin inbox (Ideas & Feedback), owner-only
-  try{ if(window.mcqMsgSend) mcqMsgSend({kind:'feedback', subject:`Feedback · ${State.branch}`, body_html:`<p><b>From:</b> ${esc(rec.name)} (${esc(rec.role)}) · <b>Store:</b> ${esc(State.branch)}</p><p>${esc(msg).replace(/\n/g,'<br>')}</p>`}); }catch(e){}
+  // → Superadmin inbox (Ideas & Feedback), owner-only — keep the rich HTML the staff composed
+  try{ if(window.mcqMsgSend) mcqMsgSend({kind:'feedback', subject:`Feedback · ${State.branch}`, body_html:`<p><b>From:</b> ${esc(rec.name)} (${esc(rec.role)}) · <b>Store:</b> ${esc(State.branch)}</p>`+html}); }catch(e){}
   const c=$('#content'); if(c) c.innerHTML=`<div class="fb-thanks"><div class="fb-thanks-ic">💚</div><h2>Thank you</h2><p>Your message has been sent privately to the owner. It is kept confidential.</p><button class="btn primary" onclick="renderFeedback()">Share another thought</button></div>`;
 }
 function renderFeedback(){
@@ -242,6 +244,7 @@ function renderFeedback(){
       <button class="btn primary lg block" onclick="fbSubmit()"><i class="fas fa-paper-plane"></i>&nbsp; Send privately to the owner</button>
       <p class="fb-note">🔒 Confidential — delivered only to the owner.</p>
     </div></div>`;
+  if(window.ckMount) ckMount('fb-msg');   // rich-text composer (falls back to the textarea offline)
 }
 
 /* ============================================================ EMPLOYEE — individual staff personal workspace */
@@ -566,6 +569,15 @@ function renderBaView(){
   const tot=subs.reduce((n,s)=>n+(s.total||0),0), don=subs.reduce((n,s)=>n+(s.done||0),0);
   const tempBad=subs.reduce((n,s)=>n+((s.items||[]).filter(it=>it.temp&&it.temp.inRange===false).length),0);
   const photoN=subs.reduce((n,s)=>n+((s.items||[]).reduce((m,it)=>m+((it.photos||[]).length),0)),0);
+  // cross-store "what's outstanding" — every store's not-completed tasks for the selected date/session
+  const dateSubs=(DB.checklistSubs||[]).filter(x=>x.date===b.date && (b.session==='All'||x.session===b.session));
+  const outByStore=stores.map(st=>{ const ss=dateSubs.filter(x=>x.store===st); const out=[];
+    ss.forEach(x=>(x.items||[]).forEach(it=>{ if(!it.done) out.push((x.dept?x.dept+': ':'')+it.task); }));
+    return {store:st, subs:ss.length, out}; });
+  const outPanel=`<div class="section-title">⚠️ Outstanding tasks · all stores · ${esc(b.date)}${b.session!=='All'?' · '+esc(b.session):''}</div>
+    <div class="ba-out-grid">${outByStore.map(o=>`<button class="ba-out-card ${o.out.length?'has':(o.subs?'ok':'none')}" onclick="baSetStore('${ckJS(o.store)}')">
+        <div class="ba-out-h"><b>${o.store==='Demo'?'🎬 Demo':esc(o.store)}</b><span class="badge ${o.out.length?'bad':(o.subs?'ok':'mute')}">${o.subs?(o.out.length?o.out.length+' outstanding':'✓ all done'):'no submission'}</span></div>
+        ${o.out.length?`<div class="ba-out-list">${o.out.slice(0,6).map(t=>'• '+esc(t)).join('<br>')}${o.out.length>6?'<br>…+'+(o.out.length-6)+' more':''}</div>`:''}</button>`).join('')}</div>`;
   const storeChips=stores.map(s=>`<button class="ba-store ${s===b.store?'active':''}" onclick="baSetStore('${ckJS(s)}')">${s==='Demo'?'🎬 Demo':esc(s)}</button>`).join('');
   const sessSeg=['All','Opening','Mid-afternoon','Closing'].map(x=>`<button class="seg-btn ${b.session===x?'active':''}" onclick="baSetSession('${x}')">${x==='All'?'All day':esc(x)}</button>`).join('');
   const dm=(DB.checklist&&DB.checklist.deptMeta)||{};
@@ -604,6 +616,8 @@ function renderBaView(){
       <div class="kpi tone-${tempBad?'bad':'mute'}"><div class="k-top"><div class="k-ic">🌡️</div></div><div class="k-val">${tempBad}</div><div class="k-lbl">Temp alerts</div></div>
       <div class="kpi tone-info"><div class="k-top"><div class="k-ic">📷</div></div><div class="k-val">${photoN}</div><div class="k-lbl">Photos</div></div>
     </div>
+    ${outPanel}
+    <div class="section-title">Detail · ${esc(b.store)}</div>
     <div class="ba-list">${cards||`<div class="empty"><div class="e-ic">📅</div>No checklists submitted for ${esc(b.store)} on ${esc(b.date)}.</div>`}</div>`;
 }
 function ckSubmittedFor(dept,session,date){ return (DB.checklistSubs||[]).some(x=>(isSuper()||x.store===State.branch)&&x.dept===dept&&x.session===session&&x.date===date); }
@@ -2038,11 +2052,17 @@ function exportChecklist(fmt){
   const rows=C.items.map(ckItem).filter(r=>ckStoreOk(r) && r.dept===s.dept && ckInSession(r,s.session));
   if(!rows.length){ toast('No checklist tasks to export'); return; }
   const byArea={}; rows.forEach(r=>{(byArea[r.area]=byArea[r.area]||[]).push(r);});
-  let done=0; rows.forEach(r=>{ if((State.chk.state[r.i]||{}).done) done++; });
+  let done=0; const incomplete=[];
+  rows.forEach(r=>{ const st=State.chk.state[r.i]||{}; if(st.done) done++; const why=ckTaskIssue(r,st); if(why) incomplete.push({area:r.area,task:r.task,why}); });
   const head=`<thead><tr><th style="width:36px;text-align:center">✓</th><th>Task</th><th style="width:120px">Evidence</th><th>Note</th></tr></thead>`;
   let body='<tbody>';
+  // --- Page 1 (after the cover): summary of tasks NOT completed / not filled ---
+  body+=`<tr><td colspan="4" style="background:${incomplete.length?'#fffbeb':'#f0fdf8'};font-weight:800;font-size:13px;color:${incomplete.length?'#b45309':'#0e9f6e'}">${incomplete.length?('⚠️ Outstanding — '+incomplete.length+' task(s) not completed / not filled'):'✓ All tasks completed — nothing outstanding'}</td></tr>`;
+  incomplete.forEach(x=>{ body+=`<tr><td style="text-align:center;color:#b45309">✗</td><td>${esc(x.task)}</td><td style="color:#64748b">${esc(x.area)}</td><td style="color:#b45309">${esc(x.why)}</td></tr>`; });
+  // --- Full checklist (starts on the next page) ---
+  let firstArea=true;
   Object.entries(byArea).forEach(([area,items])=>{
-    body+=`<tr><td colspan="4" style="background:#ecfdf5;font-weight:800;color:#0e9f6e">${esc(area)}</td></tr>`;
+    body+=`<tr${firstArea?' style="page-break-before:always"':''}><td colspan="4" style="background:#ecfdf5;font-weight:800;color:#0e9f6e">${esc(area)}</td></tr>`; firstArea=false;
     items.forEach(r=>{ const st=State.chk.state[r.i]||{}, ok=!!st.done;
       const need=r.photo?(r.photo.req?r.photo.min:1):0, have=(st.photos||[]).length;
       const ev=r.photo?`📷 ${have}/${need}`:'—';
@@ -3080,7 +3100,30 @@ window.mcqEmail={
     // a "customised" recipient flagged `all` receives EVERY alert from EVERY store
     const chosen=recips.filter(r=>(keys.includes(r.key)||r.all)&&r.email);
     const seen={}; return chosen.filter(r=>{ const e=String(r.email).toLowerCase(); if(seen[e])return false; seen[e]=1; return true; }); },
-  _html(title,body){ return `<div style="font-family:Arial,Helvetica,sans-serif;color:#1f2937;max-width:640px;margin:auto"><div style="background:linear-gradient(135deg,#0e9f6e,#0891b2);color:#fff;padding:16px 20px;border-radius:12px 12px 0 0"><div style="font-weight:800;font-size:18px">MCQ Supermarket</div><div style="opacity:.9;font-size:13px">${esc(title)}</div></div><div style="border:1px solid #e5e7eb;border-top:0;padding:18px 20px;border-radius:0 0 12px 12px;white-space:pre-wrap;font-size:14px;line-height:1.55">${esc(body)}</div><div style="color:#9ca3af;font-size:11px;text-align:center;margin-top:10px">Automated notification · MCQ Supermarket Operations</div></div>`; },
+  _html(title,body){
+    // professional, email-client-safe layout (all inline styles). `body` is plain text → pre-wrap.
+    const t=String(title||''); const accent = /violation|warning|cảnh cáo/i.test(t) ? '#b45309' : /issue|incident|complaint|maintenance|urgent|critical/i.test(t) ? '#dc2626' : '#0e9f6e';
+    const when=new Date().toLocaleString();
+    return `<div style="background:#f1f5f9;padding:24px 12px;font-family:'Segoe UI',Arial,Helvetica,sans-serif">
+      <div style="max-width:600px;margin:auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 6px 24px rgba(15,23,42,.10)">
+        <div style="background:linear-gradient(135deg,#0e9f6e,#0891b2);padding:22px 26px;color:#fff">
+          <table role="presentation" width="100%"><tr>
+            <td style="font-weight:800;font-size:20px;letter-spacing:.4px">MCQ&nbsp;<span style="opacity:.85;font-weight:600">SUPERMARKET</span></td>
+            <td align="right" style="font-size:11px;opacity:.9">Operations Notice</td>
+          </tr></table>
+        </div>
+        <div style="height:4px;background:${accent}"></div>
+        <div style="padding:24px 26px">
+          <div style="font-size:17px;font-weight:800;color:#0f172a;margin:0 0 4px">${esc(t)}</div>
+          <div style="height:1px;background:#e5e7eb;margin:12px 0 16px"></div>
+          <div style="white-space:pre-wrap;font-size:14px;line-height:1.65;color:#334155">${esc(body)}</div>
+        </div>
+        <div style="background:#f8fafc;border-top:1px solid #eef2f7;padding:14px 26px;color:#94a3b8;font-size:11px;line-height:1.6">
+          <b style="color:#64748b">MCQ Supermarket · Operations</b><br>
+          Automated notification · ${esc(when)} · Please do not reply to this email.
+        </div>
+      </div>
+    </div>`; },
   // frame that keeps rich HTML as-is (for the Super "email a store" composer)
   _htmlRaw(title,inner){ return `<div style="font-family:Arial,Helvetica,sans-serif;color:#1f2937;max-width:640px;margin:auto"><div style="background:linear-gradient(135deg,#0e9f6e,#0891b2);color:#fff;padding:16px 20px;border-radius:12px 12px 0 0"><div style="font-weight:800;font-size:18px">MCQ Supermarket</div><div style="opacity:.9;font-size:13px">${esc(title)}</div></div><div style="border:1px solid #e5e7eb;border-top:0;padding:18px 20px;border-radius:0 0 12px 12px;font-size:14px;line-height:1.6">${inner||''}</div><div style="color:#9ca3af;font-size:11px;text-align:center;margin-top:10px">MCQ Supermarket · sent from Head Office</div></div>`; },
   // send composed rich HTML directly (does NOT escape) — returns true if a send was attempted

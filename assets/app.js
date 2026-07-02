@@ -755,8 +755,13 @@ function field(f){
   if(f.key==='store' && !isSuper()) ctrl=`<input type="hidden" name="store" value="${esc(State.branch)}"><input value="${esc(State.branch)}" disabled>`;
   else if(f.type==='select') ctrl=`<select name="${f.key}"${rq}><option value="">-- Select --</option>${opts(f.options)}</select>`;
   else if(f.type==='staffadd'){
+    // pick ANY active staff member of the store (drivers listed first), OR type a brand-new
+    // name to register them. Used for the Delivery "driver / delivery person" field.
     const listId='dl_'+f.key; const base=(f.options||[]).slice();
-    try{ (DB.staff||[]).forEach(s=>{ if((isSuper()||s.store===State.branch) && s.active!==0 && /driv/i.test((s.role||'')+' '+(s.dept||'')) && !base.includes(s.name)) base.push(s.name); }); }catch(e){}
+    try{ const mine=(DB.staff||[]).filter(s=>(isSuper()||s.store===State.branch)&&s.active!==0);
+      mine.filter(s=>/driv/i.test((s.role||'')+' '+(s.dept||''))).forEach(s=>{ if(!base.includes(s.name)) base.push(s.name); });
+      mine.forEach(s=>{ if(!base.includes(s.name)) base.push(s.name); });
+    }catch(e){}
     ctrl=`<input list="${listId}" name="${f.key}"${rq} autocomplete="off" placeholder="Pick a name, or type a new one to add"><datalist id="${listId}">${base.map(n=>`<option value="${esc(n)}"></option>`).join('')}</datalist>`;
   }
   else if(f.type==='textarea') ctrl=`<textarea name="${f.key}"${rq} placeholder="${esc(f.placeholder||'')}"></textarea>`;
