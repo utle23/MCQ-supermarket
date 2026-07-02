@@ -1211,3 +1211,8 @@ table.jobduty td{vertical-align:top}
 .ann-body img{max-width:100%;border-radius:8px}
 .ann-photo-pick{display:inline-flex;align-items:center;gap:6px;padding:9px 14px;border:1px dashed #cbd5e1;border-radius:10px;cursor:pointer;color:#475569;font-size:13px}
 .ann-prev-img{max-height:140px;border-radius:10px;margin-top:8px}
+/* ---- Super email-a-store composer ---- */
+.email-all{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#475569;white-space:nowrap}
+.store-pick{display:flex;flex-direction:column;gap:6px;max-height:190px;overflow:auto;border:1px solid var(--line,#e5e7eb);border-radius:10px;padding:10px}
+.store-pick-row{display:flex;align-items:center;gap:8px;font-size:14px}
+.store-pick-row .muted{margin-left:auto;font-size:12px}

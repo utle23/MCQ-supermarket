@@ -393,8 +393,15 @@ function renderInbox(){
 function inboxSnippet(html){ return String(html||'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,120); }
 function inboxPaint(msgs){
   const b=$('#inbox-body'); if(!b) return;
-  if(!msgs.length){ b.innerHTML='<div class="empty"><div class="e-ic">📭</div>No messages yet.</div>'; return; }
-  b.innerHTML=`<div class="msg-list">`+msgs.map(m=>{ const km=MSG_KINDS[m.kind]||['✉️',(m.kind||'Message'),'#64748b'];
+  if(msgs) window.__inboxCache=msgs; else msgs=window.__inboxCache||[];
+  // Super/Chú Ba: filter which store (part of the global superadmin store filter)
+  let filterBar='';
+  if(seesAllStores()){ const f=window.__inboxStoreF||''; const opt=(v,l)=>`<option value="${esc(v)}" ${f===v?'selected':''}>${esc(l)}</option>`;
+    filterBar=`<div class="ann-filter"><label>Filter store</label><select onchange="inboxSetStore(this.value)">${opt('','All stores')}${(DB.stores||[]).map(s=>opt(s,s)).join('')}</select></div>`;
+    if(f) msgs=msgs.filter(m=>m.store===f);
+  }
+  if(!msgs.length){ b.innerHTML=filterBar+'<div class="empty"><div class="e-ic">📭</div>No messages here.</div>'; return; }
+  b.innerHTML=filterBar+`<div class="msg-list">`+msgs.map(m=>{ const km=MSG_KINDS[m.kind]||['✉️',(m.kind||'Message'),'#64748b'];
     return `<button class="msg-row ${m.read?'':'unread'}" onclick="inboxOpen('${ckJS(m.thread_id)}',${m.id})">
       <span class="msg-ic" style="--c:${km[2]}">${km[0]}</span>
       <span class="msg-main"><span class="msg-top"><b>${esc(m.subject||km[1])}</b>${m.read?'':'<span class="msg-dot"></span>'}</span>
@@ -448,7 +455,8 @@ function composeSend(){
   if(target==='all') payload.to_store_all=true; else if(target.indexOf('id:')===0) payload.to_staff_id=target.slice(3);
   mcqMsgSend(payload).then(r=>{ if(r&&r.ok){ toast('✓ Document sent'); mcqModalClose(); renderInbox(); } else toast('Could not send'); });
 }
-window.renderInbox=renderInbox; window.inboxOpen=inboxOpen; window.inboxReply=inboxReply;
+function inboxSetStore(v){ window.__inboxStoreF=v||''; inboxPaint(); }
+window.renderInbox=renderInbox; window.inboxOpen=inboxOpen; window.inboxReply=inboxReply; window.inboxSetStore=inboxSetStore;
 window.composeOpen=composeOpen; window.composeStoreChange=composeStoreChange; window.composeSend=composeSend;
 
 /* ============================================================ CKEditor 5 (lazy CDN, graceful fallback)
@@ -2600,6 +2608,35 @@ function mgrStoreRecipients(store){
   add((DB.emailRecipients||[]).find(r=>r.key==='mgr'));
   return out;
 }
+/* Super only: compose a rich-text email and send it to one or more stores' addresses */
+function storeEmailCompose(){
+  if(!isSuper()) return;
+  const stores=DB.stores||[];
+  const rows=stores.map(s=>{ const n=mgrStoreRecipients(s).length;
+    return `<label class="store-pick-row"><input type="checkbox" class="se-store" value="${esc(s)}" ${n?'':'disabled'}> <b>${esc(s)}</b> <span class="muted">${n?(n+' recipient'+(n>1?'s':'')):'no email set'}</span></label>`; }).join('');
+  mcqModal('📧 Email a store', `
+    <div class="field"><label>Which store(s)?</label><div class="store-pick">${rows}</div>
+      <div style="margin-top:6px"><button class="btn xs" onclick="document.querySelectorAll('.se-store:not(:disabled)').forEach(c=>c.checked=true)">Select all</button>
+        <button class="btn xs" onclick="document.querySelectorAll('.se-store').forEach(c=>c.checked=false)">Clear</button></div></div>
+    <div class="field"><label>Subject</label><input id="se-subj" placeholder="Subject line"></div>
+    <div class="field"><label>Message</label><textarea id="mail-body" rows="8" placeholder="Write your message to the store(s)…"></textarea></div>
+    <div style="display:flex;gap:10px;margin-top:10px"><button class="btn primary" onclick="storeEmailSend()"><i class="fas fa-paper-plane"></i>&nbsp; Send</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>`, {wide:true});
+  if(window.ckMount) ckMount('mail-body');
+}
+function storeEmailSend(){
+  const stores=[...document.querySelectorAll('.se-store:checked')].map(c=>c.value);
+  if(!stores.length){ toast('Pick at least one store'); return; }
+  const subj=(document.getElementById('se-subj')?.value||'').trim();
+  const body=(window.ckHtml?ckHtml('mail-body'):(document.getElementById('mail-body')?.value||''));
+  if(!subj){ toast('Add a subject'); return; }
+  if(!String(body).replace(/<[^>]+>/g,'').trim()){ toast('Write a message'); return; }
+  const to=[], seen={};
+  stores.forEach(s=>mgrStoreRecipients(s).forEach(r=>{ const e=String(r.email||'').toLowerCase(); if(e&&!seen[e]){ seen[e]=1; to.push(r); } }));
+  if(!to.length){ toast('No email addresses for the selected store(s)'); return; }
+  const sent=mcqEmail.sendHtml(to, subj, `<p style="color:#64748b;font-size:12px">To: ${esc(stores.join(', '))}</p>`+body);
+  if(sent){ toast(`📧 Emailing ${to.length} recipient(s) at ${stores.length} store(s)…`); mcqModalClose(); }
+}
+window.storeEmailCompose=storeEmailCompose; window.storeEmailSend=storeEmailSend;
 function mgrEmailVerifyNote(s,note){
   const to=mgrStoreRecipients(s.store);
   if(!to.length){ toast('No admin email set for '+s.store+' — add one in Email Notifications'); return false; }
@@ -3040,8 +3077,28 @@ window.mcqEmail={
     if(eventType==='checklist') keys=(DB.checklistEmailRoutes&&DB.checklistEmailRoutes[meta&&meta.dept])||[];
     else if(eventType==='issue') keys=(DB.issueEmailRoutes&&DB.issueEmailRoutes[meta&&meta.cat])||[];
     else keys=recips.map(r=>r.key);   // violation & others broadcast
-    return recips.filter(r=>keys.includes(r.key)&&r.email); },
+    // a "customised" recipient flagged `all` receives EVERY alert from EVERY store
+    const chosen=recips.filter(r=>(keys.includes(r.key)||r.all)&&r.email);
+    const seen={}; return chosen.filter(r=>{ const e=String(r.email).toLowerCase(); if(seen[e])return false; seen[e]=1; return true; }); },
   _html(title,body){ return `<div style="font-family:Arial,Helvetica,sans-serif;color:#1f2937;max-width:640px;margin:auto"><div style="background:linear-gradient(135deg,#0e9f6e,#0891b2);color:#fff;padding:16px 20px;border-radius:12px 12px 0 0"><div style="font-weight:800;font-size:18px">MCQ Supermarket</div><div style="opacity:.9;font-size:13px">${esc(title)}</div></div><div style="border:1px solid #e5e7eb;border-top:0;padding:18px 20px;border-radius:0 0 12px 12px;white-space:pre-wrap;font-size:14px;line-height:1.55">${esc(body)}</div><div style="color:#9ca3af;font-size:11px;text-align:center;margin-top:10px">Automated notification · MCQ Supermarket Operations</div></div>`; },
+  // frame that keeps rich HTML as-is (for the Super "email a store" composer)
+  _htmlRaw(title,inner){ return `<div style="font-family:Arial,Helvetica,sans-serif;color:#1f2937;max-width:640px;margin:auto"><div style="background:linear-gradient(135deg,#0e9f6e,#0891b2);color:#fff;padding:16px 20px;border-radius:12px 12px 0 0"><div style="font-weight:800;font-size:18px">MCQ Supermarket</div><div style="opacity:.9;font-size:13px">${esc(title)}</div></div><div style="border:1px solid #e5e7eb;border-top:0;padding:18px 20px;border-radius:0 0 12px 12px;font-size:14px;line-height:1.6">${inner||''}</div><div style="color:#9ca3af;font-size:11px;text-align:center;margin-top:10px">MCQ Supermarket · sent from Head Office</div></div>`; },
+  // send composed rich HTML directly (does NOT escape) — returns true if a send was attempted
+  sendHtml(to,subject,innerHtml){ const cfg=this.cfg(), self=this; to=(to||[]).filter(r=>r&&r.email); if(!to.length) return false;
+    const html=this._htmlRaw(subject,innerHtml);
+    if(window.MCQ_EMAIL_RELAY){
+      fetch(window.MCQ_EMAIL_RELAY,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+((window.localStorage&&localStorage.getItem('mcq_token'))||'')},
+        body:JSON.stringify({to:to.map(r=>({email:r.email,name:r.name})),subject,html,fromEmail:cfg.fromEmail,fromName:cfg.fromName})})
+        .then(r=>r.json().catch(()=>({}))).then(d=>{ const ok=!!(d&&d.ok); self.log(to,subject,ok,ok?'':((d&&d.error)||'send failed')); toast(ok?`📧 Sent to ${to.length} recipient(s)`:('📧 Not sent: '+((d&&d.error)||'check server'))); })
+        .catch(()=>{ self.log(to,subject,false,'email server unreachable'); toast('📧 Email server unreachable'); });
+      return true;
+    }
+    if(cfg.apiKey&&cfg.fromEmail){ fetch('https://api.brevo.com/v3/smtp/email',{method:'POST',headers:{'accept':'application/json','content-type':'application/json','api-key':cfg.apiKey},
+        body:JSON.stringify({sender:{name:cfg.fromName||'MCQ Supermarket',email:cfg.fromEmail},to:to.map(r=>({email:r.email,name:r.name})),subject,htmlContent:html})})
+        .then(r=>{ self.log(to,subject,r.ok,r.ok?'':('Brevo '+r.status)); toast(r.ok?`📧 Sent to ${to.length}`:'📧 Brevo error '+r.status); })
+        .catch(()=>{ self.log(to,subject,false,'CORS blocked'); toast('📧 Browser blocked Brevo — deploy on server'); });
+      return true; }
+    toast('📧 Email not configured'); return false; },
   // can we send silently?
   //  • server relay present (key on the server) → send silently by default, unless the
   //    admin explicitly chose Gmail compose or the device mail app.
@@ -3136,6 +3193,7 @@ function renderEmail(){
       <div class="avatar">${esc((r.name||'?').slice(0,1))}</div>
       <input class="login-input" style="flex:1;min-width:120px" value="${esc(r.name||'')}" placeholder="Name / role" oninput="recipSet('${r.key}','name',this.value)">
       <input class="login-input" style="flex:1.4;min-width:150px" type="email" value="${esc(r.email||'')}" placeholder="email@address.com" oninput="recipSet('${r.key}','email',this.value)">
+      ${isSuper()?`<label class="email-all" title="Receives EVERY alert from ALL stores"><input type="checkbox" ${r.all?'checked':''} onchange="recipSet('${r.key}','all',this.checked)"> 🌐 All</label>`:''}
       <button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="recipDel('${r.key}')" title="Delete recipient">🗑</button>
     </div>`).join('');
   // department-lead block (per store)
@@ -3158,7 +3216,7 @@ function renderEmail(){
   // super: daily-digest recipients (server scheduled 9pm)
   const digestCard=isSuper()?`<div class="card" style="margin-bottom:16px"><div class="card-head"><h3><i class="fas fa-clock"></i>&nbsp; Daily summary recipients (Super Admin)</h3><span class="ch-sub">Automatic 9 PM all-store PDF digest is emailed to these addresses</span></div>
       <div class="card-pad" id="digest-recips"><div class="fhint">Loading…</div></div></div>`:'';
-  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic" style="background:#e8f1fe">✉️</div><div><h2>Email Notifications</h2><p>Emails send automatically in the background via Brevo. Set who receives what below.</p></div><div class="ph-actions"><button class="btn sm" onclick="emailHistoryOpen()"><i class="fas fa-clock-rotate-left"></i>&nbsp; Sent history</button><button class="btn sm primary" onclick="emailTest()"><i class="fas fa-paper-plane"></i>&nbsp; Send test</button></div></div>
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic" style="background:#e8f1fe">✉️</div><div><h2>Email Notifications</h2><p>Emails send automatically in the background via Brevo. Set who receives what below.</p></div><div class="ph-actions">${isSuper()?`<button class="btn sm primary" onclick="storeEmailCompose()"><i class="fas fa-envelope-open-text"></i>&nbsp; Email a store</button>`:''}<button class="btn sm" onclick="emailHistoryOpen()"><i class="fas fa-clock-rotate-left"></i>&nbsp; Sent history</button><button class="btn sm primary" onclick="emailTest()"><i class="fas fa-paper-plane"></i>&nbsp; Send test</button></div></div>
     <div class="card" style="margin-bottom:16px"><div class="card-head"><h3><i class="fas fa-paper-plane"></i>&nbsp; Sending</h3><span class="ch-sub">Automatic · Brevo (server-side key)</span></div>
       <div class="card-pad"><div class="grid2">
         <div class="field"><label>From name</label><input value="${esc(cfg.fromName||'')}" oninput="emailCfgSet('fromName',this.value)" placeholder="MCQ Supermarket Notification"></div>
