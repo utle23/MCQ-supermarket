@@ -119,7 +119,7 @@ function showLogin(notice){
         <button class="seg-btn" data-mode="staff"><i class="fas fa-user-tie"></i><span>Dept Lead</span></button>
         <button class="seg-btn" data-mode="admin"><i class="fas fa-user-shield"></i><span>Manager</span></button>
         <button class="seg-btn" data-mode="super"><i class="fas fa-crown"></i><span>Super</span></button>
-        <button class="seg-btn" data-mode="ba"><i class="fas fa-binoculars"></i><span>Chú Ba</span></button>
+        <button class="seg-btn" data-mode="ba"><span>Chú Ba</span></button>
       </div>
       <div id="login-store-row">
         <label class="login-lbl">Store / Branch</label>
