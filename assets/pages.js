@@ -569,15 +569,6 @@ function renderBaView(){
   const tot=subs.reduce((n,s)=>n+(s.total||0),0), don=subs.reduce((n,s)=>n+(s.done||0),0);
   const tempBad=subs.reduce((n,s)=>n+((s.items||[]).filter(it=>it.temp&&it.temp.inRange===false).length),0);
   const photoN=subs.reduce((n,s)=>n+((s.items||[]).reduce((m,it)=>m+((it.photos||[]).length),0)),0);
-  // cross-store "what's outstanding" — every store's not-completed tasks for the selected date/session
-  const dateSubs=(DB.checklistSubs||[]).filter(x=>x.date===b.date && (b.session==='All'||x.session===b.session));
-  const outByStore=stores.map(st=>{ const ss=dateSubs.filter(x=>x.store===st); const out=[];
-    ss.forEach(x=>(x.items||[]).forEach(it=>{ if(!it.done) out.push((x.dept?x.dept+': ':'')+it.task); }));
-    return {store:st, subs:ss.length, out}; });
-  const outPanel=`<div class="section-title">⚠️ Outstanding tasks · all stores · ${esc(b.date)}${b.session!=='All'?' · '+esc(b.session):''}</div>
-    <div class="ba-out-grid">${outByStore.map(o=>`<button class="ba-out-card ${o.out.length?'has':(o.subs?'ok':'none')}" onclick="baSetStore('${ckJS(o.store)}')">
-        <div class="ba-out-h"><b>${o.store==='Demo'?'🎬 Demo':esc(o.store)}</b><span class="badge ${o.out.length?'bad':(o.subs?'ok':'mute')}">${o.subs?(o.out.length?o.out.length+' outstanding':'✓ all done'):'no submission'}</span></div>
-        ${o.out.length?`<div class="ba-out-list">${o.out.slice(0,6).map(t=>'• '+esc(t)).join('<br>')}${o.out.length>6?'<br>…+'+(o.out.length-6)+' more':''}</div>`:''}</button>`).join('')}</div>`;
   const storeChips=stores.map(s=>`<button class="ba-store ${s===b.store?'active':''}" onclick="baSetStore('${ckJS(s)}')">${s==='Demo'?'🎬 Demo':esc(s)}</button>`).join('');
   const sessSeg=['All','Opening','Mid-afternoon','Closing'].map(x=>`<button class="seg-btn ${b.session===x?'active':''}" onclick="baSetSession('${x}')">${x==='All'?'All day':esc(x)}</button>`).join('');
   const dm=(DB.checklist&&DB.checklist.deptMeta)||{};
@@ -616,8 +607,6 @@ function renderBaView(){
       <div class="kpi tone-${tempBad?'bad':'mute'}"><div class="k-top"><div class="k-ic">🌡️</div></div><div class="k-val">${tempBad}</div><div class="k-lbl">Temp alerts</div></div>
       <div class="kpi tone-info"><div class="k-top"><div class="k-ic">📷</div></div><div class="k-val">${photoN}</div><div class="k-lbl">Photos</div></div>
     </div>
-    ${outPanel}
-    <div class="section-title">Detail · ${esc(b.store)}</div>
     <div class="ba-list">${cards||`<div class="empty"><div class="e-ic">📅</div>No checklists submitted for ${esc(b.store)} on ${esc(b.date)}.</div>`}</div>`;
 }
 function ckSubmittedFor(dept,session,date){ return (DB.checklistSubs||[]).some(x=>(isSuper()||x.store===State.branch)&&x.dept===dept&&x.session===session&&x.date===date); }
@@ -1630,7 +1619,7 @@ function renderStructure(){
 /* ============================================================ STAFF MEMBERS */
 function renderStaff(){
   setAccent('#0e9f6e'); setCrumb('🧑‍🤝‍🧑','Staff Members',`${DB.staff.length} people`);
-  const rows=DB.staff.filter(s=>isSuper()||s.store===State.branch);
+  const rows=DB.staff.filter(s=> isSuper() ? (!State.superStore||State.superStore==='ALL'||s.store===State.superStore) : s.store===State.branch);
   const active=rows.filter(s=>s.active).length;
   const canAcct=!!(window.mcqStaffAccounts && (window.localStorage&&localStorage.getItem('mcq_token'))); // individual logins need the server
   const ed=State.staffEdit, roles=DB.staffRoles||['Staff'];

@@ -93,7 +93,8 @@ function me(){
 }
 function scopedRecords(mod){
   const m=DB.modules[mod]; if(!m||!m.records) return [];
-  if(isSuper()) return m.records;                 // super admin: every store
+  if(isSuper()){ const f=State.superStore;   // global Super store filter (topbar) — '' / 'ALL' = every store
+    return (f&&f!=='ALL')?m.records.filter(r=>r.store===f):m.records; }
   const s=State.branch; return m.records.filter(r=>r.store===s);  // admin + staff: own store only
 }
 
@@ -502,15 +503,23 @@ function openCount(mod){
   return recs.filter(r=>!closed.includes(r.status)).length;
 }
 function paintActive(){ $$('#nav .nav-item').forEach(el=>el.classList.toggle('active', el.dataset.mod===State.route.mod)); }
+// global Super store filter (topbar): scope every page to one store, or 'ALL'
+function superSetStore(v){ State.superStore=(v==='ALL')?'':v; try{ if(State.mgr) State.mgr.store=State.superStore||'ALL'; }catch(e){} render(); }
+window.superSetStore=superSetStore;
 
 /* ============================================================ TOPBAR */
 function buildTopbar(){
   const u=me();
   const scopeLabel=isSuper()?'All stores':State.branch;
   const roleLabel=isSuper()?'Super':State.account&&State.account.role==='ba'?'Chú Ba':State.account&&State.account.role==='admin'?'Manager':State.account&&State.account.role==='employee'?'Staff':'Dept Lead';
+  const superStoreSel = isSuper()
+    ? `<span class="tb-store-filter"><i class="fas fa-store"></i><select id="tb-store" onchange="superSetStore(this.value)" title="Filter every page by store">
+        <option value="ALL" ${(!State.superStore||State.superStore==='ALL')?'selected':''}>All stores</option>
+        ${DB.stores.map(s=>`<option value="${esc(s)}" ${State.superStore===s?'selected':''}>${esc(s)}</option>`).join('')}</select></span>`
+    : `<span class="tb-badge"><i class="fas fa-store"></i> ${esc(scopeLabel)}</span>`;
   $('#topbar-right').innerHTML = `
     ${State.branch==='Demo'?'<span class="tb-badge" style="background:#fdf2f8;color:#9d174d;border-color:#f9c9e0">🎬 Sample data</span>':''}
-    <span class="tb-badge"><i class="fas fa-store"></i> ${esc(scopeLabel)}</span>
+    ${superStoreSel}
     <span class="tb-badge"><i class="fas fa-clock"></i> idle <b id="idle-ind">30m</b></span>
     <span class="tb-badge ${isAdmin()?'badge-admin':''}"><i class="fas ${isAdmin()?'fa-shield-halved':'fa-user'}"></i> ${roleLabel}</span>
     <button class="tb-bell" onclick="cmdK()" title="Search (⌘K / Ctrl-K)"><i class="fas fa-magnifying-glass"></i></button>
