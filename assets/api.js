@@ -66,6 +66,7 @@
   window.mcqAnnList=function(){ return _authFetch('/api/announcements'); };
   window.mcqAnnPost=function(payload){ return _authFetch('/api/announcement',{method:'POST',body:JSON.stringify(payload||{})}); };
   window.mcqAnnDelete=function(id){ return _authFetch('/api/announcement/delete',{method:'POST',body:JSON.stringify({id:id})}); };
+  window.mcqAnnPin=function(id,pinned){ return _authFetch('/api/announcement/pin',{method:'POST',body:JSON.stringify({id:id,pinned:!!pinned})}); };
   // explicit delete — the per-store save MERGES (never mass-deletes), so real deletions
   // are propagated here. table: records|staff|checklist_submissions|bin_records|schedule_history
   window.mcqDeleteRecords = function(table, ids, opts){

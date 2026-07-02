@@ -86,7 +86,7 @@ CREATE TABLE IF NOT EXISTS messages (
 -- announcements (store-scoped or ALL; read-only feed for staff)
 CREATE TABLE IF NOT EXISTS announcements (
   id INTEGER PRIMARY KEY AUTOINCREMENT, store_id TEXT, title TEXT, body_html TEXT,
-  image_id TEXT, author TEXT, created_at TEXT);
+  image_id TEXT, author TEXT, created_at TEXT, pinned INTEGER DEFAULT 0);
 CREATE INDEX IF NOT EXISTS idx_audit_store ON audit_logs(store_id);
 CREATE INDEX IF NOT EXISTS idx_photos_store ON photos(store_id);
 CREATE INDEX IF NOT EXISTS idx_snap_store ON store_state_snapshots(store_id);
@@ -144,6 +144,8 @@ def init_db():
         try: conn.execute('ALTER TABLE tokens ADD COLUMN %s TEXT' % col)
         except Exception: pass
     try: conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_staffacct ON staff_accounts(store_id, staff_id)')
+    except Exception: pass
+    try: conn.execute('ALTER TABLE announcements ADD COLUMN pinned INTEGER DEFAULT 0')   # pin-to-top support
     except Exception: pass
     # seed stores
     for s in STORES:
@@ -439,12 +441,27 @@ def list_announcements(au):
     conn = connect()
     try:
         if au.get('role') in ('super', 'ba'):
-            rows = conn.execute('SELECT * FROM announcements ORDER BY id DESC LIMIT 200').fetchall()
+            rows = conn.execute('SELECT * FROM announcements ORDER BY pinned DESC, id DESC LIMIT 200').fetchall()
         else:
-            rows = conn.execute("SELECT * FROM announcements WHERE store_id=? OR store_id='ALL' ORDER BY id DESC LIMIT 200",
+            rows = conn.execute("SELECT * FROM announcements WHERE store_id=? OR store_id='ALL' ORDER BY pinned DESC, id DESC LIMIT 200",
                                 (au['store_id'],)).fetchall()
         return [{'id': r['id'], 'store': r['store_id'], 'title': r['title'], 'body_html': r['body_html'],
-                 'image_id': r['image_id'], 'author': r['author'], 'created_at': r['created_at']} for r in rows]
+                 'image_id': r['image_id'], 'author': r['author'], 'created_at': r['created_at'],
+                 'pinned': (r['pinned'] if 'pinned' in r.keys() else 0) or 0} for r in rows]
+    finally:
+        conn.close()
+
+def _ann_can_manage(au, store_id):
+    return au.get('role') == 'super' or (au.get('role') == 'admin' and store_id == au.get('store_id'))
+
+def set_announcement_pin(au, aid, pinned):
+    conn = connect()
+    try:
+        row = conn.execute('SELECT store_id FROM announcements WHERE id=?', (aid,)).fetchone()
+        if not row or not _ann_can_manage(au, row['store_id']): return False
+        conn.execute('UPDATE announcements SET pinned=? WHERE id=?', (1 if pinned else 0, aid))
+        conn.commit()
+        return True
     finally:
         conn.close()
 
@@ -453,9 +470,7 @@ def delete_announcement(au, aid):
     try:
         row = conn.execute('SELECT store_id FROM announcements WHERE id=?', (aid,)).fetchone()
         if not row: return False
-        # super may delete any; a Manager may delete only their own store's posts
-        if au.get('role') != 'super' and not (au.get('role') == 'admin' and row['store_id'] == au.get('store_id')):
-            return False
+        if not _ann_can_manage(au, row['store_id']): return False   # super any; Manager own store only
         conn.execute('DELETE FROM announcements WHERE id=?', (aid,))
         conn.commit()
         return True

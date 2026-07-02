@@ -422,10 +422,15 @@ function inboxPaint(msgs){
   // Super/Chú Ba: filter which store (part of the global superadmin store filter)
   let filterBar='';
   if(seesAllStores()){ const f=window.__inboxStoreF||''; const opt=(v,l)=>`<option value="${esc(v)}" ${f===v?'selected':''}>${esc(l)}</option>`;
-    filterBar=`<div class="ann-filter"><label>Filter store</label><select onchange="inboxSetStore(this.value)">${opt('','All stores')}${(DB.stores||[]).map(s=>opt(s,s)).join('')}</select></div>`;
+    filterBar=`<label>Filter store</label><select onchange="inboxSetStore(this.value)">${opt('','All stores')}${(DB.stores||[]).map(s=>opt(s,s)).join('')}</select>`;
     if(f) msgs=msgs.filter(m=>m.store===f);
   }
-  if(!msgs.length){ b.innerHTML=filterBar+'<div class="empty"><div class="e-ic">📭</div>No messages here.</div>'; return; }
+  // search by name / subject / message text
+  const q=String(window.__inboxQ||'').toLowerCase().trim();
+  if(q) msgs=msgs.filter(m=>((m.from_name||'')+' '+(m.subject||'')+' '+inboxSnippet(m.body_html)+' '+(m.store||'')).toLowerCase().includes(q));
+  const searchBar=`<div class="ann-filter msg-tools"><input class="msg-search" id="inbox-search" placeholder="🔍 Search name, subject or store…" value="${esc(window.__inboxQ||'')}" oninput="inboxSearch(this.value)">${filterBar}</div>`;
+  if(!msgs.length){ b.innerHTML=searchBar+'<div class="empty"><div class="e-ic">📭</div>'+(q?'No messages match your search.':'No messages here.')+'</div>'; return; }
+  filterBar=searchBar;
   const unread=msgs.filter(m=>!m.read).length;
   const head=`<div class="msg-head"><span>${msgs.length} message${msgs.length!==1?'s':''}</span>${unread?`<span class="msg-unread-pill">${unread} unread</span>`:'<span class="msg-allread">✓ all read</span>'}</div>`;
   b.innerHTML=filterBar+head+`<div class="msg-list">`+msgs.map(m=>{ const km=MSG_KINDS[m.kind]||['✉️',(m.kind||'Message'),'#64748b'];
@@ -485,6 +490,8 @@ function composeSend(){
   mcqMsgSend(payload).then(r=>{ if(r&&r.ok){ toast('✓ Document sent'); mcqModalClose(); renderInbox(); } else toast('Could not send'); });
 }
 function inboxSetStore(v){ window.__inboxStoreF=v||''; inboxPaint(); }
+function inboxSearch(v){ window.__inboxQ=v; inboxPaint(); const el=document.getElementById('inbox-search'); if(el){ el.focus(); const n=el.value.length; try{ el.setSelectionRange(n,n); }catch(e){} } }
+window.inboxSearch=inboxSearch;
 window.renderInbox=renderInbox; window.inboxOpen=inboxOpen; window.inboxReply=inboxReply; window.inboxSetStore=inboxSetStore;
 window.composeOpen=composeOpen; window.composeStoreChange=composeStoreChange; window.composeSend=composeSend;
 
@@ -552,15 +559,15 @@ function annPaint(filter){
   if(seesAllStores()){ const opt=(v,l)=>`<option value="${esc(v)}" ${f===v?'selected':''}>${esc(l)}</option>`;
     filterSel=`<div class="ann-filter"><label>Filter</label><select id="ann-filter" onchange="annPaint(this.value)">${opt('','All posts')}${opt('ALL','📢 Company-wide')}${DB.stores.map(s=>opt(s,s)).join('')}</select></div>`; }
   const rows=list.filter(a=>!f || a.store===f);
-  const cards=rows.length?rows.map(a=>{ const isAll=a.store==='ALL';
+  const cards=rows.length?rows.map(a=>{ const isAll=a.store==='ALL'; const pinned=!!a.pinned;
     const img=a.image_id?`<img class="ann-img" src="${imgSrc(a.image_id)}" onclick="openLightbox('${ckJS(imgSrc(a.image_id))}')">`:'';
-    const canDel=isSuper()||(isAdmin()&&a.store===State.branch);
+    const canManage=isSuper()||(isAdmin()&&a.store===State.branch);
     const who=String(a.author||'MCQ'); const ini=who.trim().slice(0,1).toUpperCase();
-    return `<div class="ann-card ${isAll?'all':''}">
+    return `<div class="ann-card ${isAll?'all':''} ${pinned?'pinned':''}">
       <div class="ann-head">
         <span class="ann-ava">${esc(ini)}</span>
-        <div class="ann-hmeta"><span class="ann-scope ${isAll?'all':''}">${isAll?'📢 Company-wide':('🏪 '+esc(a.store))}</span><span class="ann-meta">${esc(who)} · ${esc((a.created_at||'').slice(0,16).replace('T',' '))}</span></div>
-        ${canDel?`<button class="btn xs ann-del" onclick="annDelete(${a.id})" title="Delete">✕</button>`:''}
+        <div class="ann-hmeta"><span class="ann-scope ${isAll?'all':''}">${isAll?'📢 Company-wide':('🏪 '+esc(a.store))}</span><span class="ann-meta">${pinned?'📌 Pinned · ':''}${esc(who)} · ${esc((a.created_at||'').slice(0,16).replace('T',' '))}</span></div>
+        ${canManage?`<span class="ann-actions"><button class="btn xs ${pinned?'ann-pinned':''}" onclick="annPin(${a.id},${pinned?0:1})" title="${pinned?'Unpin':'Pin to top'}">📌</button><button class="btn xs ann-del" onclick="annDelete(${a.id})" title="Delete">✕</button></span>`:''}
       </div>
       ${a.title?`<h3 class="ann-title">${esc(a.title)}</h3>`:''}${img}<div class="ann-body">${safeHtml(a.body_html)}</div></div>`;
   }).join(''):'<div class="empty"><div class="e-ic">📣</div>No announcements yet.</div>';
@@ -589,11 +596,20 @@ function annPost(){
   const store=document.getElementById('ann-store')?.value||State.branch;
   const title=(document.getElementById('ann-title')?.value||'').trim();
   const body=(window.ckHtml?ckHtml('ann-body'):(document.getElementById('ann-body')?.value||''));
-  if(!title && !String(body).replace(/<[^>]+>/g,'').trim() && !_annPhoto){ toast('Add a title, message or photo'); return; }
-  mcqAnnPost({store, title, body_html:body, image_id:_annPhoto||null}).then(r=>{ if(r&&r.ok){ toast('📣 Announcement posted'); _annPhoto=null; mcqModalClose(); renderAnnouncements(); } else toast('Could not post'); });
+  const hasText=!!String(body).replace(/<[^>]+>/g,'').trim();
+  const hasImg=/<img/i.test(body)||!!_annPhoto;   // an image (in the editor OR the upload) is valid content — no title/heading required
+  if(!title && !hasText && !hasImg){ toast('Add a title, a message, or a photo'); return; }
+  const photo=_annPhoto; _annPhoto=null;
+  mcqModalClose();                     // close instantly — don't make the user wait for the server
+  toast('📣 Posting…');
+  Promise.resolve(mcqAnnPost({store, title, body_html:body, image_id:photo||null})).then(r=>{
+    toast(r&&r.ok?'📣 Announcement posted':'Could not post — please try again');
+    if(State.route&&State.route.mod==='announcements') renderAnnouncements();
+  }).catch(()=>toast('Could not post — please try again'));
 }
 function annDelete(id){ if(!confirm('Delete this announcement for everyone?')) return; mcqAnnDelete(id).then(r=>{ if(r&&r.ok){ toast('Deleted'); renderAnnouncements(); } else toast('Not allowed'); }); }
-window.renderAnnouncements=renderAnnouncements; window.annPaint=annPaint; window.annCompose=annCompose; window.annPhotoPick=annPhotoPick; window.annPost=annPost; window.annDelete=annDelete;
+function annPin(id,pinned){ if(!window.mcqAnnPin) return; mcqAnnPin(id,pinned).then(r=>{ if(r&&r.ok){ toast(pinned?'📌 Pinned':'Unpinned'); renderAnnouncements(); } else toast('Not allowed'); }); }
+window.renderAnnouncements=renderAnnouncements; window.annPaint=annPaint; window.annCompose=annCompose; window.annPhotoPick=annPhotoPick; window.annPost=annPost; window.annDelete=annDelete; window.annPin=annPin;
 
 /* ============================================================ CHÚ BA — read-only checklist viewer (all stores) */
 function baSetStore(v){ State.ba.store=v; renderBaView(); }

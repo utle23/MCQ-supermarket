@@ -1353,3 +1353,10 @@ html,body{max-width:100%}
 .fb-form #fb-msg{min-height:220px}
 /* keep images inserted in ANY CKEditor a sane size while composing */
 .ck-content img{max-height:280px;height:auto}
+/* ---- Announcement pin + inbox search ---- */
+.ann-actions{margin-left:auto;display:flex;gap:6px}
+.ann-card.pinned{border-left-color:#f59e0b;background:linear-gradient(180deg,#fffdf5,#fff)}
+.ann-pinned{background:#fef3c7 !important;border-color:#fde68a !important}
+.msg-tools{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.msg-search{flex:1;min-width:190px;border:1px solid var(--line,#e5e7eb);border-radius:10px;padding:10px 13px;font:inherit;background:#fff}
+.msg-search:focus{outline:none;border-color:#0891b2;box-shadow:0 0 0 3px rgba(8,145,178,.14)}

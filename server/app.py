@@ -173,6 +173,14 @@ def announcement_delete():
     if not ok: abort(403)
     return jsonify(ok=True)
 
+@api.route('/api/announcement/pin', methods=['POST'])
+def announcement_pin():
+    au = require_auth(); require_write(au)
+    d = request.get_json(force=True, silent=True) or {}
+    ok = db.set_announcement_pin(au, d.get('id'), bool(d.get('pinned')))
+    if not ok: abort(403)
+    return jsonify(ok=True)
+
 # ---------- store list / summary ----------
 @api.route('/api/stores')
 def stores():
