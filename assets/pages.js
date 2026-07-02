@@ -484,26 +484,23 @@ window.composeOpen=composeOpen; window.composeStoreChange=composeStoreChange; wi
    textarea keeps working, so composing/replying never breaks (offline-safe). */
 const _ckInst={};
 let _ckLoadP=null;
-const CKE_CDN='https://cdn.ckeditor.com/ckeditor5/40.2.0/super-build/ckeditor.js';
+// Predefined CLASSIC build — self-contained (bold/italic/headings/links/lists/quote/table/
+// media/image + undo/redo). Reliable: no licence, no plugin-dependency errors (the super-build
+// threw on create() because removing CloudServices broke CKBoxUtils, so it silently fell back
+// to the textarea and never actually mounted).
+const CKE_CDN='https://cdn.ckeditor.com/ckeditor5/40.2.0/classic/ckeditor.js';
 function ensureCKE(){
-  if(window.CKEDITOR && window.CKEDITOR.ClassicEditor) return Promise.resolve(window.CKEDITOR);
+  if(window.ClassicEditor) return Promise.resolve(window.ClassicEditor);
   if(_ckLoadP) return _ckLoadP;
-  _ckLoadP=(window.mcqLoadScript?mcqLoadScript(CKE_CDN):Promise.reject()).then(()=>window.CKEDITOR||null).catch(()=>{ _ckLoadP=null; return null; });
+  _ckLoadP=(window.mcqLoadScript?mcqLoadScript(CKE_CDN):Promise.reject()).then(()=>window.ClassicEditor||null).catch(()=>{ _ckLoadP=null; return null; });
   return _ckLoadP;
 }
-// plugins in the super-build that need a licence / server (removed so create() never throws)
-const CKE_REMOVE=['RealTimeCollaborativeComments','RealTimeCollaborativeTrackChanges','RealTimeCollaborativeRevisionHistory','RealTimeCollaborativeEditing','PresenceList','Comments','TrackChanges','TrackChangesData','RevisionHistory','Pagination','WProofreader','MathType','SlashCommand','Template','DocumentOutline','FormatPainter','TableOfContents','CaseChange','AIAssistant','MultiLevelList','PasteFromOfficeEnhanced','ExportPdf','ExportWord','ImportWord','CKBox','CKFinder','EasyImage','CloudServices'];
 function ckMount(elId){
   const el=document.getElementById(elId); if(!el || _ckInst[elId]) return;
-  ensureCKE().then(CK=>{
-    const Editor=CK&&(CK.ClassicEditor||CK.Editor); const node=document.getElementById(elId);
-    if(!Editor||!node) return;   // no CDN → keep the textarea
-    Editor.create(node, {
-      removePlugins:CKE_REMOVE,
-      toolbar:{items:['undo','redo','|','heading','|','fontFamily','fontSize','fontColor','fontBackgroundColor','|','bold','italic','underline','strikethrough','|','link','bulletedList','numberedList','todoList','|','alignment','outdent','indent','|','blockQuote','insertTable','horizontalLine','specialCharacters','|','removeFormat'],shouldNotGroupWhenFull:true},
-      image:{toolbar:['imageTextAlternative','imageStyle:inline','imageStyle:block']},
-      table:{contentToolbar:['tableColumn','tableRow','mergeTableCells']}
-    }).then(ed=>{ _ckInst[elId]=ed; }).catch(()=>{ /* fallback: textarea stays usable */ });
+  ensureCKE().then(Editor=>{
+    const node=document.getElementById(elId);
+    if(!Editor||!node) return;   // no CDN / offline → keep the plain textarea
+    Editor.create(node).then(ed=>{ _ckInst[elId]=ed; }).catch(()=>{ /* fallback: textarea stays usable */ });
   });
 }
 function ckRead(elId){ const ed=_ckInst[elId]; try{ if(ed) return ed.getData(); }catch(e){} const el=document.getElementById(elId); return el?el.value:''; }
