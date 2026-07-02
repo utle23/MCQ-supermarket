@@ -421,13 +421,17 @@ function inboxPaint(msgs){
     if(f) msgs=msgs.filter(m=>m.store===f);
   }
   if(!msgs.length){ b.innerHTML=filterBar+'<div class="empty"><div class="e-ic">📭</div>No messages here.</div>'; return; }
-  b.innerHTML=filterBar+`<div class="msg-list">`+msgs.map(m=>{ const km=MSG_KINDS[m.kind]||['✉️',(m.kind||'Message'),'#64748b'];
+  const unread=msgs.filter(m=>!m.read).length;
+  const head=`<div class="msg-head"><span>${msgs.length} message${msgs.length!==1?'s':''}</span>${unread?`<span class="msg-unread-pill">${unread} unread</span>`:'<span class="msg-allread">✓ all read</span>'}</div>`;
+  b.innerHTML=filterBar+head+`<div class="msg-list">`+msgs.map(m=>{ const km=MSG_KINDS[m.kind]||['✉️',(m.kind||'Message'),'#64748b'];
+    const who=String(m.from_name||m.from_role||'?'); const ini=who.trim().slice(0,1).toUpperCase();
     return `<button class="msg-row ${m.read?'':'unread'}" onclick="inboxOpen('${ckJS(m.thread_id)}',${m.id})">
-      <span class="msg-ic" style="--c:${km[2]}">${km[0]}</span>
-      <span class="msg-main"><span class="msg-top"><b>${esc(m.subject||km[1])}</b>${m.read?'':'<span class="msg-dot"></span>'}</span>
-        <span class="msg-sub"><span class="badge mute">${km[1]}</span> from ${esc(m.from_name||m.from_role||'')}${isSuper()&&m.store?(' · '+esc(m.store)):''}</span>
+      <span class="msg-ava" style="--c:${km[2]}">${esc(ini)}<span class="msg-ava-k">${km[0]}</span></span>
+      <span class="msg-main">
+        <span class="msg-top"><b class="msg-subj">${esc(m.subject||km[1])}</b><span class="msg-kind" style="--c:${km[2]}">${km[1]}</span></span>
+        <span class="msg-sub">${esc(who)}${isSuper()&&m.store?(' · '+esc(m.store)):''}</span>
         <span class="msg-snip">${esc(inboxSnippet(m.body_html))}</span></span>
-      <span class="msg-time">${esc(relTime(m.created_at))}</span></button>`; }).join('')+`</div>`;
+      <span class="msg-side"><span class="msg-time">${esc(relTime(m.created_at))}</span>${m.read?'':'<span class="msg-dot"></span>'}</span></button>`; }).join('')+`</div>`;
 }
 function inboxOpen(threadId,msgId){
   if(msgId&&window.mcqMsgRead) mcqMsgRead(msgId).then(r=>{ window.__inboxUnread=(r&&r.unread)||0; if(window.buildSidebar) buildSidebar(); });
@@ -546,7 +550,14 @@ function annPaint(filter){
   const cards=rows.length?rows.map(a=>{ const isAll=a.store==='ALL';
     const img=a.image_id?`<img class="ann-img" src="${imgSrc(a.image_id)}" onclick="openLightbox('${ckJS(imgSrc(a.image_id))}')">`:'';
     const canDel=isSuper()||(isAdmin()&&a.store===State.branch);
-    return `<div class="ann-card"><div class="ann-head"><span class="ann-scope ${isAll?'all':''}">${isAll?'📢 Company-wide':('🏪 '+esc(a.store))}</span><span class="ann-meta">${esc(a.author||'')} · ${esc((a.created_at||'').slice(0,16).replace('T',' '))}</span>${canDel?`<button class="btn xs ann-del" onclick="annDelete(${a.id})" title="Delete">✕</button>`:''}</div>${a.title?`<h3 class="ann-title">${esc(a.title)}</h3>`:''}${img}<div class="ann-body">${safeHtml(a.body_html)}</div></div>`;
+    const who=String(a.author||'MCQ'); const ini=who.trim().slice(0,1).toUpperCase();
+    return `<div class="ann-card ${isAll?'all':''}">
+      <div class="ann-head">
+        <span class="ann-ava">${esc(ini)}</span>
+        <div class="ann-hmeta"><span class="ann-scope ${isAll?'all':''}">${isAll?'📢 Company-wide':('🏪 '+esc(a.store))}</span><span class="ann-meta">${esc(who)} · ${esc((a.created_at||'').slice(0,16).replace('T',' '))}</span></div>
+        ${canDel?`<button class="btn xs ann-del" onclick="annDelete(${a.id})" title="Delete">✕</button>`:''}
+      </div>
+      ${a.title?`<h3 class="ann-title">${esc(a.title)}</h3>`:''}${img}<div class="ann-body">${safeHtml(a.body_html)}</div></div>`;
   }).join(''):'<div class="empty"><div class="e-ic">📣</div>No announcements yet.</div>';
   feed.innerHTML=filterSel+`<div class="ann-list">${cards}</div>`;
 }
@@ -3119,12 +3130,12 @@ function waCopy(){ navigator.clipboard?.writeText($('#wa-msg').value); toast('Su
 /* ============================================================ EMAIL SENDING (copies the restaurant: Brevo HTTP API + Gmail-compose / mailto) */
 window.mcqEmail={
   cfg(){ const c=DB.emailConfig||(DB.emailConfig={channel:'brevo',apiKey:'',fromEmail:'mcqcafe.notify@gmail.com',fromName:'MCQ Supermarket Notification'}); c.channel='brevo'; return c; },
-  recipients(eventType,meta){ const recips=DB.emailRecipients||[]; let keys;
-    if(eventType==='checklist') keys=(DB.checklistEmailRoutes&&DB.checklistEmailRoutes[meta&&meta.dept])||[];
-    else if(eventType==='issue') keys=(DB.issueEmailRoutes&&DB.issueEmailRoutes[meta&&meta.cat])||[];
-    else keys=recips.map(r=>r.key);   // violation & others broadcast
+  recipients(eventType,meta){ const recips=DB.emailRecipients||[]; let chosen;
+    if(eventType==='checklist'){ const keys=(DB.checklistEmailRoutes&&DB.checklistEmailRoutes[meta&&meta.dept])||[]; chosen=recips.filter(r=>(keys.includes(r.key)||r.all)&&r.email); }
+    else if(eventType==='issue'){ const keys=(DB.issueEmailRoutes&&DB.issueEmailRoutes[meta&&meta.cat])||[]; chosen=recips.filter(r=>(keys.includes(r.key)||r.all)&&r.email); }
+    else if(eventType==='violation'){ chosen=recips.filter(r=>(r.vio!==false||r.all)&&r.email); }   // per-recipient violation opt-in (default on)
+    else chosen=recips.filter(r=>r.email);   // feedback & other → all recipients
     // a "customised" recipient flagged `all` receives EVERY alert from EVERY store
-    const chosen=recips.filter(r=>(keys.includes(r.key)||r.all)&&r.email);
     const seen={}; return chosen.filter(r=>{ const e=String(r.email).toLowerCase(); if(seen[e])return false; seen[e]=1; return true; }); },
   _html(title,body){
     // professional, email-client-safe layout (all inline styles). `body` is plain text → pre-wrap.
@@ -3229,42 +3240,37 @@ function emailCfgSet(f,v){ mcqEmail.cfg()[f]=v; if(window.persist) window.persis
 function emailCfgChannel(v){ emailCfgSet('channel',v); renderEmail(); }
 function emailTest(){ mcqEmail.test(); }
 function renderEmail(){
-  setAccent('#1565c0'); setCrumb('✉️','Email Notifications','Customise who gets which alerts');
+  setAccent('#1565c0'); setCrumb('✉️','Email Notifications','One place — violation, report-issue & checklist alerts');
   const cfg=mcqEmail.cfg();
   const recips=DB.emailRecipients||[], cats=DB.issueCategories||{}, groups=DB.issueGroups||[];
-  const cards=recips.map(r=>{
-    const myN=Object.keys(cats).filter(k=>(DB.issueEmailRoutes[k]||[]).includes(r.key)).length;
-    const open=State.emailOpen===r.key;
-    const dd=open?`<div class="email-dd">${groups.map(g=>{const inG=Object.entries(cats).filter(([k,c])=>c.group===g); return inG.length?`<div class="email-grp">${esc(g)}</div><div class="email-cats">`+inG.map(([k,c])=>{const on=(DB.issueEmailRoutes[k]||[]).includes(r.key);return `<label class="email-cat"><input type="checkbox" ${on?'checked':''} onchange="issEmailToggle('${k}','${r.key}',this.checked);emailRefreshCount('${r.key}')"><i class="fas ${c.icon}" style="color:${c.color}"></i> ${esc(c.label)}</label>`;}).join('')+`</div>`:'';}).join('')}</div>`:'';
-    return `<div class="card email-card"><div class="email-row">
-        <div class="avatar">${esc(r.name.slice(0,1))}</div>
-        <div class="email-info"><b>${esc(r.name)}</b><small>${esc(r.email)}</small></div>
-        <span class="badge info" id="email-cnt-${r.key}">${myN} categories</span>
-        <button class="btn sm" onclick="emailToggleDD('${r.key}')">Customise ${open?'▲':'▾'}</button>
-      </div>${dd}</div>`;
-  }).join('');
   const chkDepts=(DB.checklist&&DB.checklist.depts)||[], dm=(DB.checklist&&DB.checklist.deptMeta)||{};
-  DB.checklistEmailRoutes=DB.checklistEmailRoutes||{};
-  const chkCards=recips.map(r=>{
-    const n=chkDepts.filter(d=>(DB.checklistEmailRoutes[d]||[]).includes(r.key)).length;
-    const open=State.emailOpenChk===r.key;
-    const dd=open?`<div class="email-dd"><div class="email-cats">${chkDepts.map(d=>{const on=(DB.checklistEmailRoutes[d]||[]).includes(r.key), meta=dm[d]||{}; return `<label class="email-cat"><input type="checkbox" ${on?'checked':''} onchange="chkEmailToggle('${ckJS(d)}','${r.key}',this.checked);emailRefreshChkCount('${r.key}')"><i class="fas ${meta.icon||'fa-list-check'}" style="color:${meta.color||'#0e9f6e'}"></i> ${esc(d)}</label>`;}).join('')}</div></div>`:'';
-    return `<div class="card email-card"><div class="email-row">
-        <div class="avatar">${esc(r.name.slice(0,1))}</div>
-        <div class="email-info"><b>${esc(r.name)}</b><small>${esc(r.email)}</small></div>
-        <span class="badge ok" id="chkmail-cnt-${r.key}">${n} checklists</span>
-        <button class="btn sm" onclick="emailToggleChk('${r.key}')">Customise ${open?'▲':'▾'}</button>
+  DB.checklistEmailRoutes=DB.checklistEmailRoutes||{}; DB.issueEmailRoutes=DB.issueEmailRoutes||{};
+  const relayOn=!!window.MCQ_EMAIL_RELAY;
+  // ONE unified recipient list — each person: name/email + a Customise panel covering
+  // Violation + Report-Issue categories + Checklist departments (no more split sections).
+  const unifiedList=recips.map(r=>{
+    const open=State.emailOpen===r.key; const c=emailRecipCount(r.key);
+    const dd=open?`<div class="email-dd">
+      <label class="email-cat vio"><input type="checkbox" ${r.vio!==false?'checked':''} onchange="recipSet('${r.key}','vio',this.checked);emailRefreshCount('${r.key}')"><i class="fas fa-gavel" style="color:#b45309"></i> <b>Violation alerts</b></label>
+      <div class="email-grp">Report Issue — categories</div>
+      ${groups.map(g=>{const inG=Object.entries(cats).filter(([k,cc])=>cc.group===g); return inG.length?`<div class="email-cats">`+inG.map(([k,cc])=>{const on=(DB.issueEmailRoutes[k]||[]).includes(r.key);return `<label class="email-cat"><input type="checkbox" ${on?'checked':''} onchange="issEmailToggle('${k}','${r.key}',this.checked);emailRefreshCount('${r.key}')"><i class="fas ${cc.icon}" style="color:${cc.color}"></i> ${esc(cc.label)}</label>`;}).join('')+`</div>`:'';}).join('')}
+      <div class="email-grp">Checklist — departments</div>
+      <div class="email-cats">${chkDepts.map(d=>{const on=(DB.checklistEmailRoutes[d]||[]).includes(r.key), meta=dm[d]||{}; return `<label class="email-cat"><input type="checkbox" ${on?'checked':''} onchange="chkEmailToggle('${ckJS(d)}','${r.key}',this.checked);emailRefreshCount('${r.key}')"><i class="fas ${meta.icon||'fa-list-check'}" style="color:${meta.color||'#0e9f6e'}"></i> ${esc(d)}</label>`;}).join('')}</div>
+    </div>`:'';
+    return `<div class="card email-card"><div class="email-row" style="gap:8px">
+        <div class="avatar">${esc((r.name||'?').slice(0,1))}</div>
+        <input class="login-input" style="flex:1;min-width:110px" value="${esc(r.name||'')}" placeholder="Name / role" oninput="recipSet('${r.key}','name',this.value)">
+        <input class="login-input" style="flex:1.3;min-width:140px" type="email" value="${esc(r.email||'')}" placeholder="email@address.com" oninput="recipSet('${r.key}','email',this.value)">
+        ${r.staff?'<span class="badge mute" title="Staff member">staff</span>':''}
+        ${isSuper()?`<label class="email-all" title="Receives EVERY alert from ALL stores"><input type="checkbox" ${r.all?'checked':''} onchange="recipSet('${r.key}','all',this.checked)"> 🌐 All</label>`:''}
+        <span class="badge info" id="email-cnt-${r.key}">${c.total} alert${c.total!==1?'s':''}</span>
+        <button class="btn sm" onclick="emailToggleDD('${r.key}')">Customise ${open?'▲':'▾'}</button>
+        <button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="recipDel('${r.key}')" title="Delete recipient">🗑</button>
       </div>${dd}</div>`;
   }).join('');
-  const relayOn=!!window.MCQ_EMAIL_RELAY;
-  // editable recipient rows (name + email + delete)
-  const recipEditRows=recips.map(r=>`<div class="email-row" style="gap:8px">
-      <div class="avatar">${esc((r.name||'?').slice(0,1))}</div>
-      <input class="login-input" style="flex:1;min-width:120px" value="${esc(r.name||'')}" placeholder="Name / role" oninput="recipSet('${r.key}','name',this.value)">
-      <input class="login-input" style="flex:1.4;min-width:150px" type="email" value="${esc(r.email||'')}" placeholder="email@address.com" oninput="recipSet('${r.key}','email',this.value)">
-      ${isSuper()?`<label class="email-all" title="Receives EVERY alert from ALL stores"><input type="checkbox" ${r.all?'checked':''} onchange="recipSet('${r.key}','all',this.checked)"> 🌐 All</label>`:''}
-      <button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="recipDel('${r.key}')" title="Delete recipient">🗑</button>
-    </div>`).join('');
+  // staff (with an email) you can add as recipients — default to violation alerts only
+  const staffWithEmail=(DB.staff||[]).filter(s=>s.email && (isSuper()?(!State.superStore||State.superStore==='ALL'||s.store===State.superStore):s.store===State.branch));
+  const staffAdd=`<span class="recip-staff-add"><input class="login-input" list="recip-staff-dl" placeholder="＋ Add staff (violation alerts)…" onchange="recipAddStaffPick(this.value);this.value='';" style="min-width:230px"><datalist id="recip-staff-dl">${staffWithEmail.map(s=>`<option value="${esc(s.name)}" label="${esc(s.email)}${isSuper()&&s.store?' · '+esc(s.store):''}"></option>`).join('')}</datalist></span>`;
   // department-lead block (per store)
   const leadStore=isSuper()?(State.emailLeadStore||DB.stores[0]):State.branch;
   const leadStorePicker=isSuper()?`<select class="login-input" style="max-width:220px" onchange="emailLeadStore(this.value)">${(DB.stores||[]).map(s=>`<option ${s===leadStore?'selected':''}>${esc(s)}</option>`).join('')}</select>`:'';
@@ -3293,21 +3299,13 @@ function renderEmail(){
       </div>
       <div class="rail-tip" style="margin-top:12px">📨 Emails are sent <b>automatically and silently</b> through the server (Brevo). No API key needed here — it lives safely on the server. Use <b>Sent history</b> to confirm delivery.</div>
       </div></div>
-    <div class="card" style="margin-bottom:16px"><div class="card-head"><h3><i class="fas fa-user-shield"></i>&nbsp; Store Admin · verify-note recipient</h3><span class="ch-sub">${isSuper()?'When a store’s checklist is verified with a note, it is emailed to that store’s admin.':'When a '+esc(State.branch)+' checklist is verified with a note, it is emailed to this store admin.'}</span></div>
-      <div class="card-pad"><div class="grid2">
-        <div class="field"><label>Store admin name</label><input value="${esc(cfg.managerName||'')}" oninput="emailCfgSet('managerName',this.value)" placeholder="Store admin name"></div>
-        <div class="field"><label>Store admin email</label><input type="email" value="${esc(cfg.managerEmail||'')}" oninput="emailCfgSet('managerEmail',this.value)" placeholder="admin@store.com"></div>
-      </div>
-      <div class="rail-tip" style="margin-top:12px">🔒 Per-store setting — staff flagged <b>Admin</b> with an email also receive these.</div>
-      </div></div>
     ${digestCard}
-    <div class="rail-tip" style="margin-bottom:16px;background:var(--bad-bg);border-color:#f3c9c9">⚠️ <b>Violation alerts</b> are sent to <b>all recipients</b> by default — no per-category opt-out.</div>
-    <div class="card" style="margin-bottom:16px"><div class="card-head"><h3>📇 Recipients</h3><span class="ch-sub">${recips.length} people · edit name/email or add</span></div>
-      <div class="card-pad">${recipEditRows||'<div class="fhint">No recipients yet.</div>'}<button class="btn sm primary" style="margin-top:10px" onclick="recipAdd()">＋ Add recipient</button></div></div>
-    <div class="section-title">Report Issue · who receives which category</div>
-    <div class="email-list">${cards||'<div class="empty">No recipients.</div>'}</div>
-    <div class="section-title" style="margin-top:24px">Checklist submissions · who receives which checklist</div>
-    <div class="email-list">${chkCards||'<div class="empty">No recipients.</div>'}</div>
+    <div class="card" style="margin-bottom:16px"><div class="card-head"><h3>📇 Recipients</h3><span class="ch-sub">${recips.length} people · one place for violation + report-issue + checklist alerts</span></div>
+      <div class="card-pad">
+        <div class="email-list">${unifiedList||'<div class="fhint">No recipients yet.</div>'}</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px"><button class="btn sm primary" onclick="recipAdd()">＋ Add recipient</button>${staffAdd}</div>
+        <div class="fhint" style="margin-top:10px">Tap <b>Customise</b> on a person to choose exactly which alerts they get — <b>Violation</b>, Report-Issue categories, and Checklist departments, all in one place. Staff added here receive <b>violation alerts</b> by default.</div>
+      </div></div>
     <div class="section-title" style="margin-top:24px">Department leaders · verified-note recipients ${leadStorePicker}</div>
     <p class="fhint" style="margin:-4px 0 12px">When a manager verifies a checklist with an assessment note, the leader(s) below for that department receive a branded PDF report. ${isSuper()?'Pick a store above — each store has its own leaders.':'These are for <b>'+esc(State.branch)+'</b>.'}</p>
     ${leadBlocks||'<div class="empty">No checklist departments.</div>'}
@@ -3362,7 +3360,18 @@ function digestRenderInline(){ const el=document.getElementById('digest-recips')
   el.innerHTML=(State.digestEmails.length?State.digestEmails.map((e,i)=>`<div class="email-row" style="gap:8px;padding:6px 0"><input class="login-input" style="flex:1" type="email" value="${esc(e)}" placeholder="superadmin@email.com" oninput="digestSet(${i},this.value)"><button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="digestDel(${i})">🗑</button></div>`).join(''):'<div class="fhint">No recipients yet.</div>')
     +`<button class="btn sm primary" style="margin-top:8px" onclick="digestAdd()">＋ Add email</button>`; }
 function emailToggleDD(k){ State.emailOpen=State.emailOpen===k?null:k; renderEmail(); }
-function emailRefreshCount(k){ const cats=DB.issueCategories||{}; const n=Object.keys(cats).filter(c=>(DB.issueEmailRoutes[c]||[]).includes(k)).length; const el=document.getElementById('email-cnt-'+k); if(el) el.textContent=n+' categories'; }
+// unified count = violation (if on) + report-issue categories + checklist departments
+function emailRecipCount(k){ const cats=DB.issueCategories||{}, depts=(DB.checklist&&DB.checklist.depts)||[]; const r=(DB.emailRecipients||[]).find(x=>x.key===k)||{};
+  const ic=Object.keys(cats).filter(c=>((DB.issueEmailRoutes||{})[c]||[]).includes(k)).length;
+  const cc=depts.filter(d=>((DB.checklistEmailRoutes||{})[d]||[]).includes(k)).length;
+  const v=(r.vio!==false)?1:0; return {ic,cc,v,total:ic+cc+v}; }
+function emailRefreshCount(k){ const c=emailRecipCount(k); const el=document.getElementById('email-cnt-'+k); if(el) el.textContent=c.total+(c.total!==1?' alerts':' alert'); }
+// add a staff member (with an email) as a recipient — default: violation alerts only
+function recipAddStaffPick(name){ name=(name||'').trim(); const s=(DB.staff||[]).find(x=>x.name===name && x.email); if(!s){ toast('Pick a staff member who has an email'); return; } recipAddStaff(s.name,s.email); }
+function recipAddStaff(name,email){ DB.emailRecipients=DB.emailRecipients||[];
+  if(DB.emailRecipients.some(r=>String(r.email||'').toLowerCase()===String(email).toLowerCase())){ toast(name+' is already a recipient'); return; }
+  DB.emailRecipients.push({key:'r'+Date.now().toString(36),name,email,vio:true,staff:true}); if(window.persist) window.persist(); renderEmail(); toast('✓ '+name+' added — violation alerts'); }
+window.recipAddStaffPick=recipAddStaffPick; window.recipAddStaff=recipAddStaff; window.emailRecipCount=emailRecipCount;
 function emailToggleChk(k){ State.emailOpenChk=State.emailOpenChk===k?null:k; renderEmail(); }
 function emailRefreshChkCount(k){ const depts=(DB.checklist&&DB.checklist.depts)||[]; const n=depts.filter(d=>(DB.checklistEmailRoutes[d]||[]).includes(k)).length; const el=document.getElementById('chkmail-cnt-'+k); if(el) el.textContent=n+' checklists'; }
 function chkEmailToggle(dept,rk,on){ const a=DB.checklistEmailRoutes[dept]=DB.checklistEmailRoutes[dept]||[]; const i=a.indexOf(rk); if(on&&i<0)a.push(rk); if(!on&&i>=0)a.splice(i,1); if(window.persist) window.persist(); }

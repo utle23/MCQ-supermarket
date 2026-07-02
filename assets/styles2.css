@@ -1315,3 +1315,32 @@ html,body{max-width:100%}
 .vio-step-pill.on{color:#fff;background:var(--sc);border-color:var(--sc)}
 .vio-step-pill.cur{box-shadow:0 0 0 3px color-mix(in srgb,var(--sc) 25%,transparent);transform:scale(1.04)}
 .vio-standing-warn{margin-top:12px;background:#fef2f2;border:1px solid #fecaca;color:#b91c1c;font-size:13px;font-weight:600;padding:9px 12px;border-radius:10px}
+/* ============ Inbox — professional redesign ============ */
+.msg-head{display:flex;align-items:center;justify-content:space-between;margin:2px 2px 12px;font-size:12.5px;color:#64748b;font-weight:600}
+.msg-unread-pill{background:#0891b2;color:#fff;font-weight:800;font-size:11px;padding:3px 11px;border-radius:999px;box-shadow:0 3px 10px rgba(8,145,178,.3)}
+.msg-allread{color:#0e9f6e;font-weight:700}
+.msg-list{display:flex;flex-direction:column;gap:10px}
+.msg-row{display:flex;align-items:flex-start;gap:13px;width:100%;text-align:left;background:#fff;border:1px solid var(--line,#e5e7eb);border-radius:15px;padding:13px 15px;cursor:pointer;transition:transform .16s,box-shadow .16s,border-color .16s,background .16s}
+.msg-row:hover{border-color:#0891b2;box-shadow:0 8px 22px rgba(8,145,178,.13);transform:translateY(-2px)}
+.msg-row.unread{background:linear-gradient(90deg,#f0fbff,#ffffff 60%);border-color:#bae6fd}
+.msg-ava{position:relative;flex:0 0 auto;width:46px;height:46px;border-radius:13px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:17px;color:#fff;background:linear-gradient(135deg,var(--c,#0891b2),color-mix(in srgb,var(--c,#0891b2) 55%,#0f172a));box-shadow:0 4px 12px color-mix(in srgb,var(--c,#0891b2) 32%,transparent)}
+.msg-ava-k{position:absolute;right:-6px;bottom:-6px;width:22px;height:22px;border-radius:50%;background:#fff;border:1px solid var(--line,#e5e7eb);display:flex;align-items:center;justify-content:center;font-size:12px;box-shadow:0 2px 5px rgba(0,0,0,.12)}
+.msg-main{flex:1;min-width:0;display:flex;flex-direction:column;gap:3px}
+.msg-top{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.msg-subj{font-size:14.5px;color:#1f2937;font-weight:600}
+.msg-row.unread .msg-subj{font-weight:800}
+.msg-kind{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:var(--c,#64748b);background:color-mix(in srgb,var(--c,#64748b) 12%,#fff);border:1px solid color-mix(in srgb,var(--c,#64748b) 30%,#fff);padding:2px 8px;border-radius:999px}
+.msg-sub{font-size:12px;color:#64748b}
+.msg-snip{font-size:13px;color:#475569;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.msg-side{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-end;gap:7px}
+.msg-time{font-size:11.5px;color:#94a3b8;white-space:nowrap}
+.msg-dot{width:10px;height:10px;border-radius:50%;background:#0891b2;box-shadow:0 0 0 3px rgba(8,145,178,.18)}
+/* ============ Announcements — professional redesign ============ */
+.ann-card{border-left:4px solid #1d4ed8}
+.ann-card.all{border-left-color:#7c3aed}
+.ann-head{display:flex;align-items:center;gap:12px}
+.ann-ava{flex:0 0 auto;width:42px;height:42px;border-radius:12px;background:linear-gradient(135deg,#0e9f6e,#0891b2);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:17px;box-shadow:0 4px 12px rgba(14,159,110,.28)}
+.ann-card.all .ann-ava{background:linear-gradient(135deg,#7c3aed,#a855f7);box-shadow:0 4px 12px rgba(124,58,237,.3)}
+.ann-hmeta{display:flex;flex-direction:column;gap:4px;flex:1;min-width:0}
+.ann-del{margin-left:auto}
+.ann-title{margin:12px 0 8px;font-size:19px;font-weight:800;color:#111827}
