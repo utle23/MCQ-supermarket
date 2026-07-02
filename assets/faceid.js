@@ -58,7 +58,7 @@ window.MCQFace = (function(){
 async function faceEnrollInApp(){
   if(!window.PublicKeyCredential){ toast('This device does not support Face ID (WebAuthn).'); return; }
   var acct=(window.State&&State.account)||{}, role=acct.role||'staff', branch=acct.branch||'';
-  var base = role==='super'?'Head Office':(role==='admin'?branch+' Admin':branch+' Staff');
+  var base = role==='super'?'Head Office':(role==='admin'?branch+' Manager':branch+' Dept Lead');
   // many people can enrol at the same branch — ask WHO this Face ID belongs to so they're
   // easy to tell apart later. Default suggests the next number so names never collide.
   var scope = role==='super'?'':branch;

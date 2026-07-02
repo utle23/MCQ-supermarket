@@ -13,7 +13,10 @@ const esc = s => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&
 const isAdmin = ()=> State.account && (State.account.role==='admin' || State.account.role==='super');
 const isSuper = ()=> State.account && State.account.role==='super';
 const isBa = ()=> State.account && State.account.role==='ba';   // Chú Ba — read-only checklist viewer (all stores)
+const isEmployee = ()=> State.account && State.account.role==='employee';   // individual staff account
 const seesAllStores = ()=> isSuper() || isBa();
+/* Display labels — internal role strings are unchanged (admin/staff/super/ba/employee) */
+function roleName(role){ return role==='super'?'Super Admin':role==='ba'?'Chú Ba':role==='admin'?'Manager':role==='staff'?'Department Lead':role==='employee'?'Staff':'Staff'; }
 function logoHTML(cls){ return `<span class="mcq-logo ${cls||''}"><img src="assets/mcq-logo-exact.png" alt="MCQ Supermarket logo"></span>`; }
 function recordInScope(r){ return isSuper() || !!(r && r.store===State.branch); }
 function storeForWrite(store){ return isSuper() ? (store || State.branch) : State.branch; }
@@ -84,7 +87,7 @@ const toneHex=l=>TONE_HEX[toneOf(l)];
 /* ---------- current user / scope ---------- */
 function me(){
   const a=State.account||{name:'Guest',role:'staff',branch:'Morley'};
-  const roleLabel = a.role==='super'?'Super Admin':a.role==='admin'?'Store Admin':'Store Staff';
+  const roleLabel = roleName(a.role);
   return { name:a.name, role:roleLabel,
     scope:isSuper()?'All stores':a.branch, store:a.branch, initials:a.initials||'?', kind:isAdmin()?'ho':'store' };
 }
@@ -111,8 +114,8 @@ function showLogin(notice){
       <p class="login-p">Sign in to your store operations workspace.</p>
       ${notice?`<div class="login-note"><i>⏱️</i> ${esc(notice)}</div>`:''}
       <div class="seg" id="login-mode">
-        <button class="seg-btn active" data-mode="staff">🧑‍💼 Staff</button>
-        <button class="seg-btn" data-mode="admin">🛡️ Admin</button>
+        <button class="seg-btn active" data-mode="staff">🧑‍💼 Dept Lead</button>
+        <button class="seg-btn" data-mode="admin">🛡️ Manager</button>
         <button class="seg-btn" data-mode="super">👑 Super</button>
         <button class="seg-btn" data-mode="ba">👓 Chú Ba</button>
       </div>
@@ -158,8 +161,9 @@ function updateLoginHint(){ const el=$('#login-hint'); if(!el) return; const mod
   const row=$('#login-store-row'); if(row) row.style.display=(mode==='super'||mode==='ba')?'none':'block';
   el.innerHTML = mode==='super' ? `👑 Super Admin — all stores &amp; cross-store compare`
     : mode==='ba' ? `👓 Chú Ba — view checklist results across all stores (read-only)`
-    : mode==='admin' ? `🛡️ Admin access — ${esc(branch||'this store')} only`
-    : `🧑‍💼 Staff sign-in — ${esc(branch||'your store')}`; }
+    : mode==='admin' ? `🛡️ Manager — ${esc(branch||'this store')} only`
+    : mode==='employee' ? `🧑‍🏭 Staff — enter your numeric password`
+    : `🧑‍💼 Department Lead — ${esc(branch||'your store')}`; }
 function doLogin(){
   const pw=$('#login-pw').value.trim(), branch=$('#login-branch').value, mode=loginMode();
   $('#login-err').textContent='';
@@ -303,7 +307,7 @@ function maybeStartRouteSync(){
   }
 }
 async function loginAs(role, branch){
-  const name = role==='super' ? 'Head Office' : role==='ba' ? 'Chú Ba' : role==='admin' ? (branch+' Admin') : (branch+' Staff');
+  const name = role==='super' ? 'Head Office' : role==='ba' ? 'Chú Ba' : role==='admin' ? (branch+' Manager') : (branch+' Dept Lead');
   const initials = role==='super' ? 'HO' : role==='ba' ? 'CB' : branch.slice(0,2).toUpperCase();
   State.account={ name, role, branch, initials };
   State.branch=branch; State.role=role==='staff'?'store':'ho';
@@ -466,7 +470,7 @@ function paintActive(){ $$('#nav .nav-item').forEach(el=>el.classList.toggle('ac
 function buildTopbar(){
   const u=me();
   const scopeLabel=isSuper()?'All stores':State.branch;
-  const roleLabel=isSuper()?'Super':isAdmin()?'Admin':'Staff';
+  const roleLabel=isSuper()?'Super':State.account&&State.account.role==='ba'?'Chú Ba':State.account&&State.account.role==='admin'?'Manager':State.account&&State.account.role==='employee'?'Staff':'Dept Lead';
   $('#topbar-right').innerHTML = `
     ${State.branch==='Demo'?'<span class="tb-badge" style="background:#fdf2f8;color:#9d174d;border-color:#f9c9e0">🎬 Sample data</span>':''}
     <span class="tb-badge"><i class="fas fa-store"></i> ${esc(scopeLabel)}</span>
