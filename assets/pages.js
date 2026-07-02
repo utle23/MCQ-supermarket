@@ -1485,6 +1485,7 @@ function checklistExportMenu(){
       <button onclick="ckSharePDF('Opening')">☀️ Opening — share PDF</button>
       <button onclick="ckSharePDF('Mid-afternoon')">🌤️ Mid-afternoon — share PDF</button>
       <button onclick="ckSharePDF('Closing')">🌙 Closing — share PDF</button>
+      ${isSuper()?`<button onclick="ckAllStoresPDF()">🏪 All-stores report (PDF)</button>`:''}
     </div></div>
    <div class="exp-dd"><button class="btn sm exp-trigger" onclick="expToggle(this,event)"><i class="fas fa-file-export"></i>&nbsp; Export <i class="fas fa-caret-down"></i></button>
     <div class="exp-menu">
@@ -1493,6 +1494,59 @@ function checklistExportMenu(){
       <button onclick="exportChecklist('excel')"><i class="fas fa-file-excel"></i> Excel</button>
       <button onclick="exportChecklist('word')"><i class="fas fa-file-word"></i> Word</button>
     </div></div>`;
+}
+/* Super Admin: one branded PDF covering EVERY store's submitted checklists for a date,
+   with an overall cover, a per-store cover with stats, incomplete items and photos. */
+async function ckAllStoresPDF(){
+  toast('Building all-stores report…');
+  try{ if(window.ensureJsPDF) await ensureJsPDF(); }catch(e){}
+  if(!(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine not ready — try again'); return; }
+  const date=(State.chk&&State.chk.date)||new Date().toISOString().slice(0,10);
+  const subs=(DB.checklistSubs||[]).filter(s=>s.date===date);
+  if(!subs.length){ toast('No checklists submitted on '+date); return; }
+  const stores=[...new Set(subs.map(s=>s.store))].sort();
+  const urls=[]; subs.forEach(s=>(s.items||[]).forEach(it=>(it.photos||[]).forEach(u=>urls.push(u))));
+  const pmap={}; await Promise.all([...new Set(urls)].slice(0,140).map(async u=>{ const d=await ckImgData(imgSrc(u),1200); if(d) pmap[u]=d; }));
+  const { jsPDF }=window.jspdf; const doc=new jsPDF({unit:'pt',format:'a4'});
+  const PW=doc.internal.pageSize.getWidth(), PH=doc.internal.pageSize.getHeight(), M=40; let y=0;
+  const ensure=h=>{ if(y+h>PH-40){ doc.addPage(); y=44; } };
+  const totalTasks=subs.reduce((n,s)=>n+(s.total||0),0), doneTasks=subs.reduce((n,s)=>n+(s.done||0),0);
+  const tempBad=subs.reduce((n,s)=>n+((s.items||[]).filter(it=>it.temp&&it.temp.inRange===false).length),0);
+  // ---- overall cover ----
+  doc.setFillColor(14,159,110); doc.rect(0,0,PW,PH,'F'); doc.setFillColor(11,125,143); doc.rect(0,PH-84,PW,84,'F');
+  if(MCQ_LOGO_URL){ try{ doc.addImage(MCQ_LOGO_URL,'PNG',PW/2-40,PH/2-176,80,80); }catch(e){} }
+  doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(27); doc.text('MCQ Supermarket',PW/2,PH/2-70,{align:'center'});
+  doc.setFontSize(15); doc.text('All-Stores Checklist Report',PW/2,PH/2-44,{align:'center'});
+  doc.setFont('helvetica','normal'); doc.setFontSize(12); doc.text(date+'   ·   '+stores.length+' store(s)',PW/2,PH/2-20,{align:'center'});
+  const tiles=[['Stores',String(stores.length)],['Checklists',String(subs.length)],['Tasks done',doneTasks+'/'+totalTasks],['Temp alerts',String(tempBad)]];
+  const tw=120,gap=12,span=tiles.length*tw+(tiles.length-1)*gap,sx=PW/2-span/2,ty=PH/2+6;
+  tiles.forEach((t,i)=>{ const x=sx+i*(tw+gap); doc.setFillColor(255,255,255); doc.roundedRect(x,ty,tw,58,8,8,'F');
+    doc.setTextColor(i===3&&tempBad?185:14,i===3&&tempBad?28:159,i===3&&tempBad?28:110); doc.setFont('helvetica','bold'); doc.setFontSize(17); doc.text(String(t[1]),x+tw/2,ty+30,{align:'center'});
+    doc.setTextColor(100); doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.text(t[0],x+tw/2,ty+46,{align:'center'}); });
+  doc.setTextColor(255); doc.setFontSize(9); doc.text('Generated '+new Date().toLocaleString()+'  ·  MCQ International',PW/2,PH-32,{align:'center'});
+  // ---- per store ----
+  stores.forEach(store=>{
+    doc.addPage(); y=44;
+    const ss=subs.filter(s=>s.store===store);
+    const sTot=ss.reduce((n,s)=>n+(s.total||0),0), sDone=ss.reduce((n,s)=>n+(s.done||0),0), sBad=ss.reduce((n,s)=>n+((s.items||[]).filter(it=>it.temp&&it.temp.inRange===false).length),0);
+    doc.setFillColor(14,159,110); doc.rect(0,0,PW,64,'F');
+    let tx=M; if(MCQ_LOGO_URL){ try{ doc.addImage(MCQ_LOGO_URL,'PNG',M,12,42,42); tx=M+54; }catch(e){} }
+    doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(16); doc.text(String(store),tx,30);
+    doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.text(date+'  ·  '+sDone+'/'+sTot+' tasks done  ·  '+sBad+' temp alert(s)',tx,48);
+    y=84;
+    ss.forEach(s=>{
+      ensure(24); doc.setFillColor(236,253,245); doc.roundedRect(M,y,PW-2*M,20,4,4,'F'); doc.setTextColor(15,118,110); doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text(String(s.dept)+' · '+String(s.session)+'   ('+(s.done||0)+'/'+(s.total||0)+' · '+(s.progress||0)+'%)',M+8,y+14); y+=26;
+      const out=(s.items||[]).filter(it=>!it.done);
+      if(out.length){ ensure(14); doc.setTextColor(185,28,28); doc.setFont('helvetica','bold'); doc.setFontSize(9.5); doc.text('Incomplete ('+out.length+'):',M+8,y+9); y+=13;
+        doc.setTextColor(80); doc.setFont('helvetica','normal'); doc.setFontSize(9);
+        out.slice(0,25).forEach(it=>{ const l=doc.splitTextToSize('• '+String(it.task)+(it.note?('  — '+it.note):''),PW-2*M-16); ensure(l.length*11); doc.text(l,M+14,y+8); y+=l.length*11; }); y+=6;
+      } else { ensure(12); doc.setTextColor(21,128,61); doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.text('✓ All tasks completed.',M+8,y+8); y+=14; }
+      const ph=(s.items||[]).reduce((a,it)=>a.concat((it.photos||[])),[]).map(u=>pmap[u]).filter(Boolean);
+      if(ph.length){ const box=120,th=90,gp=8; let x=M+8; ensure(th+10); ph.slice(0,12).forEach(d=>{ if(x+box>PW-M){ x=M+8; y+=th+gp; ensure(th+10); } const ar=(d.w&&d.h)?d.w/d.h:4/3; let iw=box,ih=iw/ar; if(ih>th){ ih=th; iw=ih*ar; } try{ doc.addImage(d.data,'JPEG',x,y,iw,ih); }catch(e){} doc.setDrawColor(210); doc.rect(x,y,iw,ih); x+=box+gp; }); y+=th+14; }
+    });
+  });
+  const n=doc.internal.getNumberOfPages(); for(let i=2;i<=n;i++){ doc.setPage(i); doc.setFontSize(8); doc.setTextColor(150); doc.text('MCQ Supermarket · All-stores checklist report · Confidential',M,PH-16); doc.text('Page '+i+' / '+n,PW-M,PH-16,{align:'right'}); }
+  const blob=doc.output('blob'); expDownload(blob,'MCQ_AllStores_Checklists_'+date+'.pdf'); toast('📄 All-stores report saved');
 }
 function ckHexToRgb(hex){ const m=/^#?([0-9a-f]{6})$/i.exec(hex||''); if(!m) return {r:14,g:159,b:110}; const n=parseInt(m[1],16); return {r:(n>>16)&255,g:(n>>8)&255,b:n&255}; }
 function ckImgData(url,max,quality){ max=max||1400; quality=quality||0.9; return new Promise(res=>{ const img=new Image(); img.onload=()=>{ const s=Math.min(1,max/Math.max(img.width||max,img.height||max)); const w=Math.max(1,Math.round((img.width||max)*s)), h=Math.max(1,Math.round((img.height||max)*s)); try{ const c=document.createElement('canvas'); c.width=w; c.height=h; const ctx=c.getContext('2d'); ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high'; ctx.drawImage(img,0,0,w,h); res({data:c.toDataURL('image/jpeg',quality),w,h}); }catch(e){ res(null); } }; img.onerror=()=>res(null); img.src=url; }); }
@@ -1516,6 +1570,23 @@ async function ckSharePDF(session){
   const { jsPDF }=window.jspdf; const doc=new jsPDF({unit:'pt',format:'a4',orientation:'landscape'});
   const PW=doc.internal.pageSize.getWidth(), PH=doc.internal.pageSize.getHeight(), M=40; let y=96;
   const ensure=h=>{ if(y+h>PH-44){ doc.addPage(); y=44; } };
+  // ---- branded cover page with statistics ----
+  (function cover(){
+    const total=rows.length; let dn=0; rows.forEach(r=>{ const st=State.chk.state[r.i]||{}; if(st.done) dn++; });
+    doc.setFillColor(14,159,110); doc.rect(0,0,PW,PH,'F');
+    doc.setFillColor(11,125,143); doc.rect(0,PH-90,PW,90,'F');
+    if(MCQ_LOGO_URL){ try{ doc.addImage(MCQ_LOGO_URL,'PNG',PW/2-40,PH/2-158,80,80); }catch(e){} }
+    doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(30); doc.text('MCQ Supermarket',PW/2,PH/2-52,{align:'center'});
+    doc.setFontSize(17); doc.text('Operations Checklist Report',PW/2,PH/2-24,{align:'center'});
+    doc.setFont('helvetica','normal'); doc.setFontSize(13); doc.text(store+'    ·    '+session+'    ·    '+date,PW/2,PH/2+2,{align:'center'});
+    const tiles=[['Tasks done',dn+'/'+total],['Complete',(total?Math.round(dn/total*100):0)+'%'],['Temp alerts',String(outCount)],['Incomplete',String(total-dn)]];
+    const tw=150,gap=16,span=tiles.length*tw+(tiles.length-1)*gap,sx=PW/2-span/2,ty=PH/2+34;
+    tiles.forEach((t,i)=>{ const x=sx+i*(tw+gap); doc.setFillColor(255,255,255); doc.roundedRect(x,ty,tw,60,9,9,'F');
+      doc.setTextColor(i===2&&outCount?185:14,i===2&&outCount?28:159,i===2&&outCount?28:110); doc.setFont('helvetica','bold'); doc.setFontSize(21); doc.text(String(t[1]),x+tw/2,ty+31,{align:'center'});
+      doc.setTextColor(100); doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.text(t[0],x+tw/2,ty+48,{align:'center'}); });
+    doc.setTextColor(255); doc.setFontSize(9.5); doc.text('Generated '+new Date().toLocaleString()+'  ·  MCQ International',PW/2,PH-34,{align:'center'});
+    doc.addPage();
+  })();
   function header(){
     doc.setFillColor(14,159,110); doc.rect(0,0,PW,78,'F');
     let tx=M; if(MCQ_LOGO_URL){ try{ doc.addImage(MCQ_LOGO_URL,'PNG',M,15,48,48); tx=M+60; }catch(e){} }
@@ -1945,7 +2016,7 @@ function histTextOk(r){ const q=staffNorm(histState().q||''); return !q||staffNo
 function histPhotos(list){ return (list||[]).filter(Boolean); }
 function histStrip(photos){
   photos=histPhotos(photos).slice(0,5);
-  return photos.length?`<div class="hist-photos">${photos.map(p=>`<img src="${imgSrc(p)}" alt="">`).join('')}</div>`:'<div class="hist-no-photo">No photo evidence</div>';
+  return photos.length?`<div class="hist-photos">${photos.map(p=>`<img src="${imgSrc(p)}" alt="" style="cursor:zoom-in" onclick="event.stopPropagation();openLightbox('${ckJS(imgSrc(p))}')">`).join('')}</div>`:'<div class="hist-no-photo">No photo evidence</div>';
 }
 function histChecklistRows(){
   const h=histState();
@@ -1977,13 +2048,13 @@ function histOpenBin(id){
   const r=((DB.binAdmin&&DB.binAdmin.records)||[]).find(x=>x.id===id); if(!r) return;
   const checks=(r.checklist||[]).map(c=>`<div class="hist-line done"><div><b>✓ ${esc(c.task)}</b><span>Completed</span></div></div>`).join('');
   $('#drawer').innerHTML=`<div class="drawer-head"><div class="dh-ic">🗑️</div><div><div style="font-weight:840;font-size:16px">Bin record · ${esc(r.day)}</div><div style="color:var(--muted);font-size:12.5px">${esc(r.store)} · ${esc(r.date)} · ${esc(r.id)}</div></div><button class="x-btn" onclick="closeDrawer()">✕</button></div>
-    <div class="drawer-body hist-drawer"><div class="hist-summary"><span><b>${esc(r.staffName)}</b> Staff</span><span><b>${esc(r.binQty)}</b> Bins</span><span><b>${esc((r.created||'').slice(0,16).replace('T',' '))}</b> Time</span></div>${r.photo?`<a href="${imgSrc(r.photo)}" target="_blank" rel="noopener"><img class="hist-hero-photo" src="${imgSrc(r.photo)}" alt=""></a>`:''}${checks}</div>`;
+    <div class="drawer-body hist-drawer"><div class="hist-summary"><span><b>${esc(r.staffName)}</b> Staff</span><span><b>${esc(r.binQty)}</b> Bins</span><span><b>${esc((r.created||'').slice(0,16).replace('T',' '))}</b> Time</span></div>${r.photo?`<img class="hist-hero-photo" style="cursor:zoom-in" src="${imgSrc(r.photo)}" alt="" onclick="openLightbox('${ckJS(imgSrc(r.photo))}')">`:''}${checks}</div>`;
   $('#drawer').classList.add('open'); $('#drawer-mask').classList.add('open');
 }
 function histOpenSchedule(id){
   const r=(DB.scheduleHistory||[]).find(x=>x.id===id); if(!r) return;
   $('#drawer').innerHTML=`<div class="drawer-head"><div class="dh-ic">${r.type==='maintenance'?'🔧':'🧽'}</div><div><div style="font-weight:840;font-size:16px">${esc(r.task)}</div><div style="color:var(--muted);font-size:12.5px">${esc(r.store)} · ${esc(r.date)} · ${esc(r.id)}</div></div><button class="x-btn" onclick="closeDrawer()">✕</button></div>
-    <div class="drawer-body hist-drawer"><div class="hist-summary"><span><b>${esc(r.staffName)}</b> Completed by</span><span><b>${esc(r.dept||'')}</b> Department</span><span><b>${esc(r.day)}</b> Day</span><span><b>${esc((r.created||'').slice(0,16).replace('T',' '))}</b> Time</span></div>${r.photo?`<a href="${imgSrc(r.photo)}" target="_blank" rel="noopener"><img class="hist-hero-photo" src="${imgSrc(r.photo)}" alt=""></a>`:''}${r.note?`<div class="hist-note">${esc(r.note)}</div>`:''}${isAdmin()?`<button class="btn sm" onclick="schedDeleteHistory('${ckJS(r.id)}')"><i class="fas fa-trash"></i> Delete record</button>`:''}</div>`;
+    <div class="drawer-body hist-drawer"><div class="hist-summary"><span><b>${esc(r.staffName)}</b> Completed by</span><span><b>${esc(r.dept||'')}</b> Department</span><span><b>${esc(r.day)}</b> Day</span><span><b>${esc((r.created||'').slice(0,16).replace('T',' '))}</b> Time</span></div>${r.photo?`<img class="hist-hero-photo" style="cursor:zoom-in" src="${imgSrc(r.photo)}" alt="" onclick="openLightbox('${ckJS(imgSrc(r.photo))}')">`:''}${r.note?`<div class="hist-note">${esc(r.note)}</div>`:''}${isAdmin()?`<button class="btn sm" onclick="schedDeleteHistory('${ckJS(r.id)}')"><i class="fas fa-trash"></i> Delete record</button>`:''}</div>`;
   $('#drawer').classList.add('open'); $('#drawer-mask').classList.add('open');
 }
 function renderHistory(){
@@ -2521,8 +2592,8 @@ function renderPhotos(){
   const html=Object.entries(groups).map(([k,photos])=>{
     const [dept,area]=k.split('||'), meta=(DB.checklist.deptMeta||{})[dept]||{};
     return `<div class="pg-section card"><div class="card-head"><h3><span class="chk-dot" style="background:${meta.color||'#0891b2'}"></span>${esc(dept)} · ${esc(area)}</h3><span class="ch-sub">${photos.length} photo${photos.length!==1?'s':''}</span></div>
-      <div class="photo-grid">${photos.map(p=>`<a class="photo-tile real" href="${imgSrc(p.src)}" target="_blank" rel="noopener" style="background-image:linear-gradient(transparent,rgba(0,0,0,.62)),url('${imgSrc(p.src)}')">
-        <span class="pt-ic">📷</span><div class="pt-cap">${esc(p.task)}<small>${esc(p.store)} · ${esc(p.session||p.source)} · ${esc(p.date||'')}</small>${p.by?`<small>By ${esc(p.by)}</small>`:''}</div></a>`).join('')}</div></div>`;
+      <div class="photo-grid">${photos.map(p=>`<div class="photo-tile real" style="cursor:zoom-in;background-image:linear-gradient(transparent,rgba(0,0,0,.62)),url('${imgSrc(p.src)}')" onclick="openLightbox('${ckJS(imgSrc(p.src))}')">
+        <span class="pt-ic">🔍</span><div class="pt-cap">${esc(p.task)}<small>${esc(p.store)} · ${esc(p.session||p.source)} · ${esc(p.date||'')}</small>${p.by?`<small>By ${esc(p.by)}</small>`:''}</div></div>`).join('')}</div></div>`;
   }).join('');
   $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🖼️</div><div><h2>Photo Gallery</h2><p>Browse photo evidence captured against checklist tasks and issue reports.</p></div>
     <div class="ph-actions">
