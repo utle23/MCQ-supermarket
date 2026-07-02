@@ -108,6 +108,15 @@ function staffSelectOptions(dept,current,placeholder,opts){
   const curOpt=cur&&!seen.has(cur)?`<option selected>${esc(cur)}</option>`:'';
   return `<option value="">${esc(placeholder||'— Select staff —')}</option>${curOpt}${rows.map(s=>`<option value="${esc(s.name)}" ${s.name===cur?'selected':''}>${esc(s.name)}${isSuper()?` · ${esc(s.store)}`:''}${s.role?` · ${esc(s.role)}`:''}</option>`).join('')}`;
 }
+/* Searchable staff picker (type-to-filter via input+datalist). Reads exactly like a
+   <select> ($('#id').value). Use everywhere a staff name is chosen. */
+function staffPickOptions(dept,opts){ const rows=dept?staffForDept(dept,opts):staffScopeList();
+  return rows.map(s=>`<option value="${esc(s.name)}">${isSuper()&&s.store?(s.store+' · '):''}${s.role?esc(s.role):''}</option>`).join(''); }
+function staffPick(id,dept,current,placeholder,opts){ opts=opts||{}; const on=opts.onchange?` onchange="${opts.onchange}"`:''; const oi=opts.oninput?` oninput="${opts.oninput}"`:'';
+  return `<input id="${id}" class="staff-pick login-input" list="${id}-dl" value="${esc(current||'')}" placeholder="${esc(placeholder||'Search staff…')}" autocomplete="off"${on}${oi}><datalist id="${id}-dl">${staffPickOptions(dept,opts)}</datalist>`; }
+function staffPickRefresh(id,dept,opts){ const dl=document.getElementById(id+'-dl'); if(dl) dl.innerHTML=staffPickOptions(dept,opts); }
+function staffNamesScoped(dept,opts){ const rows=dept?staffForDept(dept,opts):staffScopeList(); return rows.map(s=>s.name); }
+function staffByName(name){ return (DB.staff||[]).find(s=>s.name===name && (isSuper()||s.store===State.branch)) || (DB.staff||[]).find(s=>s.name===name); }
 function staffDisplayForDept(dept,current){
   const cur=String(current||'').trim();
   const actual=cur && staffScopeList().some(s=>s.name===cur);
@@ -1006,7 +1015,7 @@ function issFormBody(c,mod){
   const prioLbl=mod==='complaint'||mod==='incident'?'Severity':'Priority';
   const prioHint=mod==='complaint'?'<div class="fhint">Low → Minor · Normal → Moderate · High / Urgent → Major</div>':'';
   const nameStore=`<div class="grid2">
-       <div class="field"><label>${mod==='incident'||mod==='complaint'?'Submitted by':'Your name'} <span class="req">*</span></label><select id="iss-name">${staffSelectOptions('',selName,'— Select your name —',{fallbackAll:true})}</select></div>
+       <div class="field"><label>${mod==='incident'||mod==='complaint'?'Submitted by':'Your name'} <span class="req">*</span></label>${staffPick('iss-name','',selName,'Search your name…',{fallbackAll:true})}</div>
        <div class="field"><label>Store</label><select id="iss-store" ${isSuper()?'':'disabled'}>${stores.map(s=>`<option ${s===selStore?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
      </div>`;
   const prioRow=`<div class="field" style="margin-top:14px"><label>${prioLbl}</label><div class="prio-pills" id="iss-prio">${prio.map(p=>`<button type="button" class="prio-pill ${p[1]} ${p[0]===State.iss.prio?'on':''}" data-v="${p[0]}" onclick="issPrio(this)">${p[0]}</button>`).join('')}</div>${prioHint}</div>`;
@@ -1020,7 +1029,7 @@ function issFormBody(c,mod){
      <div class="field" style="margin-top:14px"><label>Location detail</label><input id="iss-loc" maxlength="120" placeholder="e.g. Till 2, Coolroom 1, Loading dock…"></div>
      <div class="field" style="margin-top:14px"><label>What's wrong? <span class="req">*</span></label><textarea id="iss-desc" placeholder="Describe the fault — when it started, noises, leaks, error codes, what stopped working…"></textarea></div>`;
   } else if(mod==='complaint'){
-    const staff2=`<select id="iss-staff2">${staffSelectOptions('','','— N/A / Unknown —',{fallbackAll:true})}</select>`;
+    const staff2=staffPick('iss-staff2','','','Search staff (optional)…',{fallbackAll:true});
     const channels=['In-store','Phone','Email','Social Media','Google Review','Other'];
     const actions=['Refund / exchange processed','Product replaced','Voucher / goodwill given','Apology only (no transaction)','None (information only)','Acknowledged & escalated to Store Manager'];
     body=`${nameStore}${prioRow}
@@ -1062,8 +1071,8 @@ function issFormBody(c,mod){
 }
 function issDeptChanged(){
   const dept=$('#iss-dept')?.value||'';
-  const name=$('#iss-name'); if(name) name.innerHTML=staffSelectOptions(dept,name.value,'— Select your name —',{fallbackAll:true});
-  const staff2=$('#iss-staff2'); if(staff2) staff2.innerHTML=staffSelectOptions(dept,staff2.value,'— N/A / Unknown —',{fallbackAll:true});
+  staffPickRefresh('iss-name',dept,{fallbackAll:true});   // narrow the search suggestions to the chosen dept
+  staffPickRefresh('iss-staff2',dept,{fallbackAll:true});
 }
 function issPhotoBox(){ const has=!!State.iss.photo;
   return `<div class="field" style="margin-top:14px"><label>Photo <span class="opt">(optional)</span></label>

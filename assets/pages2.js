@@ -107,7 +107,7 @@ function vioNew(){
       <div class="card"><div class="card-head"><h3><i class="fas fa-pen-to-square"></i>&nbsp; Record violation</h3></div><div class="card-pad">
         <div class="rail-tip" style="margin-bottom:14px">💡 Click a rule card to auto-fill the rule, severity &amp; suggested action. Picking a staff member auto-suggests the next warning step.</div>
         <div class="grid2">
-          <div class="field"><label>Staff member <span class="req">*</span></label><select id="vio-staff" onchange="vioStaffChange()"><option value="">— Select staff —</option>${staff.map(n=>`<option>${esc(n)}</option>`).join('')}</select></div>
+          <div class="field"><label>Staff member <span class="req">*</span></label>${staffPick('vio-staff','','','Search staff…',{onchange:'vioStaffChange()'})}</div>
           <div class="field"><label>Store</label><select id="vio-store">${(isSuper()?DB.stores:[State.branch]).map(s=>`<option ${s===State.branch?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
           <div class="field"><label>Severity</label><select id="vio-sev2">${['Minor','Moderate','Major','Critical'].map(s=>`<option ${s===State.vio.sev?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
           <div class="field"><label>Warning step <span class="auto-tag" id="vio-step-auto" style="display:none">auto</span></label><select id="vio-step" onchange="State.vio.step=this.value">${DB.warningSteps.map(s=>`<option ${s===State.vio.step?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
@@ -136,6 +136,15 @@ function vioSubmit(){
   auditLog('create','violation',rec.id,rec.store,null,rec);
   DB.modules.violation.records.unshift(rec);
   if(window.persist) window.persist();
+  // auto-email the specific staff member their violation notice (office/admin workflow),
+  // and route a copy to the office/violation recipients.
+  try{
+    const body=`Dear ${staff},\n\nA violation has been recorded against you:\n\n• Store: ${store}\n• Rule: ${State.vio.ruleTitle}\n• Severity: ${rec.severity}\n• Warning step: ${step}\n• Date: ${rec.created}\n\nDescription:\n${desc}\n${rec.actionTaken?('\nAction taken: '+rec.actionTaken):''}${rec.followUpDate?('\nFollow-up date: '+rec.followUpDate):''}\n\nPlease speak with your manager. This is a formal record.\n\n— MCQ Management`;
+    const subject=`MCQ ${store} · Violation notice — ${State.vio.ruleTitle} (${step})`;
+    const sm=(typeof staffByName==='function')&&staffByName(staff);
+    if(sm&&sm.email&&window.mcqEmail){ mcqEmail._brevo([{email:sm.email,name:sm.name}],subject,body,mcqEmail.cfg()); toast('📧 Violation emailed to '+sm.name); }
+    if(window.mcqEmail&&mcqEmail.notify) mcqEmail.notify('violation',subject,body,{});   // office / all recipients
+  }catch(e){}
   State.vio={rule:'',sev:'Minor',step:'Verbal Discussion',tab:'records'}; toast(`✓ Violation logged · ${step}`); buildSidebar(); renderViolation();
 }
 /* Auto-suggest the next escalation step from the staff's history (Verbal→Written→Final→Termination) */
@@ -265,7 +274,7 @@ function renderReward(){
     <div class="vio-grid">
       <div class="card"><div class="card-head"><h3><i class="fas fa-award"></i>&nbsp; Give an award</h3></div><div class="card-pad"><div class="grid2">
         <div class="field"><label>Award</label><select id="rwd-type">${awards.map(a=>`<option>${esc(a)}</option>`).join('')}</select></div>
-        <div class="field"><label>Staff</label><select id="rwd-staff">${staff.map(n=>`<option>${esc(n)}</option>`).join('')}</select></div>
+        <div class="field"><label>Staff</label>${staffPick('rwd-staff','','','Search staff…')}</div>
         <div class="field"><label>Store</label><select id="rwd-store">${(isSuper()?DB.stores:[State.branch]).map(s=>`<option>${esc(s)}</option>`).join('')}</select></div>
         <div class="field"><label>Amount ($)</label><input type="number" id="rwd-amt" placeholder="100"></div>
         <div class="field full"><label>Notes</label><textarea id="rwd-notes"></textarea></div>
@@ -278,7 +287,7 @@ function renderReward(){
 }
 function rwdMonth(m){ State.rwdMonth=m; renderReward(); }
 function rwdExport(fmt){ const cols=[{label:'Month',get:r=>r.rewardMonth},{label:'Award',get:r=>r.awardType},{label:'Staff',get:r=>r.staffName},{label:'Store',get:r=>r.store},{label:'Amount ($)',get:r=>r.rewardAmount||0},{label:'Status',get:r=>r.status}]; expRecords('Monthly Rewards',cols,scopedRecords('reward'),fmt); }
-function rwdSubmit(){ const staff=$('#rwd-staff').value; if(staff.startsWith('—')){toast('Select a staff member');return;}
+function rwdSubmit(){ const staff=$('#rwd-staff').value.trim(); if(!staff||staff.startsWith('—')){toast('Select a staff member');return;}
   const month=State.rwdMonth||new Date().toISOString().slice(0,7);
   const store=storeForWrite($('#rwd-store')?.value);
   const rec={id:makeRecordId('RWD',store),rewardMonth:month,awardType:$('#rwd-type').value,staffName:staff,store,rewardAmount:+$('#rwd-amt').value||0,status:'Proposed',created:new Date().toISOString().slice(0,16).replace('T',' ')};
@@ -302,7 +311,7 @@ function renderRaise(){
       <div class="kpi tone-bad"><div class="k-top"><div class="k-ic">🚫</div></div><div class="k-val">${recs.filter(r=>r.status==='Declined').length}</div><div class="k-lbl">Declined</div></div></div>
     <div class="vio-grid">
       <div class="card"><div class="card-head"><h3><i class="fas fa-file-signature"></i>&nbsp; Create raise review</h3></div><div class="card-pad"><div class="grid2">
-        <div class="field"><label>Staff</label><select id="rai-staff" onchange="raiPerfHint()">${staff.map(n=>`<option>${esc(n)}</option>`).join('')}</select></div>
+        <div class="field"><label>Staff</label>${staffPick('rai-staff','','','Search staff…',{onchange:'raiPerfHint()'})}</div>
         <div class="field"><label>Review month</label><input type="month" id="rai-month" value="${new Date().toISOString().slice(0,7)}"></div>
         <div class="field full" id="rai-perf-wrap" style="display:none"><div class="vio-suggest" id="rai-perf"></div></div>
         <div class="field"><label>Current rate ($/h)</label><input type="number" step="0.5" id="rai-cur" placeholder="27.50"></div>
@@ -323,7 +332,7 @@ function raiPerfHint(){ const name=$('#rai-staff').value, wrap=$('#rai-perf-wrap
     hint.innerHTML=`📊 <b>${esc(name)}</b> performance index: <b>${p.total}/150</b> · <b>${esc(p.band.label)}</b> → <b>${esc(p.raise)}</b>. <a href="#/performance" onclick="setTimeout(()=>perfPick('${ckJS(name)}'),50)">Open full scorecard →</a>`; }
 }
 function raiExport(fmt){ const cols=[{label:'Staff',get:r=>r.staffName},{label:'Store',get:r=>r.store},{label:'Review month',get:r=>r.reviewMonth},{label:'Current ($/h)',get:r=>r.currentRate},{label:'Proposed ($/h)',get:r=>r.proposedRate},{label:'Change',get:r=>((+r.proposedRate)-(+r.currentRate)).toFixed(2)},{label:'Effective',get:r=>r.effectiveDate},{label:'Status',get:r=>r.status}]; expRecords('Raise Salary Reviews',cols,scopedRecords('raise'),fmt); }
-function raiSubmit(){ const staff=$('#rai-staff').value; if(staff.startsWith('—')){toast('Select a staff member');return;}
+function raiSubmit(){ const staff=$('#rai-staff').value.trim(); if(!staff||staff.startsWith('—')){toast('Select a staff member');return;}
   const staffStore=(DB.staff.find(x=>x.name===staff)||{}).store;
   const store=storeForWrite(staffStore||State.branch);
   const rec={id:makeRecordId('RAI',store),staffName:staff,store,reviewMonth:$('#rai-month').value,currentRate:+$('#rai-cur').value||0,proposedRate:+$('#rai-prop').value||0,effectiveDate:$('#rai-eff').value,status:'Submitted',managerNotes:$('#rai-notes').value,created:new Date().toISOString().slice(0,16).replace('T',' ')};
@@ -361,14 +370,14 @@ function renderBirthday(){
         ${withDays.map(r=>`<tr onclick='openDetail("birthday","${esc(r.id)}","${ckJS(r.store||'')}")'><td><b>${esc(r.staffName)}</b><div class="cell-sub">${esc(r.store||'')}</div></td><td>${esc(r.birthday)}</td><td>${esc(r.favoriteGift||'—')}</td><td><span class="badge ${r.du<=7?'bad':r.du<=30?'warn':'mute'}">${r.du} days</span></td><td>${badge(r.status)}</td></tr>`).join('')}
         </tbody></table></div></div></div>
       <div class="card" style="align-self:start"><div class="card-head"><h3><i class="fas fa-pen-to-square"></i>&nbsp; Add / update birthday</h3></div><div class="card-pad"><div class="grid2">
-        <div class="field full"><label>Staff</label><select id="bd-staff">${staff.map(n=>`<option>${esc(n)}</option>`).join('')}</select></div>
+        <div class="field full"><label>Staff</label>${staffPick('bd-staff','','','Search staff…')}</div>
         <div class="field"><label>Birthday</label><input type="date" id="bd-date"></div>
         <div class="field"><label>Gift status</label><select id="bd-status"><option>Planned</option><option>Given</option></select></div>
         <div class="field full"><label>Favourite gift</label><input id="bd-gift" placeholder="e.g. Coffee hamper"></div>
       </div><button class="btn primary block" style="margin-top:12px" onclick="bdSubmit()">🎂 Save birthday</button></div></div>
     </div>`;
 }
-function bdSubmit(){ const staff=$('#bd-staff').value, date=$('#bd-date').value; if(staff.startsWith('—')||!date){toast('Pick staff and birthday');return;}
+function bdSubmit(){ const staff=$('#bd-staff').value.trim(), date=$('#bd-date').value; if(!staff||staff.startsWith('—')||!date){toast('Pick staff and birthday');return;}
   const recStore=storeForWrite((DB.staff.find(x=>x.name===staff)||{}).store||State.branch);
   const ex=DB.modules.birthday.records.find(r=>r.staffName===staff && r.store===recStore);
   const rec={id:ex?ex.id:makeRecordId('BDY',recStore),staffName:staff,store:recStore,birthday:date,favoriteGift:$('#bd-gift').value,status:$('#bd-status').value,created:new Date().toISOString().slice(0,10)};
