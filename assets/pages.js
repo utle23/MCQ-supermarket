@@ -484,23 +484,35 @@ window.composeOpen=composeOpen; window.composeStoreChange=composeStoreChange; wi
    textarea keeps working, so composing/replying never breaks (offline-safe). */
 const _ckInst={};
 let _ckLoadP=null;
-// Predefined CLASSIC build — self-contained (bold/italic/headings/links/lists/quote/table/
-// media/image + undo/redo). Reliable: no licence, no plugin-dependency errors (the super-build
-// threw on create() because removing CloudServices broke CKBoxUtils, so it silently fell back
-// to the textarea and never actually mounted).
-const CKE_CDN='https://cdn.ckeditor.com/ckeditor5/40.2.0/classic/ckeditor.js';
+// CKEditor 5 v43.3.1 — SELF-HOSTED (vendored in assets/vendor/ckeditor5). v43 is the last
+// release BEFORE the v44 mandatory-license enforcement, so there is NO licence check / no
+// "distribution-channel" error, while still giving the FULL open-source feature set (fonts,
+// colours, highlight, alignment, tables, images, media, code, source editing, find & replace,
+// special chars…). window.CKEDITOR UMD global. Served locally → works OFFLINE too; falls
+// back to the plain textarea only if the file can't load.
+const CKE_VER='43.3.1';
+const CKE_JS='assets/vendor/ckeditor5/ckeditor5.umd.js?v='+CKE_VER;
+const CKE_CSS='assets/vendor/ckeditor5/ckeditor5.css?v='+CKE_VER;
+const CKE_WANT=['Essentials','Paragraph','Heading','Bold','Italic','Underline','Strikethrough','Code','Subscript','Superscript','Link','AutoLink','List','TodoList','ListProperties','BlockQuote','Alignment','Font','FontFamily','FontSize','FontColor','FontBackgroundColor','Highlight','RemoveFormat','HorizontalLine','SpecialCharacters','SpecialCharactersEssentials','Indent','IndentBlock','Table','TableToolbar','TableProperties','TableCellProperties','TableColumnResize','TableCaption','Image','ImageToolbar','ImageCaption','ImageStyle','ImageResize','ImageInsert','ImageUpload','Base64UploadAdapter','LinkImage','MediaEmbed','PasteFromOffice','Autoformat','FindAndReplace','SourceEditing','CodeBlock','WordCount','PageBreak'];
+const CKE_TOOLBAR=['heading','|','fontfamily','fontsize','fontColor','fontBackgroundColor','highlight','|','bold','italic','underline','strikethrough','subscript','superscript','code','removeFormat','|','link','blockQuote','codeBlock','|','bulletedList','numberedList','todoList','|','alignment','outdent','indent','|','insertImage','insertTable','mediaEmbed','horizontalLine','specialCharacters','pageBreak','|','findAndReplace','sourceEditing','|','undo','redo'];
 function ensureCKE(){
-  if(window.ClassicEditor) return Promise.resolve(window.ClassicEditor);
+  if(window.CKEDITOR && window.CKEDITOR.ClassicEditor) return Promise.resolve(window.CKEDITOR);
   if(_ckLoadP) return _ckLoadP;
-  _ckLoadP=(window.mcqLoadScript?mcqLoadScript(CKE_CDN):Promise.reject()).then(()=>window.ClassicEditor||null).catch(()=>{ _ckLoadP=null; return null; });
+  try{ if(!document.getElementById('cke-css')){ const l=document.createElement('link'); l.id='cke-css'; l.rel='stylesheet'; l.href=CKE_CSS; document.head.appendChild(l); } }catch(e){}
+  _ckLoadP=(window.mcqLoadScript?mcqLoadScript(CKE_JS):Promise.reject()).then(()=>window.CKEDITOR||null).catch(()=>{ _ckLoadP=null; return null; });
   return _ckLoadP;
 }
 function ckMount(elId){
   const el=document.getElementById(elId); if(!el || _ckInst[elId]) return;
-  ensureCKE().then(Editor=>{
+  ensureCKE().then(CK=>{
     const node=document.getElementById(elId);
-    if(!Editor||!node) return;   // no CDN / offline → keep the plain textarea
-    Editor.create(node).then(ed=>{ _ckInst[elId]=ed; }).catch(()=>{ /* fallback: textarea stays usable */ });
+    if(!CK||!CK.ClassicEditor||!node) return;   // no CDN / offline → keep the plain textarea
+    const plugins=CKE_WANT.map(n=>CK[n]).filter(Boolean);   // only load plugins actually present (version-proof)
+    CK.ClassicEditor.create(node,{ licenseKey:'GPL', plugins, toolbar:{items:CKE_TOOLBAR, shouldNotGroupWhenFull:true},
+      image:{toolbar:['imageTextAlternative','toggleImageCaption','imageStyle:inline','imageStyle:block','resizeImage']},
+      table:{contentToolbar:['tableColumn','tableRow','mergeTableCells','tableProperties','tableCellProperties']},
+      link:{addTargetToExternalLinks:true, defaultProtocol:'https://'}
+    }).then(ed=>{ _ckInst[elId]=ed; }).catch(()=>{ /* fallback: textarea stays usable */ });
   });
 }
 function ckRead(elId){ const ed=_ckInst[elId]; try{ if(ed) return ed.getData(); }catch(e){} const el=document.getElementById(elId); return el?el.value:''; }
