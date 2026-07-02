@@ -124,6 +124,7 @@
     if(FB.hydrateFromCache){ try{ FB.hydrateFromCache(account); }catch(e){} }
     if(!TOKEN){ FB.lastSync={status:'local',message:'Sign in to sync with the server'}; return Promise.resolve(FB.lastSync); }
     if(account.role==='super' || account.role==='ba'){   // Chú Ba loads all stores (read-only), like super
+      try{ localStorage.removeItem('mcq_dirty_super'); }catch(_){}   // super keeps its debounced/5s/logout flushes; don't force a broad re-save (could touch uncached stores)
       return fetch(api('/api/stores'), {headers:headers()}).then(function(r){return r.json();}).then(function(list){
         var ss=(list&&list.stores||[]).map(function(s){return s.id;});
         return Promise.all(ss.map(function(s){
@@ -141,10 +142,16 @@
       }).catch(function(e){ FB.lastSync={status:'error',message:'Server unavailable · local data'}; return FB.lastSync; });
     }
     var store=account.branch;
-    return getState(store).then(function(d){
+    // RECONCILE: if the last session left unsaved local edits for this store (dirty flag
+    // survived a hard close/crash), flush the cached in-memory state to the server FIRST
+    // (merge/upsert — never deletes) so the fresh load below can't overwrite that edit.
+    var flush=Promise.resolve();
+    try{ if(localStorage.getItem('mcq_dirty_'+store)) flush=postState(store).catch(function(){}); }catch(_){}
+    return flush.then(function(){ return getState(store); }).then(function(d){
       if(d&&d.state){ if(FB.resetToBase) FB.resetToBase(); if(FB.applyStoreState) FB.applyStoreState(d.state); if(FB.rerenderApp) FB.rerenderApp(); }
       else { try{ if(store==='Demo' && window.MCQDemo) MCQDemo.inject(); }catch(e){} FB._loaded=true; postState(store); }   // first run for this store → seed backend from local (Demo gets its sample data)
       FB._loaded=true;
+      try{ localStorage.removeItem('mcq_dirty_'+store); }catch(_){}   // reconciled — server now has everything
       FB.lastSync={status:'synced',message:'Loaded '+store};
       return FB.lastSync;
     }).catch(function(e){ FB.lastSync={status:'error',message:'Server unavailable · local data'}; return FB.lastSync; });
@@ -167,14 +174,14 @@
       var changed=[];
       stores().forEach(function(s){ var st=FB.buildStoreState?FB.buildStoreState(s):null; if(!st) return;
         var h=JSON.stringify(st, skipVolatile); if(first || h!==_storeHash[s]) changed.push({s:s, st:st, h:h}); });
-      if(!changed.length){ setSave('synced','Saved · all stores'); return Promise.resolve(); }
+      if(!changed.length){ try{ localStorage.removeItem('mcq_dirty_super'); }catch(_){} setSave('synced','Saved · all stores'); return Promise.resolve(); }
       setSave('loading','Saving…');
-      return Promise.all(changed.map(function(c){ return postState(c.s, c.st).then(function(){ _storeHash[c.s]=c.h; }); }))
-        .then(function(){ saveDirty=false; setSave('synced','Saved · '+changed.length+' store'+(changed.length>1?'s':'')); })
+      return Promise.all(changed.map(function(c){ return postState(c.s, c.st).then(function(){ _storeHash[c.s]=c.h; try{ localStorage.removeItem('mcq_dirty_'+c.s); }catch(_){} }); }))
+        .then(function(){ saveDirty=false; try{ localStorage.removeItem('mcq_dirty_super'); }catch(_){} setSave('synced','Saved · '+changed.length+' store'+(changed.length>1?'s':'')); })
         .catch(function(){ saveDirty=true; setSave('error','Save failed — retrying'); });
     }
     setSave('loading','Saving…');
-    return postState(acct.branch).then(function(){ saveDirty=false; setSave('synced','Saved · '+acct.branch); })
+    return postState(acct.branch).then(function(){ saveDirty=false; try{ localStorage.removeItem('mcq_dirty_'+acct.branch); }catch(_){} setSave('synced','Saved · '+acct.branch); })
       .catch(function(){ saveDirty=true; setSave('error','Save failed — retrying'); });
   };
 

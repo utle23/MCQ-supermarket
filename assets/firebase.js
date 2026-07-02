@@ -460,7 +460,13 @@
     if(State.account.role==='ba') return;   // Chú Ba is read-only — never writes
     // ALWAYS mirror to the local cache immediately, so a reload/re-login can never show
     // less than the latest local data — even if the server save is delayed or fails.
-    try{ const acct=State.account, store=acct.role==='super'?'All stores':acct.branch; if(store&&!isAllStore(store)) writeCache(store, buildState(store)); }catch(e){}
+    try{ const acct=State.account, store=acct.role==='super'?'All stores':acct.branch;
+      if(store&&!isAllStore(store)) writeCache(store, buildState(store));
+      // mark UNSAVED synchronously — cleared only once the server confirms the save. On the
+      // next login, loadForAccount flushes any still-dirty store first (merge), so an edit
+      // made just before a hard close/crash can never be overwritten by the fresh load.
+      try{ localStorage.setItem(store&&!isAllStore(store)?('mcq_dirty_'+store):'mcq_dirty_super','1'); }catch(_){}
+    }catch(e){}
     if(!FB.enabled) return;
     clearTimeout(timer); timer=setTimeout(()=>{ FB.saveAll&&FB.saveAll(); }, 450); };
   // safety net: poll for changes every 5s and push if the data changed
