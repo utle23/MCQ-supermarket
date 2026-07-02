@@ -14,6 +14,7 @@ DB.auth = {
     'Armadale':'5050', 'Warehouse':'8080', 'Demo':'0000',
   },
   superAdminPassword: '99999',             // super admin — ALL stores + cross-store compare
+  baPassword: '19',                        // Chú Ba — read-only checklist viewer (all stores)
   branchPasswords: {                      // each branch has its OWN staff password
     'Morley':'1111', 'Mirrabooka':'2222', 'Malaga':'3333', 'Subiaco':'4444',
     'Armadale':'5555', 'Warehouse':'8000', 'Demo':'0000',
@@ -809,7 +810,7 @@ DB.prioToComplaint = { Low:'Minor', Normal:'Moderate', High:'Major', Urgent:'Maj
 /* pages that are custom-rendered (not generic modules) */
 DB.customPages = {
   issue:    { label:'Report Issue',    icon:'🚩', render:'renderIssue' },
-  violation:{ label:'Violation Rules', icon:'⚠️', render:'renderViolation', admin:true },
+  violation:{ label:'Violation Rules', icon:'⚠️', render:'renderViolation' },
   training: { label:'Training Assessment', icon:'🎓', render:'renderTraining' },
   reward:   { label:'Monthly Rewards', icon:'🏆', render:'renderReward', admin:true },
   raise:    { label:'Raise Salary Review', icon:'💸', render:'renderRaise', admin:true },

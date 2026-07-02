@@ -96,7 +96,7 @@
     // instant paint from cache first
     if(FB.hydrateFromCache){ try{ FB.hydrateFromCache(account); }catch(e){} }
     if(!TOKEN){ FB.lastSync={status:'local',message:'Sign in to sync with the server'}; return Promise.resolve(FB.lastSync); }
-    if(account.role==='super'){
+    if(account.role==='super' || account.role==='ba'){   // Chú Ba loads all stores (read-only), like super
       return fetch(api('/api/stores'), {headers:headers()}).then(function(r){return r.json();}).then(function(list){
         var ss=(list&&list.stores||[]).map(function(s){return s.id;});
         return Promise.all(ss.map(function(s){
@@ -126,6 +126,7 @@
 
   FB.saveAll = function(){
     var acct=(window.State&&State.account)||null; if(!acct||!TOKEN) return Promise.resolve();
+    if(acct.role==='ba') return Promise.resolve();   // Chú Ba is read-only — never saves
     // NOTE: server save is MERGE/upsert (never deletes), so saving any time is safe —
     // we deliberately do NOT gate on _loaded (that previously disabled saves for a whole
     // session after one load hiccup → silent data loss).

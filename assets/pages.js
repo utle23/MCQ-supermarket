@@ -189,6 +189,63 @@ function renderChecklist(){
   if(viewing){ const b=$('#chk-body'); if(b) b.innerHTML=ckPastHTML(); } else { ckDraw(); ckUpdateSubmitBtn(); }
 }
 function ckSetDate(v){ State.chk.date=v||ckTodayStr(); State.chk.editing=null; State.chk.editDeptH=null; State.chk.editArea=null; renderChecklist(); }
+
+/* ============================================================ CHÚ BA — read-only checklist viewer (all stores) */
+function baSetStore(v){ State.ba.store=v; renderBaView(); }
+function baSetDate(v){ State.ba.date=v||ckTodayStr(); renderBaView(); }
+function baSetSession(v){ State.ba.session=v; renderBaView(); }
+function renderBaView(){
+  setAccent('#0f766e'); setCrumb('👓','Checklist Results','Read-only · all stores');
+  const today=ckTodayStr();
+  if(!State.ba) State.ba={store:(DB.stores||[])[0], date:today, session:'All'};
+  const b=State.ba;
+  const stores=(DB.stores||[]).filter(Boolean);
+  if(!stores.includes(b.store)) b.store=stores[0];
+  const subs=(DB.checklistSubs||[]).filter(s=>s.store===b.store && s.date===b.date && (b.session==='All'||s.session===b.session))
+    .sort((a,b2)=>String(a.dept).localeCompare(String(b2.dept))||String(a.session).localeCompare(String(b2.session)));
+  const tot=subs.reduce((n,s)=>n+(s.total||0),0), don=subs.reduce((n,s)=>n+(s.done||0),0);
+  const tempBad=subs.reduce((n,s)=>n+((s.items||[]).filter(it=>it.temp&&it.temp.inRange===false).length),0);
+  const photoN=subs.reduce((n,s)=>n+((s.items||[]).reduce((m,it)=>m+((it.photos||[]).length),0)),0);
+  const storeChips=stores.map(s=>`<button class="ba-store ${s===b.store?'active':''}" onclick="baSetStore('${ckJS(s)}')">${s==='Demo'?'🎬 Demo':esc(s)}</button>`).join('');
+  const sessSeg=['All','Opening','Mid-afternoon','Closing'].map(x=>`<button class="seg-btn ${b.session===x?'active':''}" onclick="baSetSession('${x}')">${x==='All'?'All day':esc(x)}</button>`).join('');
+  const dm=(DB.checklist&&DB.checklist.deptMeta)||{};
+  const cards=subs.map(s=>{
+    const meta=dm[s.dept]||{color:'#0f766e'};
+    const byArea={}; (s.items||[]).forEach(it=>{(byArea[it.area||'General']=byArea[it.area||'General']||[]).push(it);});
+    const areas=Object.entries(byArea).map(([area,items])=>{
+      const rows=items.map(it=>{
+        const t=it.temp?`<span class="badge ${it.temp.inRange===false?'bad':'ok'}">${it.temp.defrosting?'Defrosting':(it.temp.value!=null?it.temp.value+'°C':'—')}</span>`:'';
+        const imgs=(it.photos||[]).map(u=>`<img class="ba-thumb" src="${imgSrc(u)}" onclick="openLightbox('${ckJS(imgSrc(u))}')">`).join('');
+        return `<div class="ba-task ${it.done?'done':'todo'}"><span class="ba-check">${it.done?'✓':'○'}</span>
+          <div class="ba-main"><div class="ba-name">${esc(it.task)} ${t}</div>${it.note?`<div class="ba-note">📝 ${esc(it.note)}</div>`:''}${imgs?`<div class="ba-thumbs">${imgs}</div>`:''}</div></div>`;
+      }).join('');
+      return `<div class="ba-area"><div class="ba-area-h">${esc(area)}</div>${rows}</div>`;
+    }).join('');
+    const out=(s.items||[]).filter(it=>!it.done);
+    return `<div class="ba-card" style="--c:${meta.color}"><div class="ba-card-h">
+        <div><b>${meta.icon?meta.icon+' ':''}${esc(s.dept)}</b> <span class="badge ${s.session==='Opening'?'warn':'info'}">${esc(s.session)}</span></div>
+        <div class="ba-meta">${s.done||0}/${s.total||0} · ${s.progress||0}%${s.verifiedBy?` · ✅ ${esc(s.verifiedBy)}`:''}${s.by?` · 👤 ${esc(s.by)}`:''}</div></div>
+      <div class="ba-prog"><i style="width:${s.progress||0}%;background:${meta.color}"></i></div>
+      ${areas}
+      ${out.length?`<div class="ba-incomplete">⚠️ ${out.length} not completed: ${esc(out.slice(0,6).map(it=>it.task).join(', '))}${out.length>6?'…':''}</div>`:''}
+    </div>`;
+  }).join('');
+  $('#content').innerHTML=`
+    <div class="page-head"><div class="ph-ic">👓</div><div><h2>Checklist Results</h2><p>Live, read-only view of every store's checklists.</p></div></div>
+    <div class="ba-storebar">${storeChips}</div>
+    <div class="ba-toolbar card">
+      <div class="seg ck-seg">${sessSeg}</div>
+      <div class="tb-spacer"></div>
+      <div class="filter"><label>Date</label><input type="date" max="${today}" value="${esc(b.date)}" onchange="baSetDate(this.value)">${b.date!==today?`<button class="btn sm" onclick="baSetDate('${today}')">Today</button>`:''}</div>
+    </div>
+    <div class="kpi-grid">
+      <div class="kpi tone-ok"><div class="k-top"><div class="k-ic">✅</div></div><div class="k-val">${don}/${tot}</div><div class="k-lbl">Tasks done</div></div>
+      <div class="kpi"><div class="k-top"><div class="k-ic">📋</div></div><div class="k-val">${subs.length}</div><div class="k-lbl">Checklists</div></div>
+      <div class="kpi tone-${tempBad?'bad':'mute'}"><div class="k-top"><div class="k-ic">🌡️</div></div><div class="k-val">${tempBad}</div><div class="k-lbl">Temp alerts</div></div>
+      <div class="kpi tone-info"><div class="k-top"><div class="k-ic">📷</div></div><div class="k-val">${photoN}</div><div class="k-lbl">Photos</div></div>
+    </div>
+    <div class="ba-list">${cards||`<div class="empty"><div class="e-ic">📅</div>No checklists submitted for ${esc(b.store)} on ${esc(b.date)}.</div>`}</div>`;
+}
 function ckSubmittedFor(dept,session,date){ return (DB.checklistSubs||[]).some(x=>(isSuper()||x.store===State.branch)&&x.dept===dept&&x.session===session&&x.date===date); }
 function ckPastHTML(){
   const s=State.chk;

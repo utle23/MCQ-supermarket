@@ -12,6 +12,8 @@ const $$ = (s,r=document)=>[...r.querySelectorAll(s)];
 const esc = s => String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const isAdmin = ()=> State.account && (State.account.role==='admin' || State.account.role==='super');
 const isSuper = ()=> State.account && State.account.role==='super';
+const isBa = ()=> State.account && State.account.role==='ba';   // Chú Ba — read-only checklist viewer (all stores)
+const seesAllStores = ()=> isSuper() || isBa();
 function logoHTML(cls){ return `<span class="mcq-logo ${cls||''}"><img src="assets/mcq-logo-exact.png" alt="MCQ Supermarket logo"></span>`; }
 function recordInScope(r){ return isSuper() || !!(r && r.store===State.branch); }
 function storeForWrite(store){ return isSuper() ? (store || State.branch) : State.branch; }
@@ -112,6 +114,7 @@ function showLogin(notice){
         <button class="seg-btn active" data-mode="staff">🧑‍💼 Staff</button>
         <button class="seg-btn" data-mode="admin">🛡️ Admin</button>
         <button class="seg-btn" data-mode="super">👑 Super</button>
+        <button class="seg-btn" data-mode="ba">👓 Chú Ba</button>
       </div>
       <div id="login-store-row">
         <label class="login-lbl">Store / Branch</label>
@@ -152,8 +155,9 @@ function loginMode(){ return $('#login-mode .seg-btn.active').dataset.mode; }
 function togglePw(){ const p=$('#login-pw'); p.type=p.type==='password'?'text':'password'; }
 function loginFail(m){ const e=$('#login-err'); if(e) e.textContent='❌ '+m; const c=$('.login-card'); if(c){ c.classList.add('shake'); setTimeout(()=>c.classList.remove('shake'),450); } }
 function updateLoginHint(){ const el=$('#login-hint'); if(!el) return; const mode=loginMode(), branch=$('#login-branch')?.value;
-  const row=$('#login-store-row'); if(row) row.style.display=mode==='super'?'none':'block';
+  const row=$('#login-store-row'); if(row) row.style.display=(mode==='super'||mode==='ba')?'none':'block';
   el.innerHTML = mode==='super' ? `👑 Super Admin — all stores &amp; cross-store compare`
+    : mode==='ba' ? `👓 Chú Ba — view checklist results across all stores (read-only)`
     : mode==='admin' ? `🛡️ Admin access — ${esc(branch||'this store')} only`
     : `🧑‍💼 Staff sign-in — ${esc(branch||'your store')}`; }
 function doLogin(){
@@ -163,7 +167,7 @@ function doLogin(){
   if(window.MCQDB && MCQDB._api && MCQDB.login){
     const btn=$('.login-btn'); if(btn){ btn.disabled=true; btn.textContent='Signing in…'; }
     MCQDB.login(mode, branch, pw).then(res=>{
-      if(res && res.ok){ loginAs(res.role, res.role==='super'?'All stores':res.store); }
+      if(res && res.ok){ loginAs(res.role, (res.role==='super'||res.role==='ba')?'All stores':res.store); }
       else { if(btn){ btn.disabled=false; btn.textContent='Sign In →'; } loginFail(res&&res.error?res.error:'Incorrect password.'); }
     }).catch(()=>{ if(btn){ btn.disabled=false; btn.textContent='Sign In →'; } loginFail('Cannot reach the server.'); });
     return;
@@ -171,6 +175,10 @@ function doLogin(){
   if(mode==='super'){
     if(pw===DB.auth.superAdminPassword) return loginAs('super','All stores');
     return loginFail('Incorrect super admin password.');
+  }
+  if(mode==='ba'){
+    if(pw===(DB.auth.baPassword||'19')) return loginAs('ba','All stores');
+    return loginFail('Incorrect Chú Ba password.');
   }
   if(mode==='admin'){
     if(pw===(DB.auth.adminPasswords||{})[branch]) return loginAs('admin',branch);
@@ -295,8 +303,8 @@ function maybeStartRouteSync(){
   }
 }
 async function loginAs(role, branch){
-  const name = role==='super' ? 'Head Office' : role==='admin' ? (branch+' Admin') : (branch+' Staff');
-  const initials = role==='super' ? 'HO' : role==='admin' ? branch.slice(0,2).toUpperCase() : branch.slice(0,2).toUpperCase();
+  const name = role==='super' ? 'Head Office' : role==='ba' ? 'Chú Ba' : role==='admin' ? (branch+' Admin') : (branch+' Staff');
+  const initials = role==='super' ? 'HO' : role==='ba' ? 'CB' : branch.slice(0,2).toUpperCase();
   State.account={ name, role, branch, initials };
   State.branch=branch; State.role=role==='staff'?'store':'ho';
   try{ sessionStorage.setItem('mcq_acct', JSON.stringify(State.account)); }catch(e){}
@@ -378,9 +386,18 @@ function navSolo(mod,icon,label){
   return `<a class="nav-item solo" data-mod="${mod}"><span class="ic"><i class="fas ${icon}"></i></span><span class="lbl">${esc(label)}</span>${cnt?`<span class="count">${cnt}</span>`:''}</a>`;
 }
 function buildSidebar(){
+  if(isBa()){   // Chú Ba — read-only, only the checklist-results viewer
+    $('#nav').innerHTML = navLink('baview','fa-clipboard-check','Checklist Results','',true);
+    $$('#nav .nav-item').forEach(el=>el.onclick=()=>{ go(el.dataset.mod); if(window.innerWidth<=860) closeSidebarM(); });
+    paintActive(); refreshSyncUi(); return;
+  }
   let html = navLink('home','fa-gauge-high','Dashboard','',true);
   html += navSolo('issue','fa-flag','Report Issue');
   html += navSolo('violation','fa-gavel','Violation');
+  if(!isAdmin()){   // staff also get Training + Report Violation
+    html += navLink('training','fa-graduation-cap','Training','',true);
+    html += navLink('violation','fa-gavel','Report Violation','',true);
+  }
   DB.navGroups.forEach(g=>{
     if(g.admin && !isAdmin()) return;
     const items = g.items.filter(id=>{
@@ -455,6 +472,7 @@ function render(){
   const mod=State.route.mod;
   buildSidebar();
   refreshBell();
+  if(isBa()) return renderBaView();   // Chú Ba only ever sees the read-only checklist viewer
   if(mod==='home') return isAdmin()?renderHome():renderStaffHome();
   if(DB.customPages[mod]){
     const page=DB.customPages[mod];

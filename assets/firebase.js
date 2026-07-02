@@ -59,7 +59,7 @@
   FB.writeCache = writeCache;   // let the API adapter mirror each save locally (durable against stale reads / tab close)
   FB.hydrateFromCache = function(account){
     captureBase();
-    const store=(account&&account.role==='super')?'All stores':(account&&account.branch)||'Morley';
+    const store=(account&&(account.role==='super'||account.role==='ba'))?'All stores':(account&&account.branch)||'Morley';
     const cached=readCache(store);
     if(cached){
       resetToBase();
@@ -453,6 +453,7 @@
     try{ const s=buildState(accountStore()||activeStore||''); delete s.updatedAt; return JSON.stringify(s)+':'+activeMode; }catch(e){ return ''; }
   }
   window.persist = function(){ if(!(window.State&&State.account)) return;
+    if(State.account.role==='ba') return;   // Chú Ba is read-only — never writes
     // ALWAYS mirror to the local cache immediately, so a reload/re-login can never show
     // less than the latest local data — even if the server save is delayed or fails.
     try{ const acct=State.account, store=acct.role==='super'?'All stores':acct.branch; if(store&&!isAllStore(store)) writeCache(store, buildState(store)); }catch(e){}

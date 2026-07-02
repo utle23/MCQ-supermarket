@@ -27,6 +27,7 @@ RETIRED_STORES = ['Beechboro Fresh', 'Market West']
 
 # seed passwords (same scheme as the old frontend). These live ONLY on the server now.
 SUPER_PW = '99999'
+BA_PW = '19'   # "Chú Ba" — read-only viewer of checklist results across ALL stores
 # Per-store admin passwords (each store admin has its own). Change here, then the next
 # app start re-seeds new ones (existing data is untouched).
 ADMIN_PW = {'Morley':'1010','Mirrabooka':'2020','Malaga':'3030','Subiaco':'4040',
@@ -136,6 +137,7 @@ def init_db():
             conn.execute('UPDATE users SET password_hash=? WHERE role=? AND IFNULL(store_id,"")=?',
                          (hash_pw(pw), role, store or ''))
     add_user('super', None, SUPER_PW, sync=True)
+    add_user('ba', None, BA_PW, sync=True)
     for s, pw in ADMIN_PW.items():
         add_user('admin', s, pw, sync=True)
     for s, pw in BRANCH_PW.items():
@@ -161,6 +163,9 @@ def verify_login(mode, store, pw):
         if mode == 'super':
             row = conn.execute('SELECT password_hash FROM users WHERE role="super"').fetchone()
             return ('super', 'ALL') if row and row['password_hash'] == hash_pw(pw) else None
+        if mode == 'ba':
+            row = conn.execute('SELECT password_hash FROM users WHERE role="ba"').fetchone()
+            return ('ba', 'ALL') if row and row['password_hash'] == hash_pw(pw) else None
         if mode == 'admin':
             if store not in STORES: return None
             row = conn.execute('SELECT password_hash FROM users WHERE role="admin" AND store_id=?', (store,)).fetchone()
@@ -191,7 +196,11 @@ def auth_from_token(token):
         conn.close()
 
 def can_access(au, store_id):
-    return bool(au) and (au['role'] == 'super' or au['store_id'] == store_id)
+    # super + ba (read-only viewer) can read any store; others only their own
+    return bool(au) and (au['role'] in ('super', 'ba') or au['store_id'] == store_id)
+
+def can_write(au):
+    return bool(au) and au['role'] != 'ba'   # Chú Ba is strictly read-only
 
 # ---- per-store state: heavy collections normalized into tables, the rest kept as a lean blob ----
 # The frontend wire shape is preserved exactly (firebase.js buildState/applyState):

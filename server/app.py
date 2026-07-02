@@ -31,6 +31,9 @@ def require_store(au, store_id):
     if store_id not in db.STORES: abort(404)
     if not db.can_access(au, store_id): abort(403)
 
+def require_write(au):
+    if not db.can_write(au): abort(403)   # Chú Ba (ba) is read-only
+
 def uid(au):
     return (au['role'] + ':' + (au['store_id'] or '')) if au else 'system'
 
@@ -63,7 +66,7 @@ def stores():
     rows = conn.execute('SELECT store_id, length(state_json) AS bytes, updated_at FROM store_state').fetchall()
     conn.close()
     by = {r['store_id']: {'bytes': r['bytes'] or 0, 'updated_at': r['updated_at']} for r in rows}
-    visible = db.STORES if au['role'] == 'super' else [au['store_id']]
+    visible = db.STORES if au['role'] in ('super', 'ba') else [au['store_id']]
     return jsonify(ok=True, stores=[
         {'id': s, 'name': s, 'bytes': by.get(s, {}).get('bytes', 0),
          'updated_at': by.get(s, {}).get('updated_at')} for s in visible])
@@ -77,7 +80,7 @@ def get_state(store_id):
 
 @api.route('/api/state/<store_id>', methods=['POST'])
 def post_state(store_id):
-    au = require_auth(); require_store(au, store_id)
+    au = require_auth(); require_write(au); require_store(au, store_id)
     d = request.get_json(force=True, silent=True) or {}
     state = d.get('state', d)
     if isinstance(state, dict):
@@ -97,7 +100,7 @@ def get_config(store_id):
 
 @api.route('/api/store-config/<store_id>', methods=['POST'])
 def post_config(store_id):
-    au = require_auth(); require_store(au, store_id)
+    au = require_auth(); require_write(au); require_store(au, store_id)
     d = request.get_json(force=True, silent=True) or {}
     cfg = d.get('config', d)
     conn = db.connect()
@@ -111,7 +114,7 @@ def post_config(store_id):
 # ---------- photos: files + metadata row ----------
 @api.route('/api/photos', methods=['POST'])
 def post_photo():
-    au = require_auth()
+    au = require_auth(); require_write(au)
     store_id = request.form.get('store_id') or (au['store_id'] if au['role'] != 'super' else None)
     if not store_id or store_id not in db.STORES: abort(400)
     require_store(au, store_id)
@@ -170,7 +173,7 @@ def history(store_id):
 # ---------- audit log ----------
 @api.route('/api/audit-log', methods=['POST'])
 def audit_log():
-    au = require_auth()
+    au = require_auth(); require_write(au)
     d = request.get_json(force=True, silent=True) or {}
     store_id = d.get('store_id') or (au['store_id'] if au['role'] != 'super' else 'ALL')
     if au['role'] != 'super' and store_id != au['store_id']: abort(403)
@@ -181,7 +184,7 @@ def audit_log():
 # ---------- explicit delete (save() now MERGES, so real deletes go through here) ----------
 @api.route('/api/delete', methods=['POST'])
 def delete_records():
-    au = require_auth()
+    au = require_auth(); require_write(au)
     d = request.get_json(force=True, silent=True) or {}
     store = d.get('store_id'); require_store(au, store)
     table = d.get('table')
@@ -232,7 +235,7 @@ def post_settings():
 # ---------- email relay (Brevo) — API key stays on the SERVER, never in the frontend / repo ----------
 @api.route('/api/send-email', methods=['POST'])
 def send_email():
-    require_auth()
+    require_write(require_auth())
     key = os.environ.get('BREVO_API_KEY', '')
     d = request.get_json(force=True, silent=True) or {}
     to = [r for r in (d.get('to') or []) if r.get('email')]

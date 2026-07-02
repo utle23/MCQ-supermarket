@@ -1084,3 +1084,27 @@ table.jobduty td{vertical-align:top}
 .ck-submit-note.pending{color:#b45309}
 .ck-submit-note.pending span{color:#92600a;font-weight:600}
 .ck-submit-note.ready{color:#15803d;font-weight:600}
+
+/* ---- Chú Ba read-only checklist viewer ---- */
+.ba-storebar{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 14px}
+.ba-store{border:1px solid var(--line,#e5e7eb);background:#fff;border-radius:999px;padding:8px 16px;font-weight:800;font-size:13px;cursor:pointer;color:#475569}
+.ba-store.active{background:linear-gradient(135deg,#0e9f6e,#0891b2);color:#fff;border-color:transparent;box-shadow:0 6px 16px rgba(14,159,110,.3)}
+.ba-toolbar{display:flex;align-items:center;gap:12px;padding:10px 14px;margin-bottom:14px;flex-wrap:wrap}
+.ba-list{display:flex;flex-direction:column;gap:14px}
+.ba-card{background:var(--card,#fff);border:1px solid var(--line,#e5e7eb);border-left:5px solid var(--c,#0f766e);border-radius:14px;padding:14px 16px;box-shadow:0 2px 10px rgba(0,0,0,.04)}
+.ba-card-h{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}
+.ba-card-h b{font-size:15px}
+.ba-meta{color:var(--muted,#64748b);font-size:12.5px}
+.ba-prog{height:6px;border-radius:6px;background:#eef2f7;overflow:hidden;margin:8px 0 12px}
+.ba-prog i{display:block;height:100%}
+.ba-area{margin:8px 0}
+.ba-area-h{font-weight:800;font-size:12px;letter-spacing:.04em;text-transform:uppercase;color:#0f766e;background:#ecfdf5;padding:5px 10px;border-radius:8px;margin:6px 0}
+.ba-task{display:flex;gap:10px;padding:7px 4px;border-bottom:1px dashed #eef2f7}
+.ba-task.todo{opacity:.85}
+.ba-check{width:22px;height:22px;flex:0 0 auto;border-radius:6px;display:grid;place-items:center;font-weight:800;background:#dcfce7;color:#15803d}
+.ba-task.todo .ba-check{background:#fef3c7;color:#b45309}
+.ba-name{font-size:13.5px;font-weight:600;color:var(--ink,#1f2937)}
+.ba-note{color:#64748b;font-size:12px;margin-top:3px}
+.ba-thumbs{display:flex;gap:6px;flex-wrap:wrap;margin-top:6px}
+.ba-thumb{height:70px;border-radius:8px;border:1px solid #e5e7eb;cursor:zoom-in;object-fit:cover}
+.ba-incomplete{margin-top:10px;padding:8px 12px;border-radius:8px;background:#fef2f2;color:#b91c1c;font-size:12.5px;font-weight:600}
