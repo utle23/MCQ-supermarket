@@ -402,6 +402,23 @@ def _openai_vision(image_bytes, mime, prompt, max_tokens=220):
     except Exception as e:
         return None, str(e)
 
+def _openai_chat(messages, max_tokens=700):
+    key = os.environ.get('OPENAI_API_KEY', '')
+    if not key: return None, 'OPENAI_API_KEY not set on the server'
+    payload = {'model': os.environ.get('OPENAI_CHAT_MODEL', 'gpt-4o-mini'),
+               'temperature': 0, 'max_tokens': max_tokens, 'messages': messages}
+    req = urllib.request.Request('https://api.openai.com/v1/chat/completions',
+        data=json.dumps(payload).encode('utf-8'),
+        headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'}, method='POST')
+    try:
+        with urllib.request.urlopen(req, timeout=40) as resp:
+            out = json.loads(resp.read().decode('utf-8'))
+        return out['choices'][0]['message']['content'], None
+    except urllib.error.HTTPError as e:
+        return None, 'openai ' + str(e.code) + ' ' + e.read().decode('utf-8', 'ignore')[:160]
+    except Exception as e:
+        return None, str(e)
+
 def _extract_json(s):
     if not s: return None
     m = re.search(r'\{.*\}', s, re.S)
@@ -440,6 +457,41 @@ def vision_text():
     content, err = _openai_vision(f.read(), f.mimetype, prompt, max_tokens=400)
     if err is not None: return jsonify(text='', error=err), 200
     return jsonify(text=content or '', source='ChatGPT Vision')
+
+# ---------- AI Assistant — parse a manager's instruction into ONE structured action ----------
+# PARSE ONLY: the browser then confirms + executes via the normal store-scoped endpoints,
+# so a misread can never bypass isolation or the human confirm step.
+@api.route('/api/ai-command', methods=['POST'])
+def ai_command():
+    au = require_auth()
+    if au['role'] not in ('super', 'admin'): abort(403)   # Manager + Super only
+    d = request.get_json(force=True, silent=True) or {}
+    text = (d.get('text') or '').strip()
+    if not text: return jsonify(ok=False, error='empty'), 200
+    stores = d.get('stores') or []
+    roster = (d.get('roster') or [])[:400]                # names + stores only (no PII to the model)
+    sys_prompt = (
+        "You convert a manager's instruction into ONE JSON action for a supermarket staff app. "
+        "Return ONLY compact JSON, no prose. Schema: "
+        "{\"action\":\"violation|document|email|announcement|unknown\", "
+        "\"staff\":\"<employee name exactly as written, or ''>\", "
+        "\"store\":\"<one of the stores or ''>\", \"subject\":\"<short subject>\", "
+        "\"body\":\"<message body as simple HTML paragraphs>\", \"rule\":\"<violation reason/rule>\", "
+        "\"severity\":\"Minor|Moderate|Major|Critical\", "
+        "\"step\":\"Verbal Discussion|Written Warning|Final Warning|Termination\", "
+        "\"scope\":\"store|all\"}. "
+        "Choose 'violation' for warnings/discipline; 'document' to send a note/letter to an "
+        "employee's inbox; 'email' to email an employee; 'announcement' for store or company news. "
+        "For violation/document/email you MUST identify the employee (staff). Write body in the "
+        "SAME language as the instruction. If the request is unclear, use action='unknown'.\n"
+        "Stores: " + ', '.join(stores) + "\n"
+        "Employees (name @ store): " + '; '.join(
+            '%s @ %s' % (r.get('name', ''), r.get('store', '')) for r in roster if r.get('name')))
+    content, err = _openai_chat([{'role': 'system', 'content': sys_prompt},
+                                 {'role': 'user', 'content': text}])
+    if err is not None:
+        return jsonify(ok=False, fallback=True, error=err), 200   # → browser uses its local parser
+    return jsonify(ok=True, intent=(_extract_json(content) or {'action': 'unknown'}))
 
 # ---------- CORS (only needed when frontend is on a different origin, e.g. local :8765↔:8001) ----------
 def add_cors(app):

@@ -126,30 +126,44 @@ function vioNew(){
 function vioPick(code){ const r=DB.violationRules.find(x=>x.code===code); if(!r) return; State.vio.rule=code; State.vio.ruleTitle=r.title; State.vio.sev=r.severity;
   document.querySelectorAll('.vrule').forEach(c=>c.classList.remove('active')); event.currentTarget.classList.add('active');
   const ri=$('#vio-rule'); if(ri) ri.value=r.title; const sv=$('#vio-sev2'); if(sv) sv.value=r.severity; const ac=$('#vio-action'); if(ac&&!ac.value) ac.value=r.action; }
-function vioSubmit(){
-  const staff=$('#vio-staff').value, desc=$('#vio-desc').value.trim();
-  if(!staff||staff.startsWith('—')||!State.vio.ruleTitle||!desc){ toast('Pick a rule, staff and description'); return; }
-  const step=$('#vio-step').value;
-  const store=storeForWrite($('#vio-store')?.value), id=makeRecordId('VIO',store);
+// Shared violation-creation core — used by the manual form (vioSubmit) AND the AI Assistant,
+// so both paths create identical records + side-effects (record, audit, save, email, inbox).
+function mcqCreateViolation(o){
+  o=o||{}; const staff=(o.staff||'').trim(); const store=o.store||State.branch;
+  const ruleTitle=o.ruleTitle||o.rule||'Policy violation';
+  const severity=o.severity||'Minor', step=o.step||'Verbal Discussion';
+  const desc=(o.description||'').trim(), action=o.action||'', followUp=o.followUp||'';
+  if(!staff||!desc) return null;
+  const id=makeRecordId('VIO',store);
   const rec={id,created:new Date().toISOString().slice(0,16).replace('T',' '),staffName:staff,store,
-    category:State.vio.ruleTitle,severity:$('#vio-sev2').value,step,status:step,description:desc,actionTaken:$('#vio-action').value,followUpDate:$('#vio-follow').value};
+    category:ruleTitle,severity,step,status:step,description:desc,actionTaken:action,followUpDate:followUp};
   auditLog('create','violation',rec.id,rec.store,null,rec);
   DB.modules.violation.records.unshift(rec);
   if(window.persist) window.persist();
-  // auto-email the specific staff member their violation notice (office/admin workflow),
-  // and route a copy to the office/violation recipients.
+  // email the employee + office recipients
   try{
-    const body=`Dear ${staff},\n\nA violation has been recorded against you:\n\n• Store: ${store}\n• Rule: ${State.vio.ruleTitle}\n• Severity: ${rec.severity}\n• Warning step: ${step}\n• Date: ${rec.created}\n\nDescription:\n${desc}\n${rec.actionTaken?('\nAction taken: '+rec.actionTaken):''}${rec.followUpDate?('\nFollow-up date: '+rec.followUpDate):''}\n\nPlease speak with your manager. This is a formal record.\n\n— MCQ Management`;
-    const subject=`MCQ ${store} · Violation notice — ${State.vio.ruleTitle} (${step})`;
+    const body=`Dear ${staff},\n\nA violation has been recorded against you:\n\n• Store: ${store}\n• Rule: ${ruleTitle}\n• Severity: ${severity}\n• Warning step: ${step}\n• Date: ${rec.created}\n\nDescription:\n${desc}\n${action?('\nAction taken: '+action):''}${followUp?('\nFollow-up date: '+followUp):''}\n\nPlease speak with your manager. This is a formal record.\n\n— MCQ Management`;
+    const subject=`MCQ ${store} · Violation notice — ${ruleTitle} (${step})`;
     const sm=(typeof staffByName==='function')&&staffByName(staff);
     if(sm&&sm.email&&window.mcqEmail){ mcqEmail._brevo([{email:sm.email,name:sm.name}],subject,body,mcqEmail.cfg()); toast('📧 Violation emailed to '+sm.name); }
-    if(window.mcqEmail&&mcqEmail.notify) mcqEmail.notify('violation',subject,body,{});   // office / all recipients
+    if(window.mcqEmail&&mcqEmail.notify) mcqEmail.notify('violation',subject,body,{});
   }catch(e){}
   // → the employee's own inbox (violation notice) + Superadmin inbox (all stores)
   try{ if(window.mcqMsgSend){ const smi=(typeof staffByName==='function')&&staffByName(staff);
     mcqMsgSend({kind:'violation', store, to_staff_id:(smi&&smi.id)||null,
-      subject:`Violation notice — ${State.vio.ruleTitle} (${step})`,
-      body_html:`<p>A violation has been recorded against you.</p><ul><li><b>Rule:</b> ${esc(State.vio.ruleTitle)}</li><li><b>Severity:</b> ${esc(rec.severity)}</li><li><b>Step:</b> ${esc(step)}</li></ul><p>${esc(desc).replace(/\n/g,'<br>')}</p>${rec.actionTaken?`<p><b>Action:</b> ${esc(rec.actionTaken)}</p>`:''}`}); } }catch(e){}
+      subject:`Violation notice — ${ruleTitle} (${step})`,
+      body_html:`<p>A violation has been recorded against you.</p><ul><li><b>Rule:</b> ${esc(ruleTitle)}</li><li><b>Severity:</b> ${esc(severity)}</li><li><b>Step:</b> ${esc(step)}</li></ul><p>${esc(desc).replace(/\n/g,'<br>')}</p>${action?`<p><b>Action:</b> ${esc(action)}</p>`:''}`}); } }catch(e){}
+  return rec;
+}
+window.mcqCreateViolation=mcqCreateViolation;
+function vioSubmit(){
+  const staff=$('#vio-staff').value, desc=$('#vio-desc').value.trim();
+  if(!staff||staff.startsWith('—')||!State.vio.ruleTitle||!desc){ toast('Pick a rule, staff and description'); return; }
+  const step=$('#vio-step').value;
+  const store=storeForWrite($('#vio-store')?.value);
+  const rec=mcqCreateViolation({staff,store,ruleTitle:State.vio.ruleTitle,severity:$('#vio-sev2').value,step,
+    description:desc,action:$('#vio-action').value,followUp:$('#vio-follow').value});
+  if(!rec) return;
   State.vio={rule:'',sev:'Minor',step:'Verbal Discussion',tab:'records'}; toast(`✓ Violation logged · ${step}`); buildSidebar(); renderViolation();
 }
 /* Auto-suggest the next escalation step from the staff's history (Verbal→Written→Final→Termination) */

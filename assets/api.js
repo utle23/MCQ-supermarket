@@ -60,6 +60,8 @@
     if(!(window.localStorage&&localStorage.getItem('mcq_token'))) return Promise.resolve(0);
     return _authFetch('/api/messages/unread').then(function(r){ var n=(r&&r.unread)||0; var changed=(n!==window.__inboxUnread); window.__inboxUnread=n;
       if(changed){ try{ if(window.buildSidebar)buildSidebar(); if(window.refreshInboxBadge)refreshInboxBadge(); }catch(e){} } return n; }).catch(function(){ return window.__inboxUnread; }); };
+  // ---- AI Assistant (parse only; execution stays on the normal store-scoped endpoints) ----
+  window.mcqAiCommand=function(text,roster,stores){ return _authFetch('/api/ai-command',{method:'POST',body:JSON.stringify({text:text,roster:roster||[],stores:stores||[]})}); };
   // ---- announcements ----
   window.mcqAnnList=function(){ return _authFetch('/api/announcements'); };
   window.mcqAnnPost=function(payload){ return _authFetch('/api/announcement',{method:'POST',body:JSON.stringify(payload||{})}); };
