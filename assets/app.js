@@ -410,13 +410,14 @@ function buildSidebar(){
     paintActive(); refreshSyncUi(); return;
   }
   let html = navLink('home','fa-gauge-high','Dashboard','',true);
+  html += navLink('checklist','fa-clipboard-check','Checklist','',true);   // ⭐ first & prominent for everyone
   html += navSolo('issue','fa-flag','Report Issue');
   html += navSolo('violation','fa-gavel','Violation');
-  html += navLink('feedback','fa-comment-dots',isSuper()?'Feedback Inbox':'Share Your Thought','',true);
   if(!isAdmin()){   // staff also get Training + Report Violation
     html += navLink('training','fa-graduation-cap','Training','',true);
     html += navLink('violation','fa-gavel','Report Violation','',true);
   }
+  html += navLink('feedback','fa-comment-dots',isSuper()?'Feedback Inbox':'Share Your Thought','',true);
   DB.navGroups.forEach(g=>{
     if(g.admin && !isAdmin()) return;
     const items = g.items.filter(id=>{

@@ -28,8 +28,13 @@
 .login-bg .o4{width:300px;height:300px;background:#f59e0b;bottom:6%;left:12%;opacity:.34;animation:float2 18s ease-in-out infinite}
 @keyframes float1{0%,100%{transform:translate(0,0)}50%{transform:translate(40px,30px)}}
 @keyframes float2{0%,100%{transform:translate(0,0)}50%{transform:translate(-40px,-30px)}}
-.login-card{position:relative;z-index:2;width:100%;max-width:430px;margin:auto;background:rgba(255,255,255,.97);
-  border-radius:26px;padding:34px 34px 26px;box-shadow:0 30px 80px rgba(0,0,0,.45);animation:fade .4s ease}
+.login-card{position:relative;z-index:2;width:100%;max-width:440px;margin:auto;
+  background:rgba(255,255,255,.72);backdrop-filter:blur(24px) saturate(150%);-webkit-backdrop-filter:blur(24px) saturate(150%);
+  border:1px solid rgba(255,255,255,.55);border-radius:26px;padding:34px 34px 26px;
+  box-shadow:0 30px 90px rgba(0,0,0,.5), inset 0 1px 0 rgba(255,255,255,.65);animation:fade .4s ease}
+.login-card .login-input{background:rgba(255,255,255,.88)}
+#login-mode{flex-wrap:wrap}
+#login-mode .seg-btn{flex:1 1 0;min-width:78px;padding:9px 6px;font-size:12.5px}
 .login-brand{display:flex;flex-direction:column;align-items:center;gap:8px;margin-bottom:20px;text-align:center}
 .login-brand .lb-sub{font-size:12px;color:var(--muted);font-weight:700;letter-spacing:.02em}
 .login-logo{width:50px;height:50px;border-radius:15px;display:grid;place-items:center;font-size:26px;
