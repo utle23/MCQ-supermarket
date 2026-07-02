@@ -127,7 +127,11 @@ function ckInSession(r,session){
   if(session==='Mid-afternoon') return r.when==='M';
   return false;
 }
-function ckDeadline(session){ return ((DB.checklist&&DB.checklist.deadlines)||{})[session] || CK_DEADLINE[session] || ''; }
+function ckDeadline(session){
+  // Sunday: Opening deadline is 12:00 noon (store opens later on Sundays)
+  if(session==='Opening'){ const ds=(State.chk&&State.chk.date)||ckTodayStr(); const d=new Date(ds+'T00:00'); if(d.getDay()===0) return '12:00 PM'; }
+  return ((DB.checklist&&DB.checklist.deadlines)||{})[session] || CK_DEADLINE[session] || '';
+}
 function ckEditDeadline(session){ const v=prompt('Deadline for '+session+' (e.g. 10:30 AM):', ckDeadline(session)); if(v==null) return;
   DB.checklist.deadlines=DB.checklist.deadlines||{}; DB.checklist.deadlines[session]=v.trim(); if(window.persist)window.persist(); renderChecklist(); toast('✓ Deadline updated'); }
 /* ---- in-progress checklist DRAFT (survives accidental close / lock / app-switch) ----
@@ -157,6 +161,8 @@ function renderChecklist(){
   if(!State.chk.resp) State.chk.resp={};
   const s=State.chk;
   const today=ckTodayStr(); if(!s.date) s.date=today; const viewing=s.date!==today;
+  const reopened=!!(State.chk.reopen && State.chk.reopen[s.dept+'|'+s.session]);
+  const submitted=!viewing && !isAdmin() && ckSubmittedFor(s.dept,s.session,today) && !reopened;   // show the Done screen for staff after submit
   setCrumb('✅','Store Operation Checklist',`${isSuper()?'All stores':State.branch} · ${s.session}${viewing?' · '+s.date:''}`);
   const chips=C.depts.map(d=>{ const m=C.deptMeta[d]||{}; const col=m.color||'#0e9f6e';
     return `<button class="dept-chip ${d===s.dept?'active':''}" style="--dc:${col}" ${isAdmin()?`ondblclick="ckDeptHEdit('${ckJS(d)}')" title="Double-click to rename / delete"`:''} onclick="ckDept('${ckJS(d)}')">${m.icon?`<i class="fas ${m.icon}"></i> `:''}${esc(d)}</button>`; }).join('')
@@ -180,13 +186,15 @@ function renderChecklist(){
    <div class="ck-toolbar"><div class="dept-chips">${chips}</div></div>
    ${areaChips}
    ${viewing?`<div class="ck-build-hint" style="border-color:#bcd; background:#eff6ff; color:#1e40af"><i class="fas fa-clock-rotate-left"></i> Viewing the submitted <b>${esc(s.session)}</b> checklist for <b>${esc(s.date)}</b> (read-only).</div>`:(isAdmin()?`<div class="ck-build-hint"><i class="fas fa-wand-magic-sparkles"></i> <b>Builder mode</b> — double-click a department, section or task to rename / delete · tap <b>+</b> to add</div>`:'')}
-   ${viewing?'':`<div class="ck-bulk"><button class="btn sm ghost" onclick="ckAll(true)"><i class="fas fa-check-double"></i>&nbsp; Check all done</button><button class="btn sm ghost" onclick="ckAll(false)"><i class="fas fa-rotate-left"></i>&nbsp; Uncheck all</button></div>`}
+   ${(viewing||submitted)?'':`<div class="ck-bulk"><button class="btn sm ghost" onclick="ckAll(true)"><i class="fas fa-check-double"></i>&nbsp; Check all done</button><button class="btn sm ghost" onclick="ckAll(false)"><i class="fas fa-rotate-left"></i>&nbsp; Uncheck all</button></div>`}
    <div id="chk-prog" class="ck-progbar"></div>
    <div id="ck-temp-report"></div>
    <div id="chk-body"></div>
-   ${viewing?'':`<div class="ck-submit"><div id="ck-submit-note" class="ck-submit-note"></div>
+   ${(viewing||submitted)?'':`<div class="ck-submit"><div id="ck-submit-note" class="ck-submit-note"></div>
    <button id="ck-submit-btn" class="btn primary lg" onclick="chkSubmit()">✓ Submit ${s.session} checklist</button></div>`}`;
-  if(viewing){ const b=$('#chk-body'); if(b) b.innerHTML=ckPastHTML(); } else { ckDraw(); ckUpdateSubmitBtn(); }
+  if(viewing){ const b=$('#chk-body'); if(b) b.innerHTML=ckPastHTML(); }
+  else if(submitted){ const b=$('#chk-body'); if(b) b.innerHTML=ckDoneHTML(s.dept,s.session); }
+  else { ckDraw(); ckUpdateSubmitBtn(); }
 }
 function ckSetDate(v){ State.chk.date=v||ckTodayStr(); State.chk.editing=null; State.chk.editDeptH=null; State.chk.editArea=null; renderChecklist(); }
 
@@ -268,6 +276,23 @@ function ckPastHTML(){
   });
   return html;
 }
+function ckReopen(dept,session){ State.chk.reopen=State.chk.reopen||{}; State.chk.reopen[dept+'|'+session]=1; renderChecklist(); }
+function ckDoneHTML(dept,session){
+  const subs=(DB.checklistSubs||[]).filter(x=>x.store===State.branch&&x.dept===dept&&x.session===session&&x.date===ckTodayStr());
+  const s=subs[0]||{done:0,total:0,progress:0};
+  const out=(s.items||[]).filter(it=>!it.done);
+  return `<div class="ck-done">
+      <div class="ck-done-ring"><svg viewBox="0 0 52 52"><circle class="cs-circle" cx="26" cy="26" r="24"/><path class="cs-check" d="M14.5 27l7.5 7.5 16-16.5"/></svg></div>
+      <h3>${esc(dept)} · ${esc(session)} — Submitted ✓</h3>
+      <p>${s.done||0}/${s.total||0} done · ${s.progress||0}%${s.by?` · by ${esc(s.by)}`:''}${s.status==='Verified'?' · ✅ Verified':''}</p>
+      ${out.length?`<div class="ck-done-out">⚠️ ${out.length} not completed: ${esc(out.slice(0,8).map(it=>it.task).join(', '))}${out.length>8?'…':''}</div>`:'<div class="ck-done-ok">All tasks completed. Great work! 🎉</div>'}
+      <div class="ck-done-actions">
+        <button class="btn" onclick="ckReopen('${ckJS(dept)}','${ckJS(session)}')"><i class="fas fa-pen"></i>&nbsp; Re-open to edit</button>
+        <button class="btn primary" onclick="ckSharePDF('${ckJS(session)}')"><i class="fab fa-whatsapp"></i>&nbsp; Share PDF</button>
+      </div>
+    </div>
+    <div class="ck-done-summary">${ckPastHTML()}</div>`;
+}
 function ckRows(ignoreArea){
   const s=State.chk;
   return DB.checklist.items.map(ckItem)
@@ -279,7 +304,7 @@ function ckList(){
 function ckAreaChips(){
   const s=State.chk, admin=isAdmin();
   const areas=[...new Set(ckRows(true).map(r=>r.area))];
-  if(areas.length<=1 && !admin){ s.area='ALL'; return ''; }            // staff: nothing to switch
+  if(!admin){ s.area='ALL'; return ''; }   // staff: ONE long list per department — sections shown as headings, submit once
   if(areas.length>1 && !areas.includes(s.area)) s.area=areas[0];
   if(areas.length<=1) s.area='ALL';
   const chips=areas.map(a=>{ const done=ckAreaDone(a); return `<button class="area-chip ${a===s.area?'active':''} ${done?'sec-ok':'sec-pending'}" ${admin?`ondblclick="ckSectionEdit('${ckJS(s.dept)}','${ckJS(a)}')" title="Double-click to rename / delete"`:''} onclick="ckArea('${ckJS(a)}')">${done?'✓ ':'○ '}${esc(a)}</button>`; }).join('')
@@ -361,7 +386,7 @@ function ckDraw(){
           <button class="ck-check" onclick="ckTick(${r.i})">${done?'✓':''}</button>
           <div class="ck-main"><div class="ck-name">${esc(r.task)}</div>
             ${r.meta.temp?ckTempBox(r,st):''}
-            <input class="ck-note" placeholder="Add note…" value="${esc(st.note||'')}" oninput="ckNote(${r.i},this.value)">${photoHtml}</div></div>`;
+            <div class="ck-note-row"><input class="ck-note" placeholder="Add note / reason…" value="${esc(st.note||'')}" oninput="ckNote(${r.i},this.value)">${photoHtml}</div></div></div>`;
       });
       if(isAdmin()) html+=`<button class="ck-add-ghost" onclick="ckAddTask('${ckJS(dept)}','${ckJS(area)}')"><i class="fas fa-plus"></i> Add task</button>`;
     });
@@ -419,7 +444,8 @@ function ckTaskIssue(r,st){
   st=st||{};
   if(st.done){
     if(r.meta&&r.meta.temp && !st.defrosting && (!st.temp || st.aiStatus==='scanning')) return 'temperature not recorded yet';
-    if(r.photo && !(r.meta&&r.meta.temp&&st.defrosting) && (st.photos||[]).length<1) return 'photo missing';
+    // temperature tasks: photo is OPTIONAL (a manual °C entry is enough); other photo tasks still need a photo
+    if(r.photo && !(r.meta&&r.meta.temp) && (st.photos||[]).length<1) return 'photo missing';
     return null;   // satisfied
   }
   if(String(st.note||'').trim()) return null;   // not done but a reason was written → OK
@@ -465,14 +491,15 @@ function ckTick(i){
     toast('AI Vision is still reading the temperature');
     return;
   }
-  if(!st.done && ps && !skipPhoto && (st.photos||[]).length<1){
+  if(!st.done && r.meta.temp && !st.defrosting && !st.temp){
+    toast('Enter a temperature (type it or take a photo) first');
+    return;
+  }
+  // non-temperature photo tasks still need a photo before ticking done
+  if(!st.done && ps && !r.meta.temp && (st.photos||[]).length<1){
     toast('📷 Attach at least 1 photo before marking this done');
     const row=document.getElementById('ck-row-'+i); const pe=row&&row.querySelector('.ck-photos');
     if(pe){ pe.classList.add('invalid','shake'); setTimeout(()=>pe.classList.remove('shake','invalid'),1400); }
-    return;
-  }
-  if(!st.done && r.meta.temp && !st.defrosting && !st.temp){
-    toast('AI Vision has not saved a temperature yet');
     return;
   }
   st.done=!st.done; const row=document.getElementById('ck-row-'+i);
@@ -782,18 +809,19 @@ function ckQueueTempAlert(i,temp){
 }
 function ckTempBox(r,st){
   const range=ckTempRange(r.meta.type), temp=st.temp;
-  const needsConfirm=st.aiStatus==='confirm';
-  const status=st.defrosting?'defrost':(temp?(temp.inRange?'ok':'bad'):(st.aiStatus==='scanning'?'scan':(needsConfirm?'confirm':(st.aiStatus==='error'?'error':'idle'))));
-  const manualValue=Number.isFinite(Number(st.aiSuggestion?.value))?Number(st.aiSuggestion.value).toFixed(1):'';
-  const reading=st.defrosting?'DEFROSTING':(temp?`${temp.value.toFixed(1)} C`:(st.aiStatus==='scanning'?'Scanning photo...':(needsConfirm?(manualValue!==''?`AI read ${manualValue} °C`:'Enter temperature'):(st.aiStatus==='error'?'Check / enter temperature':'Waiting for photo'))));
-  const source=temp?` · ${temp.source||'AI Vision'}${temp.confidence?` ${temp.confidence}%`:''}`:'';
-  const detail=temp?`${temp.inRange?'Within safety range':'Outside safety range - Gmail alert queued'}${source}`:((st.aiStatus==='error'||needsConfirm)?'Edit the value if it is wrong, then tap Confirm.':`Safety range ${range.text}`);
-  const showRetake=!temp&&!st.defrosting&&(st.aiStatus==='error'||needsConfirm);
-  const manual=showRetake?`<div class="ck-temp-manual">
-      <input id="ck-temp-manual-${r.i}" type="number" step="0.1" min="-45" max="35" value="${esc(manualValue)}" placeholder="Enter °C">
-      <button class="mini good" type="button" onclick="ckManualTemp(${r.i})">Confirm</button>
-      <button class="mini" type="button" onclick="ckRetakeTemp(${r.i})">Retake</button>
-    </div>`:'';
+  const scanning=st.aiStatus==='scanning';
+  const status=st.defrosting?'defrost':(temp?(temp.inRange?'ok':'bad'):(scanning?'scan':(st.aiStatus==='error'||st.aiStatus==='confirm'?'confirm':'idle')));
+  const suggested=Number.isFinite(Number(st.aiSuggestion?.value))?Number(st.aiSuggestion.value).toFixed(1):'';
+  const reading=st.defrosting?'DEFROSTING':(temp?`${temp.value.toFixed(1)} C`:(scanning?'Scanning photo…':(suggested!==''?`AI read ${suggested} °C — check & save`:'Type °C, or 📷 to auto-read')));
+  const source=temp?` · ${temp.source||'Manual'}${temp.confidence?` ${temp.confidence}%`:''}`:'';
+  const detail=temp?`${temp.inRange?'Within safety range':'OUT OF RANGE — alert queued'}${source}`:`Safety range ${range.text}`;
+  // Manual entry is ALWAYS available (photo/AI is optional) — type a value and Save, or use a photo.
+  const manualVal = temp? temp.value.toFixed(1) : suggested;
+  const manual = st.defrosting ? '' : `<div class="ck-temp-manual">
+      <input id="ck-temp-manual-${r.i}" type="number" step="0.1" min="-45" max="35" value="${esc(manualVal)}" placeholder="°C" ${scanning?'disabled':''} onkeydown="if(event.key==='Enter'){event.preventDefault();ckManualTemp(${r.i});}">
+      <button class="mini good" type="button" onclick="ckManualTemp(${r.i})">${temp?'Update':'Save °C'}</button>
+      ${(st.photos&&st.photos.length)?`<button class="mini" type="button" onclick="ckRetakeTemp(${r.i})">Clear photo</button>`:''}
+    </div>`;
   return `<div class="ck-temp-box ${status}">
     <div class="ck-temp-main"><span class="ck-temp-label">${esc(range.label)}</span><b>${esc(reading)}</b><small>${esc(detail)}</small>${manual}</div>
     <label class="ck-defrost"><input type="checkbox" ${st.defrosting?'checked':''} onchange="ckDefrost(${r.i},this.checked)"> Defrosting</label>
@@ -882,7 +910,9 @@ function ckDoSubmit(){
   if(window.persist) window.persist();
   if(window.mcqEmail) mcqEmail.notify('checklist', `Checklist submitted · ${sub.dept} ${sub.session} · ${State.branch}`,
     `Department: ${sub.dept}\nSession: ${sub.session}\nStore: ${State.branch}\nProgress: ${doneN}/${totalN} (${sub.progress}%)\nSubmitted by: ${sub.by||'—'}\nResponsible: ${sub.responsible||'—'}${out?`\n⚠️ ${out} temperature alert(s)`:''}`, {dept:sub.dept});
+  if(State.chk&&State.chk.reopen) delete State.chk.reopen[sub.dept+'|'+sub.session];   // clear re-open flag so the Done screen shows
   ckSubmitSuccess(sub,out);
+  renderChecklist();   // repaint underneath → shows the "Submitted ✓" Done screen
 }
 /* smooth, instant success confirmation after submit */
 function ckSubmitSuccess(sub,out){
