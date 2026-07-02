@@ -1,0 +1,28 @@
+MCQ Supermarket - Operations App
+
+Hi team,
+
+We are rolling out the MCQ Supermarket Operations app - one place for daily
+checklists, photo proof, shift handover, reports, staff & HR, announcements
+and analytics.
+
+Open the app:
+  https://mcqsupermarket.pythonanywhere.com/
+
+Install it like an app: open the link, then use your browser menu to
+"Add to Home Screen" (phone) or "Install" (computer).
+
+How to sign in - pick your role tab on the sign-in screen, then:
+  - Staff: no store; use the numeric password your manager creates for you.
+  - Department Lead: choose your store, then your store Dept-Lead password.
+  - Manager: choose your store, then your store Manager password.
+  - Super Admin / Chu Ba: no store; use the password on the confidential sheet.
+
+Your full role passwords for each store are in the attached confidential
+accounts & passwords sheet, and a step-by-step illustrated guide is attached
+for your role.
+
+Any questions, just reply to this email.
+
+Thank you,
+MCQ International
