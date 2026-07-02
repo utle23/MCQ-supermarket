@@ -114,7 +114,8 @@ function showLogin(notice){
       <p class="login-p">Sign in to your store operations workspace.</p>
       ${notice?`<div class="login-note"><i>⏱️</i> ${esc(notice)}</div>`:''}
       <div class="seg" id="login-mode">
-        <button class="seg-btn active" data-mode="staff">🧑‍💼 Dept Lead</button>
+        <button class="seg-btn active" data-mode="employee">🧑‍🏭 Staff</button>
+        <button class="seg-btn" data-mode="staff">🧑‍💼 Dept Lead</button>
         <button class="seg-btn" data-mode="admin">🛡️ Manager</button>
         <button class="seg-btn" data-mode="super">👑 Super</button>
         <button class="seg-btn" data-mode="ba">👓 Chú Ba</button>
@@ -158,7 +159,7 @@ function loginMode(){ return $('#login-mode .seg-btn.active').dataset.mode; }
 function togglePw(){ const p=$('#login-pw'); p.type=p.type==='password'?'text':'password'; }
 function loginFail(m){ const e=$('#login-err'); if(e) e.textContent='❌ '+m; const c=$('.login-card'); if(c){ c.classList.add('shake'); setTimeout(()=>c.classList.remove('shake'),450); } }
 function updateLoginHint(){ const el=$('#login-hint'); if(!el) return; const mode=loginMode(), branch=$('#login-branch')?.value;
-  const row=$('#login-store-row'); if(row) row.style.display=(mode==='super'||mode==='ba')?'none':'block';
+  const row=$('#login-store-row'); if(row) row.style.display=(mode==='super'||mode==='ba'||mode==='employee')?'none':'block';
   el.innerHTML = mode==='super' ? `👑 Super Admin — all stores &amp; cross-store compare`
     : mode==='ba' ? `👓 Chú Ba — view checklist results across all stores (read-only)`
     : mode==='admin' ? `🛡️ Manager — ${esc(branch||'this store')} only`
@@ -171,7 +172,7 @@ function doLogin(){
   if(window.MCQDB && MCQDB._api && MCQDB.login){
     const btn=$('.login-btn'); if(btn){ btn.disabled=true; btn.textContent='Signing in…'; }
     MCQDB.login(mode, branch, pw).then(res=>{
-      if(res && res.ok){ loginAs(res.role, (res.role==='super'||res.role==='ba')?'All stores':res.store); }
+      if(res && res.ok){ loginAs(res.role, (res.role==='super'||res.role==='ba')?'All stores':res.store, {staffId:res.staff_id, name:res.staff_name}); }
       else { if(btn){ btn.disabled=false; btn.textContent='Sign In →'; } loginFail(res&&res.error?res.error:'Incorrect password.'); }
     }).catch(()=>{ if(btn){ btn.disabled=false; btn.textContent='Sign In →'; } loginFail('Cannot reach the server.'); });
     return;
@@ -187,6 +188,10 @@ function doLogin(){
   if(mode==='admin'){
     if(pw===(DB.auth.adminPasswords||{})[branch]) return loginAs('admin',branch);
     return loginFail('Incorrect admin password for '+branch+'.');
+  }
+  if(mode==='employee'){
+    // individual staff logins live only on the server — no offline fallback
+    return loginFail('Staff logins need an internet connection. Please try again when online.');
   }
   // staff: must match THIS branch's password
   if(pw===DB.auth.branchPasswords[branch]) return loginAs('staff',branch);
@@ -306,11 +311,12 @@ function maybeStartRouteSync(){
     startAccountSync(true);
   }
 }
-async function loginAs(role, branch){
-  const name = role==='super' ? 'Head Office' : role==='ba' ? 'Chú Ba' : role==='admin' ? (branch+' Manager') : (branch+' Dept Lead');
-  const initials = role==='super' ? 'HO' : role==='ba' ? 'CB' : branch.slice(0,2).toUpperCase();
-  State.account={ name, role, branch, initials };
-  State.branch=branch; State.role=role==='staff'?'store':'ho';
+async function loginAs(role, branch, meta){
+  meta=meta||{};
+  const name = role==='super' ? 'Head Office' : role==='ba' ? 'Chú Ba' : role==='employee' ? (meta.name||'Staff') : role==='admin' ? (branch+' Manager') : (branch+' Dept Lead');
+  const initials = role==='super' ? 'HO' : role==='ba' ? 'CB' : role==='employee' ? (String(meta.name||'S').trim().slice(0,2).toUpperCase()) : branch.slice(0,2).toUpperCase();
+  State.account={ name, role, branch, initials, staffId:meta.staffId||null, staffName:meta.name||null };
+  State.branch=branch; State.role=(role==='staff'||role==='employee')?'store':'ho';
   try{ sessionStorage.setItem('mcq_acct', JSON.stringify(State.account)); }catch(e){}
   const btn=$('.login-btn'); if(btn){ btn.disabled=true; btn.textContent='Opening workspace...'; }
   hydrateAccountData();
@@ -413,6 +419,20 @@ function buildSidebar(){
     $$('#nav .nav-item').forEach(el=>el.onclick=()=>{ go(el.dataset.mod); if(window.innerWidth<=860) closeSidebarM(); });
     paintActive(); refreshSyncUi(); return;
   }
+  if(isEmployee()){   // individual staff — personal workspace only
+    const ub=(window.inboxUnread?inboxUnread():0);
+    $('#nav').innerHTML =
+      navLink('home','fa-house','My Home','',true)+
+      navLink('inbox','fa-inbox','My Inbox',ub?`<span class="count">${ub}</span>`:'',true)+
+      navLink('announcements','fa-bullhorn','Announcements','',true)+
+      navLink('issue','fa-flag','Report Issue','',true)+
+      navLink('myvios','fa-gavel','My Violations','',true)+
+      navLink('training','fa-graduation-cap','Training','',true)+
+      navLink('feedback','fa-comment-dots','Ideas & Feedback','',true)+
+      navLink('profile','fa-id-card','My Profile','',true);
+    $$('#nav .nav-item').forEach(el=>el.onclick=()=>{ go(el.dataset.mod); if(window.innerWidth<=860) closeSidebarM(); });
+    paintActive(); refreshSyncUi(); return;
+  }
   let html = navLink('home','fa-gauge-high','Dashboard','',true);
   html += navLink('checklist','fa-clipboard-check','Checklist','',true);   // ⭐ first & prominent for everyone
   html += navSolo('issue','fa-flag','Report Issue');
@@ -497,6 +517,13 @@ function render(){
   buildSidebar();
   refreshBell();
   if(isBa()) return renderBaView();   // Chú Ba only ever sees the read-only checklist viewer
+  if(isEmployee()){   // individual staff — personal workspace only
+    const own={home:renderEmployeeHome, profile:renderEmployeeProfile, myvios:renderMyViolations};
+    if(own[mod]) return own[mod]();
+    const shared=['issue','feedback','inbox','announcements','training'];   // rendered by their normal renderers below
+    if(!shared.includes(mod)) return renderEmployeeHome();
+    // fall through to customPages/module routing for the shared pages the employee may use
+  }
   if(mod==='home') return isAdmin()?renderHome():renderStaffHome();
   if(DB.customPages[mod]){
     const page=DB.customPages[mod];

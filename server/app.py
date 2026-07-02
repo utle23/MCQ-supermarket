@@ -53,10 +53,52 @@ def login():
     res = db.verify_login(d.get('mode'), d.get('store'), d.get('password'))
     if not res:
         return jsonify(ok=False, error='Invalid credentials'), 401
-    role, store = res
-    tok = db.issue_token(role, store)
+    role, store = res[0], res[1]
+    meta = res[2] if len(res) > 2 else {}
+    tok = db.issue_token(role, store, meta.get('staff_id'), meta.get('staff_name'))
     return jsonify(ok=True, token=tok, role=role, store=store,
-                   stores=db.STORES if role == 'super' else [store])
+                   staff_id=meta.get('staff_id'), staff_name=meta.get('staff_name'),
+                   stores=db.STORES if role in ('super', 'ba') else [store])
+
+# ---------- staff accounts (Manager/Super create & view individual employee logins) ----------
+@api.route('/api/staff-account', methods=['POST'])
+def staff_account():
+    au = require_auth(); require_write(au)
+    d = request.get_json(force=True, silent=True) or {}
+    store = d.get('store'); require_store(au, store)
+    acct = db.create_staff_account(store, d.get('staff_id'), d.get('name'), reset=bool(d.get('reset')))
+    if not acct: abort(400)
+    db.write_audit(uid(au), store, 'account', 'staff', str(d.get('staff_id')), None, {'reset': bool(d.get('reset'))})
+    return jsonify(ok=True, account=acct)
+
+@api.route('/api/staff-accounts/<store_id>', methods=['GET'])
+def staff_accounts(store_id):
+    au = require_auth(); require_store(au, store_id)
+    if au['role'] not in ('super', 'admin'): abort(403)
+    return jsonify(ok=True, accounts=db.get_staff_accounts(store_id))
+
+@api.route('/api/staff-account/delete', methods=['POST'])
+def staff_account_delete():
+    au = require_auth(); require_write(au)
+    d = request.get_json(force=True, silent=True) or {}
+    store = d.get('store'); require_store(au, store)
+    db.delete_staff_account(store, d.get('staff_id'))
+    return jsonify(ok=True)
+
+@api.route('/api/staff-profile', methods=['POST'])
+def staff_profile():
+    au = require_auth(); require_write(au)
+    d = request.get_json(force=True, silent=True) or {}
+    store = d.get('store'); require_store(au, store)
+    sid = str(d.get('staff_id') or '')
+    if not sid: abort(400)
+    # an employee may only edit their OWN row; Manager/Super may edit anyone in their store
+    if au['role'] == 'employee' and str(au.get('staff_id') or '') != sid: abort(403)
+    if au['role'] not in ('employee', 'admin', 'super'): abort(403)
+    patch = d.get('patch') or {}
+    cur = db.update_staff_profile(store, sid, patch)
+    db.write_audit(uid(au), store, 'profile', 'staff', sid, None, {'fields': list(patch.keys()) if isinstance(patch, dict) else []})
+    return jsonify(ok=True, staff=cur)
 
 # ---------- store list / summary ----------
 @api.route('/api/stores')

@@ -45,6 +45,9 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL, created_at TEXT);
 CREATE TABLE IF NOT EXISTS tokens (
   token TEXT PRIMARY KEY, role TEXT NOT NULL, store_id TEXT, created_at REAL, expires_at REAL);
+CREATE TABLE IF NOT EXISTS staff_accounts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, store_id TEXT NOT NULL, staff_id TEXT NOT NULL,
+  staff_name TEXT, password TEXT NOT NULL UNIQUE, created_at TEXT, updated_at TEXT);
 CREATE TABLE IF NOT EXISTS store_state (
   store_id TEXT PRIMARY KEY, state_json TEXT, updated_at TEXT, updated_by TEXT);
 CREATE TABLE IF NOT EXISTS store_config (
@@ -122,6 +125,12 @@ def init_db():
     except Exception: pass
     try: conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_sched_recid ON schedule_history(store_id, rec_id)')
     except Exception: pass
+    # migration: tokens carry the employee identity (staff_id/name) for individual logins
+    for col in ('staff_id', 'staff_name'):
+        try: conn.execute('ALTER TABLE tokens ADD COLUMN %s TEXT' % col)
+        except Exception: pass
+    try: conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_staffacct ON staff_accounts(store_id, staff_id)')
+    except Exception: pass
     # seed stores
     for s in STORES:
         conn.execute('INSERT OR IGNORE INTO stores(id,name,active,created_at) VALUES(?,?,1,?)', (s, s, now()))
@@ -157,7 +166,8 @@ def init_db():
 
 # ---- auth ----
 def verify_login(mode, store, pw):
-    """Returns (role, store_id) on success or None. store_id is 'ALL' for super."""
+    """Returns (role, store_id[, meta]) on success or None. store_id is 'ALL' for super.
+    For mode 'employee' the 3rd element is {staff_id, staff_name}."""
     conn = connect()
     try:
         if mode == 'super':
@@ -166,22 +176,28 @@ def verify_login(mode, store, pw):
         if mode == 'ba':
             row = conn.execute('SELECT password_hash FROM users WHERE role="ba"').fetchone()
             return ('ba', 'ALL') if row and row['password_hash'] == hash_pw(pw) else None
+        if mode == 'employee':
+            # individual staff account — numeric password only (globally unique)
+            row = conn.execute('SELECT store_id, staff_id, staff_name FROM staff_accounts WHERE password=?',
+                               (str(pw or '').strip(),)).fetchone()
+            if not row or row['store_id'] not in STORES: return None
+            return ('employee', row['store_id'], {'staff_id': row['staff_id'], 'staff_name': row['staff_name']})
         if mode == 'admin':
             if store not in STORES: return None
             row = conn.execute('SELECT password_hash FROM users WHERE role="admin" AND store_id=?', (store,)).fetchone()
             return ('admin', store) if row and row['password_hash'] == hash_pw(pw) else None
-        # staff: per-store password
+        # staff (Department Lead): per-store password
         if store not in STORES: return None
         row = conn.execute('SELECT password_hash FROM users WHERE role="staff" AND store_id=?', (store,)).fetchone()
         return ('staff', store) if row and row['password_hash'] == hash_pw(pw) else None
     finally:
         conn.close()
 
-def issue_token(role, store_id):
+def issue_token(role, store_id, staff_id=None, staff_name=None):
     tok = secrets.token_hex(24)
     conn = connect()
-    conn.execute('INSERT INTO tokens(token,role,store_id,created_at,expires_at) VALUES(?,?,?,?,?)',
-                 (tok, role, store_id, time.time(), time.time() + TOKEN_TTL))
+    conn.execute('INSERT INTO tokens(token,role,store_id,created_at,expires_at,staff_id,staff_name) VALUES(?,?,?,?,?,?,?)',
+                 (tok, role, store_id, time.time(), time.time() + TOKEN_TTL, staff_id, staff_name))
     conn.commit(); conn.close()
     return tok
 
@@ -189,9 +205,87 @@ def auth_from_token(token):
     if not token: return None
     conn = connect()
     try:
-        row = conn.execute('SELECT role,store_id,expires_at FROM tokens WHERE token=?', (token,)).fetchone()
+        row = conn.execute('SELECT role,store_id,expires_at,staff_id,staff_name FROM tokens WHERE token=?', (token,)).fetchone()
         if not row or row['expires_at'] < time.time(): return None
-        return {'role': row['role'], 'store_id': row['store_id']}
+        return {'role': row['role'], 'store_id': row['store_id'],
+                'staff_id': row['staff_id'] if 'staff_id' in row.keys() else None,
+                'staff_name': row['staff_name'] if 'staff_name' in row.keys() else None}
+    finally:
+        conn.close()
+
+# ---- staff accounts (individual employee logins; numeric, unique, viewable) ----
+def _role_pw_set():
+    s = {SUPER_PW, BA_PW, '0000'}
+    s.update(ADMIN_PW.values()); s.update(BRANCH_PW.values())
+    return s
+
+def _gen_staff_pw(conn):
+    used = _role_pw_set()
+    existing = {r['password'] for r in conn.execute('SELECT password FROM staff_accounts').fetchall()}
+    used.update(existing)
+    for _ in range(500):
+        pw = str(secrets.randbelow(900000) + 100000)   # 6-digit, random (not sequential)
+        if pw not in used:
+            return pw
+    return str(secrets.randbelow(9000000) + 1000000)    # 7-digit fallback
+
+def create_staff_account(store, staff_id, name, reset=False):
+    if store not in STORES: return None
+    conn = connect()
+    try:
+        row = conn.execute('SELECT password FROM staff_accounts WHERE store_id=? AND staff_id=?', (store, str(staff_id))).fetchone()
+        if row and not reset:
+            conn.execute('UPDATE staff_accounts SET staff_name=?, updated_at=? WHERE store_id=? AND staff_id=?',
+                         (name, now(), store, str(staff_id)))
+            conn.commit()
+            return {'store': store, 'staff_id': str(staff_id), 'name': name, 'password': row['password']}
+        pw = _gen_staff_pw(conn)
+        if row:
+            conn.execute('UPDATE staff_accounts SET password=?, staff_name=?, updated_at=? WHERE store_id=? AND staff_id=?',
+                         (pw, name, now(), store, str(staff_id)))
+        else:
+            conn.execute('INSERT INTO staff_accounts(store_id,staff_id,staff_name,password,created_at,updated_at) VALUES(?,?,?,?,?,?)',
+                         (store, str(staff_id), name, pw, now(), now()))
+        conn.commit()
+        return {'store': store, 'staff_id': str(staff_id), 'name': name, 'password': pw}
+    finally:
+        conn.close()
+
+def update_staff_profile(store, staff_id, patch):
+    """Merge a patch into ONE staff row (used by employee self-edit — avoids posting the
+    whole store blob, keeping concurrency safe)."""
+    conn = connect()
+    try:
+        row = conn.execute('SELECT data_json FROM staff WHERE store_id=? AND id=?', (store, str(staff_id))).fetchone()
+        cur = {}
+        if row and row['data_json']:
+            try: cur = json.loads(row['data_json'])
+            except Exception: cur = {}
+        if isinstance(patch, dict):
+            for k in patch: cur[k] = patch[k]
+        cur['store'] = store; cur['id'] = str(staff_id)
+        conn.execute('INSERT OR REPLACE INTO staff(id,store_id,data_json) VALUES(?,?,?)', (str(staff_id), store, json.dumps(cur)))
+        # keep the account's cached name in sync when the employee renames themselves
+        if isinstance(patch, dict) and patch.get('name'):
+            conn.execute('UPDATE staff_accounts SET staff_name=? WHERE store_id=? AND staff_id=?', (patch['name'], store, str(staff_id)))
+        conn.commit()
+        return cur
+    finally:
+        conn.close()
+
+def get_staff_accounts(store):
+    conn = connect()
+    try:
+        rows = conn.execute('SELECT staff_id, staff_name, password, updated_at FROM staff_accounts WHERE store_id=?', (store,)).fetchall()
+        return [{'staff_id': r['staff_id'], 'name': r['staff_name'], 'password': r['password'], 'updated_at': r['updated_at']} for r in rows]
+    finally:
+        conn.close()
+
+def delete_staff_account(store, staff_id):
+    conn = connect()
+    try:
+        conn.execute('DELETE FROM staff_accounts WHERE store_id=? AND staff_id=?', (store, str(staff_id)))
+        conn.commit()
     finally:
         conn.close()
 

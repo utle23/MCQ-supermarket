@@ -1145,3 +1145,20 @@ table.jobduty td{vertical-align:top}
 /* ---- Performance admin adjust ---- */
 .perf-override-tag{margin-top:8px;font-size:11.5px;font-weight:700;color:#7c3aed;background:#ede9fe;padding:3px 10px;border-radius:999px;display:inline-block}
 .perf-adjust{margin-top:0}
+/* ---- Employee (individual staff) personal workspace ---- */
+.emp-hero{display:flex;align-items:center;gap:18px;background:linear-gradient(135deg,#0e9f6e,#065f46);color:#fff;border-radius:18px;padding:20px 22px;box-shadow:0 10px 30px rgba(6,95,70,.28)}
+.emp-ava{flex:0 0 auto}
+.emp-ava-img{width:72px;height:72px;border-radius:50%;object-fit:cover;border:3px solid rgba(255,255,255,.65);box-shadow:0 4px 12px rgba(0,0,0,.2)}
+.emp-ava-ph{width:72px;height:72px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:28px;font-weight:800;background:rgba(255,255,255,.2);border:3px solid rgba(255,255,255,.5)}
+.emp-hi .eh-name{font-size:22px;font-weight:800;letter-spacing:.2px}
+.emp-hi .eh-sub{opacity:.92;font-size:13.5px;margin-top:2px}
+.emp-chips{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.emp-chip{background:rgba(255,255,255,.18);border:1px solid rgba(255,255,255,.3);color:#fff;font-size:12px;font-weight:600;padding:4px 11px;border-radius:999px}
+.emp-chip.ok{background:rgba(255,255,255,.92);color:#065f46}
+.emp-vio-action{margin-top:8px;font-size:13px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;padding:7px 10px;border-radius:8px}
+.ep-photo-row{display:flex;align-items:center;gap:18px}
+.ep-photo{position:relative;width:96px;height:96px;border-radius:50%;overflow:hidden;cursor:pointer;flex:0 0 auto;background:#f1f5f9;border:2px dashed #cbd5e1;display:flex;align-items:center;justify-content:center}
+.ep-photo img{width:100%;height:100%;object-fit:cover}
+.ep-photo-empty{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#94a3b8;font-size:26px}
+.acct-pw{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;background:#ecfdf5;color:#065f46;border:1px solid #a7f3d0;padding:2px 8px;border-radius:7px;font-size:13px}
+.btn.xs{padding:3px 8px;font-size:12px;line-height:1.2;border-radius:7px}

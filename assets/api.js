@@ -39,6 +39,15 @@
       return fetch((BASE||'')+'/api/settings',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+tok},body:JSON.stringify({key:key,value:value})})
         .then(function(r){return r.json().catch(function(){return {};});}).catch(function(){return {ok:false};}); }
   };
+  // individual staff accounts (Manager/Super create & view employee logins)
+  function _authFetch(path, opts){ var tok=(window.localStorage&&localStorage.getItem('mcq_token'))||''; opts=opts||{};
+    opts.headers=Object.assign({'Content-Type':'application/json',Authorization:'Bearer '+tok},opts.headers||{});
+    return fetch((BASE||'')+path,opts).then(function(r){return r.json().catch(function(){return {ok:false};});}).catch(function(){return {ok:false};}); }
+  window.mcqStaffAccount=function(store,staffId,name,reset){ return _authFetch('/api/staff-account',{method:'POST',body:JSON.stringify({store:store,staff_id:staffId,name:name,reset:!!reset})}); };
+  window.mcqStaffAccounts=function(store){ return _authFetch('/api/staff-accounts/'+encodeURIComponent(store)); };
+  window.mcqStaffAccountDelete=function(store,staffId){ return _authFetch('/api/staff-account/delete',{method:'POST',body:JSON.stringify({store:store,staff_id:staffId})}); };
+  // employee edits ONE staff row (own profile) — patches only, never the whole store blob
+  window.mcqStaffProfile=function(store,staffId,patch){ return _authFetch('/api/staff-profile',{method:'POST',body:JSON.stringify({store:store,staff_id:staffId,patch:patch||{}})}); };
   // explicit delete — the per-store save MERGES (never mass-deletes), so real deletions
   // are propagated here. table: records|staff|checklist_submissions|bin_records|schedule_history
   window.mcqDeleteRecords = function(table, ids, opts){

@@ -242,6 +242,119 @@ function renderFeedback(){
     </div></div>`;
 }
 
+/* ============================================================ EMPLOYEE — individual staff personal workspace */
+// resolve the logged-in employee's own staff record (by id first, then by cached name)
+function myStaff(){
+  const a=State.account||{}; const id=a.staffId, nm=a.staffName||a.name;
+  return (DB.staff||[]).find(s=>id&&String(s.id)===String(id)) || (DB.staff||[]).find(s=>s.name===nm) || {name:nm||'',store:a.branch||''};
+}
+// records in a people-register (violation/reward/raise/birthday…) that belong to me
+function myRegRecords(mod){
+  const s=myStaff(), nm=s.name||'', store=s.store||State.branch;
+  return (((DB.modules||{})[mod]&&DB.modules[mod].records)||[])
+    .filter(r=>r.store===store && ((r.staffName&&r.staffName===nm)||(r.name&&r.name===nm)||(Array.isArray(r.staffIds)&&s.id&&r.staffIds.includes(s.id))));
+}
+function renderEmployeeHome(){
+  setAccent('#0e9f6e'); setCrumb('🏠','My Home','MCQ '+(State.branch||''));
+  const s=myStaff(), first=String(s.name||'Team').split(' ')[0];
+  const vios=myRegRecords('violation'), rewards=myRegRecords('reward'), raises=myRegRecords('raise'), bdays=myRegRecords('birthday');
+  const ub=(window.inboxUnread?inboxUnread():0);
+  const tiles=[
+    ['📥','My Inbox', ub?ub+' unread':'Documents & notices','#0891b2',"go('inbox')"],
+    ['📣','Announcements','Store & company news','#7c3aed',"go('announcements')"],
+    ['🚩','Report an Issue','Tell your manager','#e53935',"go('issue')"],
+    ['⚖️','My Violations', vios.length?vios.length+' on record':'None on record','#b45309',"go('myvios')"],
+    ['🎓','Training','Your courses & records','#2563eb',"go('training')"],
+    ['💡','Ideas & Feedback','Share privately with the owner','#0e9f6e',"go('feedback')"],
+    ['🪪','My Profile','Update your details & photo','#475569',"go('profile')"],
+  ];
+  const photo=s.photo?`<img src="${imgSrc(s.photo)}" alt="" class="emp-ava-img">`:`<div class="emp-ava-ph">${esc((first[0]||'?').toUpperCase())}</div>`;
+  const chips=[];
+  if(s.dob){ const d=empBirthdayInfo(s.dob); if(d) chips.push(`<span class="emp-chip">🎂 ${esc(d)}</span>`); }
+  if(rewards.length) chips.push(`<span class="emp-chip ok">🏆 ${rewards.length} reward${rewards.length>1?'s':''}</span>`);
+  if(raises.length) chips.push(`<span class="emp-chip ok">📈 Pay update</span>`);
+  $('#content').innerHTML=`
+    <div class="emp-hero">
+      <div class="emp-ava">${photo}</div>
+      <div class="emp-hi"><div class="eh-name">Hi, ${esc(first)} 👋</div>
+        <div class="eh-sub">${esc(s.role||'Staff')} · MCQ ${esc(s.store||State.branch||'')}</div>
+        <div class="emp-chips">${chips.join('')||'<span class="emp-chip">Welcome to your workspace</span>'}</div></div>
+    </div>
+    <div class="section-title">Quick actions</div>
+    <div class="staff-actions">${tiles.map(t=>`<button class="sa-tile" style="--c:${t[3]}" onclick="${t[4]}"><span class="sa-ic">${t[0]}</span><span class="sa-txt"><b>${t[1]}</b><small>${t[2]}</small></span><span class="sa-arrow">→</span></button>`).join('')}</div>`;
+}
+function empBirthdayInfo(dob){
+  try{ const d=new Date(dob); if(isNaN(d)) return ''; const now=new Date(); let next=new Date(now.getFullYear(),d.getMonth(),d.getDate());
+    if(next<new Date(now.getFullYear(),now.getMonth(),now.getDate())) next.setFullYear(now.getFullYear()+1);
+    const days=Math.round((next-new Date(now.getFullYear(),now.getMonth(),now.getDate()))/86400000);
+    const md=d.toLocaleDateString(undefined,{day:'numeric',month:'short'});
+    return days===0?`Happy birthday! (${md})`:`Birthday ${md} · ${days} day${days>1?'s':''} away`;
+  }catch(e){ return ''; }
+}
+function renderMyViolations(){
+  setAccent('#b45309'); setCrumb('⚖️','My Violations','Your record');
+  const rows=myRegRecords('violation').slice().sort((a,b)=>String(b.created||b.date||'').localeCompare(String(a.created||a.date||'')));
+  const body=rows.length?rows.map(r=>{
+    const imgs=(r.photos||(r.photo?[r.photo]:[])).map(u=>`<img class="ba-thumb" src="${imgSrc(u)}" onclick="openLightbox('${ckJS(imgSrc(u))}')">`).join('');
+    return `<div class="fb-card"><div class="fb-card-h"><b>${esc(r.category||r.type||'Violation')}</b><span>${esc((r.date||r.created||'').slice(0,10))}${r.severity?' · '+esc(r.severity):''}</span></div>
+      <div class="fb-msg">${esc(r.summary||r.description||r.note||r.detail||'—')}</div>${r.action?`<div class="emp-vio-action"><b>Action:</b> ${esc(r.action)}</div>`:''}${imgs?`<div class="ba-thumbs">${imgs}</div>`:''}</div>`;
+  }).join(''):'<div class="empty"><div class="e-ic">✅</div>No violations on record. Keep it up!</div>';
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">⚖️</div><div><h2>My Violations</h2><p>Records logged against you at MCQ ${esc((myStaff().store)||State.branch||'')}. Read-only.</p></div></div>
+    <div class="fb-list">${body}</div>`;
+}
+function renderEmployeeProfile(){
+  setAccent('#475569'); setCrumb('🪪','My Profile','Keep your details up to date');
+  const s=myStaff();
+  const sel=(cur,opts)=>opts.map(o=>`<option ${String(o)===String(cur||'')?'selected':''}>${esc(o)}</option>`).join('');
+  const pending=State.empPhoto, cur=pending||s.photo;
+  const photo=cur?`<img id="ep-photo-img" src="${imgSrc(cur)}" style="display:block">`:`<img id="ep-photo-img" src="" style="display:none">`;
+  $('#content').innerHTML=`<div class="form-shell"><div class="card card-pad">
+    <div class="ep-photo-row">
+      <label class="ep-photo">${photo}<span class="ep-photo-empty" style="display:${cur?'none':'flex'}"><i class="fas fa-camera"></i></span>
+        <input type="file" accept="image/*" onchange="empPhotoPick(this)" style="display:none"></label>
+      <div><h2 style="margin:0">${esc(s.name||'My profile')}</h2><p class="muted">${esc(s.role||'Staff')} · MCQ ${esc(s.store||State.branch||'')}${s.id?' · '+esc(s.id):''}</p>
+        <p class="muted" style="font-size:12px">Tap the photo to upload a new one, then press Save.</p></div>
+    </div>
+    <div class="grid2" style="margin-top:12px">
+      <div class="field"><label>Full name</label><input id="ep-name" value="${esc(s.name||'')}"></div>
+      <div class="field"><label>Phone</label><input id="ep-phone" value="${esc(s.phone||'')}" placeholder="0400 000 000"></div>
+      <div class="field"><label>Email</label><input id="ep-email" value="${esc(s.email||'')}"></div>
+      <div class="field"><label>Gender</label><select id="ep-gender"><option value=""></option>${sel(s.gender,['Male','Female','Other'])}</select></div>
+      <div class="field"><label>Date of birth</label><input type="date" id="ep-dob" value="${esc(s.dob||'')}"></div>
+      <div class="field"><label>Card ID</label><input id="ep-cardid" value="${esc(s.cardId||'')}"></div>
+      <div class="field"><label>Tax File Number</label><input id="ep-tfn" value="${esc(s.tfn||'')}"></div>
+      <div class="field"><label>Street address</label><input id="ep-address" value="${esc(s.address||'')}"></div>
+      <div class="field"><label>Suburb / City</label><input id="ep-suburb" value="${esc(s.suburb||'')}"></div>
+      <div class="field"><label>Country</label><input id="ep-country" value="${esc(s.country||'')}"></div>
+      <div class="field"><label>Store</label><input value="${esc(s.store||'')}" disabled></div>
+      <div class="field"><label>Started</label><input value="${esc(s.start||'')}" disabled></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:14px"><button class="btn primary" onclick="empProfileSave()">💾 Save my profile</button></div>
+  </div></div>`;
+}
+async function empPhotoPick(inp){
+  const f=inp.files&&inp.files[0]; if(!f) return;
+  let ref; try{ const d=await compressImage(f,900,.85); ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d; }catch(e){ ref=URL.createObjectURL(f); }
+  State.empPhoto=ref; const img=document.getElementById('ep-photo-img'); if(img){ img.src=imgSrc(ref); img.style.display='block'; }
+  const emp=document.querySelector('.ep-photo-empty'); if(emp) emp.style.display='none';
+  toast('Photo ready — press Save');
+}
+async function empProfileSave(){
+  const g=id=>(document.getElementById(id)?.value||'');
+  const s=myStaff(); if(!s.id){ toast('Your profile is not linked to a staff record — ask your manager.'); return; }
+  const patch={ name:g('ep-name').trim()||s.name, phone:g('ep-phone'), email:g('ep-email'), gender:g('ep-gender'),
+    dob:g('ep-dob'), cardId:g('ep-cardid'), tfn:g('ep-tfn'), address:g('ep-address'), suburb:g('ep-suburb'), country:g('ep-country') };
+  if(State.empPhoto) patch.photo=State.empPhoto;
+  const r=await (window.mcqStaffProfile?mcqStaffProfile(s.store,s.id,patch):Promise.resolve({ok:false}));
+  if(r&&r.ok){
+    Object.assign(s,patch); State.empPhoto=null;
+    if(patch.name){ State.account.name=patch.name; State.account.staffName=patch.name; }
+    toast('✓ Profile saved'); if(window.buildTopbar) buildTopbar(); if(window.buildSidebar) buildSidebar(); renderEmployeeProfile();
+  } else toast('Could not save — check your connection.');
+}
+window.renderEmployeeHome=renderEmployeeHome; window.renderEmployeeProfile=renderEmployeeProfile; window.renderMyViolations=renderMyViolations;
+window.empPhotoPick=empPhotoPick; window.empProfileSave=empProfileSave; window.myStaff=myStaff; window.myRegRecords=myRegRecords;
+
 /* ============================================================ CHÚ BA — read-only checklist viewer (all stores) */
 function baSetStore(v){ State.ba.store=v; renderBaView(); }
 function baSetDate(v){ State.ba.date=v||ckTodayStr(); renderBaView(); }
@@ -1298,6 +1411,7 @@ function renderStaff(){
   setAccent('#0e9f6e'); setCrumb('🧑‍🤝‍🧑','Staff Members',`${DB.staff.length} people`);
   const rows=DB.staff.filter(s=>isSuper()||s.store===State.branch);
   const active=rows.filter(s=>s.active).length;
+  const canAcct=!!(window.mcqStaffAccounts && (window.localStorage&&localStorage.getItem('mcq_token'))); // individual logins need the server
   const ed=State.staffEdit, roles=DB.staffRoles||['Staff'];
   let editForm='';
   const cdepts=(DB.checklist&&DB.checklist.depts)||[];
@@ -1342,10 +1456,30 @@ function renderStaff(){
       <div class="kpi tone-warn"><div class="k-top"><div class="k-ic">🏪</div></div><div class="k-val">${new Set(rows.map(s=>s.store)).size}</div><div class="k-lbl">Stores</div></div>
       <div class="kpi tone-mute"><div class="k-top"><div class="k-ic">🧰</div></div><div class="k-val">${new Set(rows.map(s=>s.role)).size}</div><div class="k-lbl">Roles</div></div></div>
     ${editForm}
-    <div class="card" style="margin-top:16px"><div class="card-head"><h3>Directory · ${rows.length}</h3><span class="ch-sub">${exportBtns('staff-table','Staff Directory — '+(isSuper()?'All stores':State.branch))}</span></div><div class="table-wrap"><table class="grid" id="staff-table"><thead><tr><th>Name</th><th>Dept</th><th>Role</th><th>Store</th><th>Phone</th><th>Email</th><th>DOB</th><th>Started</th><th>Type</th><th>Status</th><th></th></tr></thead><tbody>
-      ${rows.map(s=>`<tr><td><b>${esc(s.name)}</b></td><td>${s.admin?'<span class="badge ok">ADMIN · all</span>':((Array.isArray(s.roles)&&s.roles.length)?s.roles.map(r=>`<span class="badge mute">${esc(r)}</span>`).join(' '):(s.dept?`<span class="badge mute">${esc(s.dept)}</span>`:'—'))}</td><td>${esc(s.role||s.classification||'')}</td><td>${esc(s.store)}</td><td>${esc(s.phone||'')}</td><td>${esc(s.email||'')}</td><td>${esc(s.dob||'—')}</td><td>${esc(s.start||'')}</td><td>${esc(s.estatus||s.category||'')}</td><td>${s.active?'<span class="badge ok"><span class="bdot"></span>Active</span>':'<span class="badge mute"><span class="bdot"></span>Inactive</span>'}</td><td><span class="ck-task-admin"><button onclick="staffEditOpen('${esc(s.id)}')" title="Edit">✎</button><button onclick="staffDelete('${esc(s.id)}')" title="Delete">🗑</button></span></td></tr>`).join('')}
+    <div class="card" style="margin-top:16px"><div class="card-head"><h3>Directory · ${rows.length}</h3><span class="ch-sub">${exportBtns('staff-table','Staff Directory — '+(isSuper()?'All stores':State.branch))}</span></div><div class="table-wrap"><table class="grid" id="staff-table"><thead><tr><th>Name</th><th>Dept</th><th>Role</th><th>Store</th><th>Phone</th><th>Email</th><th>DOB</th><th>Started</th><th>Type</th><th>Status</th>${canAcct?'<th>Staff login</th>':''}<th></th></tr></thead><tbody>
+      ${rows.map(s=>`<tr><td><b>${esc(s.name)}</b></td><td>${s.admin?'<span class="badge ok">ADMIN · all</span>':((Array.isArray(s.roles)&&s.roles.length)?s.roles.map(r=>`<span class="badge mute">${esc(r)}</span>`).join(' '):(s.dept?`<span class="badge mute">${esc(s.dept)}</span>`:'—'))}</td><td>${esc(s.role||s.classification||'')}</td><td>${esc(s.store)}</td><td>${esc(s.phone||'')}</td><td>${esc(s.email||'')}</td><td>${esc(s.dob||'—')}</td><td>${esc(s.start||'')}</td><td>${esc(s.estatus||s.category||'')}</td><td>${s.active?'<span class="badge ok"><span class="bdot"></span>Active</span>':'<span class="badge mute"><span class="bdot"></span>Inactive</span>'}</td>${canAcct?`<td class="acct-cell" data-sid="${esc(s.id)}" data-store="${esc(s.store)}"><span class="muted">…</span></td>`:''}<td><span class="ck-task-admin"><button onclick="staffEditOpen('${esc(s.id)}')" title="Edit">✎</button><button onclick="staffDelete('${esc(s.id)}')" title="Delete">🗑</button></span></td></tr>`).join('')}
       </tbody></table></div></div>`;
+  if(canAcct) staffAcctFill();
 }
+// ---- individual employee logins (numeric, server-side staff_accounts) ----
+function staffAcctFill(){
+  if(!window.mcqStaffAccounts) return;
+  const stores = isSuper() ? [...new Set((DB.staff||[]).map(s=>s.store))] : [State.branch];
+  const map={};
+  Promise.all(stores.map(st=>mcqStaffAccounts(st).then(r=>{ ((r&&r.accounts)||[]).forEach(a=>{ map[String(a.staff_id)]=a; }); }).catch(()=>{})))
+    .then(()=>{
+      document.querySelectorAll('.acct-cell').forEach(td=>{
+        const id=td.getAttribute('data-sid'), store=td.getAttribute('data-store'), a=map[String(id)];
+        td.innerHTML = a
+          ? `<span class="acct-pw" title="Give this number to the employee — they log in with it">🔑&nbsp;<b>${esc(a.password)}</b></span> <button class="btn xs" title="New password" onclick="staffAcctReset('${esc(id)}','${esc(a.store_id||store)}')">↻</button> <button class="btn xs" title="Remove login" onclick="staffAcctRemove('${esc(id)}','${esc(a.store_id||store)}')">✕</button>`
+          : `<button class="btn xs" onclick="staffAcctCreate('${esc(id)}','${esc(store)}')"><i class="fas fa-key"></i>&nbsp;Create login</button>`;
+      });
+    });
+}
+function staffAcctCreate(id,store){ const s=(DB.staff||[]).find(x=>String(x.id)===String(id)); if(!s){ return; } mcqStaffAccount(store||s.store,id,s.name,false).then(r=>{ if(r&&r.ok){ toast('🔑 Login created — password '+((r.account||{}).password||'')); staffAcctFill(); } else toast('Could not create login'); }); }
+function staffAcctReset(id,store){ if(!confirm('Generate a NEW password for this staff login? The current one will stop working.')) return; const s=(DB.staff||[]).find(x=>String(x.id)===String(id)); mcqStaffAccount(store||(s&&s.store),id,s&&s.name,true).then(r=>{ if(r&&r.ok){ toast('🔑 New password set'); staffAcctFill(); } else toast('Could not reset'); }); }
+function staffAcctRemove(id,store){ if(!confirm('Remove this staff login? The employee will no longer be able to sign in.')) return; mcqStaffAccountDelete(store,id).then(r=>{ if(r&&r.ok){ toast('Login removed'); staffAcctFill(); } else toast('Could not remove'); }); }
+window.staffAcctFill=staffAcctFill; window.staffAcctCreate=staffAcctCreate; window.staffAcctReset=staffAcctReset; window.staffAcctRemove=staffAcctRemove;
 function staffNew(){ State.staffEdit='new'; renderStaff(); window.scrollTo({top:0,behavior:'smooth'}); }
 function staffEditOpen(id){ const s=DB.staff.find(x=>x.id===id); if(!recordInScope(s)){ toast('This staff member belongs to another store'); return; } State.staffEdit=id; renderStaff(); window.scrollTo({top:0,behavior:'smooth'}); }
 function staffCancel(){ State.staffEdit=null; renderStaff(); }
