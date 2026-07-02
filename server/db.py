@@ -423,6 +423,45 @@ def thread_messages(au, thread_id):
     finally:
         conn.close()
 
+# ---- announcements ----
+def post_announcement(au, store, title, body_html, image_id=None):
+    conn = connect()
+    try:
+        conn.execute('INSERT INTO announcements(store_id,title,body_html,image_id,author,created_at) VALUES(?,?,?,?,?,?)',
+                     (store, title or '', body_html or '', image_id, _role_display(au, None if store == 'ALL' else store), now()))
+        aid = conn.execute('SELECT last_insert_rowid() AS id').fetchone()['id']
+        conn.commit()
+        return aid
+    finally:
+        conn.close()
+
+def list_announcements(au):
+    conn = connect()
+    try:
+        if au.get('role') in ('super', 'ba'):
+            rows = conn.execute('SELECT * FROM announcements ORDER BY id DESC LIMIT 200').fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM announcements WHERE store_id=? OR store_id='ALL' ORDER BY id DESC LIMIT 200",
+                                (au['store_id'],)).fetchall()
+        return [{'id': r['id'], 'store': r['store_id'], 'title': r['title'], 'body_html': r['body_html'],
+                 'image_id': r['image_id'], 'author': r['author'], 'created_at': r['created_at']} for r in rows]
+    finally:
+        conn.close()
+
+def delete_announcement(au, aid):
+    conn = connect()
+    try:
+        row = conn.execute('SELECT store_id FROM announcements WHERE id=?', (aid,)).fetchone()
+        if not row: return False
+        # super may delete any; a Manager may delete only their own store's posts
+        if au.get('role') != 'super' and not (au.get('role') == 'admin' and row['store_id'] == au.get('store_id')):
+            return False
+        conn.execute('DELETE FROM announcements WHERE id=?', (aid,))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
 def can_access(au, store_id):
     # super + ba (read-only viewer) can read any store; others only their own
     return bool(au) and (au['role'] in ('super', 'ba') or au['store_id'] == store_id)

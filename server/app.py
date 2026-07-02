@@ -145,6 +145,34 @@ def thread_view(thread_id):
     au = require_auth()
     return jsonify(ok=True, messages=db.thread_messages(au, thread_id))
 
+# ---------- announcements ----------
+@api.route('/api/announcements', methods=['GET'])
+def announcements_list():
+    au = require_auth()
+    return jsonify(ok=True, announcements=db.list_announcements(au))
+
+@api.route('/api/announcement', methods=['POST'])
+def announcement_post():
+    au = require_auth(); require_write(au)
+    if au['role'] not in ('super', 'admin'): abort(403)   # Managers + Super post; staff read-only
+    d = request.get_json(force=True, silent=True) or {}
+    store = d.get('store') or au['store_id']
+    if store == 'ALL':
+        if au['role'] != 'super': abort(403)              # only Super posts to ALL stores
+    else:
+        require_store(au, store)                           # Manager pinned to own store
+    aid = db.post_announcement(au, store, d.get('title'), d.get('body_html'), d.get('image_id'))
+    db.write_audit(uid(au), store, 'post', 'announcement', str(aid), None, {'title': d.get('title')})
+    return jsonify(ok=True, id=aid)
+
+@api.route('/api/announcement/delete', methods=['POST'])
+def announcement_delete():
+    au = require_auth(); require_write(au)
+    d = request.get_json(force=True, silent=True) or {}
+    ok = db.delete_announcement(au, d.get('id'))
+    if not ok: abort(403)
+    return jsonify(ok=True)
+
 # ---------- store list / summary ----------
 @api.route('/api/stores')
 def stores():

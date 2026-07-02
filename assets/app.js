@@ -457,6 +457,7 @@ function buildSidebar(){
   }
   { const ub=(window.inboxUnread?inboxUnread():0);
     html += navLink('inbox','fa-inbox',isSuper()?'Inbox':'Store Inbox', ub?`<span class="count">${ub}</span>`:'', true); }
+  html += navLink('announcements','fa-bullhorn','Announcements','',true);
   html += navLink('feedback','fa-comment-dots',isSuper()?'Feedback Inbox':'Share Your Thought','',true);
   DB.navGroups.forEach(g=>{
     if(g.admin && !isAdmin()) return;

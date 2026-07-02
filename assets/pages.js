@@ -485,6 +485,63 @@ function ckSet(elId,html){ const ed=_ckInst[elId]; try{ if(ed){ ed.setData(html|
 function ckMounted(elId){ return !!_ckInst[elId]; }
 window.ckMount=ckMount; window.ckRead=ckRead; window.ckHtml=ckHtml; window.ckDestroy=ckDestroy; window.ckSet=ckSet; window.ckMounted=ckMounted;
 
+/* ============================================================ ANNOUNCEMENTS
+   Everyone sees posts for their store + company-wide (ALL). Manager posts to their store,
+   Super to any store or ALL. Staff read-only. Images are stored inline (data URL) so they
+   render for every reader regardless of store. */
+let _annPhoto=null;
+function renderAnnouncements(){
+  setAccent('#7c3aed'); setCrumb('📣','Announcements', seesAllStores()?'All stores':('MCQ '+(State.branch||'')));
+  const canPost=isAdmin()||isSuper();
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">📣</div><div><h2>Announcements</h2><p>${canPost?'Post news to your store or company-wide.':'Store & company news.'}</p></div>
+    ${canPost?`<div class="ph-actions"><button class="btn primary" onclick="annCompose()"><i class="fas fa-bullhorn"></i>&nbsp; New announcement</button></div>`:''}</div>
+    <div id="ann-feed"><div class="empty"><div class="e-ic">⏳</div>Loading…</div></div>`;
+  if(!window.mcqAnnList){ const f=$('#ann-feed'); if(f) f.innerHTML='<div class="empty">Sign in online to see announcements.</div>'; return; }
+  mcqAnnList().then(r=>{ window.__annCache=(r&&r.announcements)||[]; annPaint(''); })
+    .catch(()=>{ const f=$('#ann-feed'); if(f) f.innerHTML='<div class="empty">Could not load announcements.</div>'; });
+}
+function annPaint(filter){
+  const feed=$('#ann-feed'); if(!feed) return; const list=window.__annCache||[]; const f=filter||'';
+  let filterSel='';
+  if(seesAllStores()){ const opt=(v,l)=>`<option value="${esc(v)}" ${f===v?'selected':''}>${esc(l)}</option>`;
+    filterSel=`<div class="ann-filter"><label>Filter</label><select id="ann-filter" onchange="annPaint(this.value)">${opt('','All posts')}${opt('ALL','📢 Company-wide')}${DB.stores.map(s=>opt(s,s)).join('')}</select></div>`; }
+  const rows=list.filter(a=>!f || a.store===f);
+  const cards=rows.length?rows.map(a=>{ const isAll=a.store==='ALL';
+    const img=a.image_id?`<img class="ann-img" src="${imgSrc(a.image_id)}" onclick="openLightbox('${ckJS(imgSrc(a.image_id))}')">`:'';
+    const canDel=isSuper()||(isAdmin()&&a.store===State.branch);
+    return `<div class="ann-card"><div class="ann-head"><span class="ann-scope ${isAll?'all':''}">${isAll?'📢 Company-wide':('🏪 '+esc(a.store))}</span><span class="ann-meta">${esc(a.author||'')} · ${esc((a.created_at||'').slice(0,16).replace('T',' '))}</span>${canDel?`<button class="btn xs ann-del" onclick="annDelete(${a.id})" title="Delete">✕</button>`:''}</div>${a.title?`<h3 class="ann-title">${esc(a.title)}</h3>`:''}${img}<div class="ann-body">${safeHtml(a.body_html)}</div></div>`;
+  }).join(''):'<div class="empty"><div class="e-ic">📣</div>No announcements yet.</div>';
+  feed.innerHTML=filterSel+`<div class="ann-list">${cards}</div>`;
+}
+function annCompose(){
+  _annPhoto=null;
+  const scopeSel=isSuper()
+    ? `<div class="field"><label>Where</label><select id="ann-store"><option value="ALL">📢 All stores (company-wide)</option>${DB.stores.map(s=>`<option>${esc(s)}</option>`).join('')}</select></div>`
+    : `<div class="field"><label>Where</label><input value="MCQ ${esc(State.branch)}" disabled><input type="hidden" id="ann-store" value="${esc(State.branch)}"></div>`;
+  mcqModal('📣 New announcement', `${scopeSel}
+    <div class="field"><label>Title</label><input id="ann-title" placeholder="Headline"></div>
+    <div class="field"><label>Photo (optional)</label><label class="ann-photo-pick"><input type="file" accept="image/*" onchange="annPhotoPick(this)" style="display:none"><span id="ann-photo-lbl"><i class="fas fa-image"></i>&nbsp; Add a photo</span></label><div id="ann-photo-prev"></div></div>
+    <div class="field"><label>Message</label><textarea id="ann-body" rows="7" placeholder="Write your announcement…"></textarea></div>
+    <div style="display:flex;gap:10px;margin-top:10px"><button class="btn primary" onclick="annPost()"><i class="fas fa-bullhorn"></i>&nbsp; Post</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>`, {wide:true});
+  if(window.ckMount) ckMount('ann-body');
+}
+async function annPhotoPick(inp){
+  const file=inp.files&&inp.files[0]; if(!file) return;
+  let ref; try{ ref=await compressImage(file,1400,.8); }catch(e){ try{ ref=URL.createObjectURL(file); }catch(_){ ref=null; } }
+  _annPhoto=ref;   // inline data URL → visible to every reader
+  const p=document.getElementById('ann-photo-prev'); if(p) p.innerHTML=ref?`<img src="${imgSrc(ref)}" class="ann-prev-img">`:'';
+  const l=document.getElementById('ann-photo-lbl'); if(l) l.innerHTML='<i class="fas fa-check"></i>&nbsp; Photo added — tap to change';
+}
+function annPost(){
+  const store=document.getElementById('ann-store')?.value||State.branch;
+  const title=(document.getElementById('ann-title')?.value||'').trim();
+  const body=(window.ckHtml?ckHtml('ann-body'):(document.getElementById('ann-body')?.value||''));
+  if(!title && !String(body).replace(/<[^>]+>/g,'').trim() && !_annPhoto){ toast('Add a title, message or photo'); return; }
+  mcqAnnPost({store, title, body_html:body, image_id:_annPhoto||null}).then(r=>{ if(r&&r.ok){ toast('📣 Announcement posted'); _annPhoto=null; mcqModalClose(); renderAnnouncements(); } else toast('Could not post'); });
+}
+function annDelete(id){ if(!confirm('Delete this announcement for everyone?')) return; mcqAnnDelete(id).then(r=>{ if(r&&r.ok){ toast('Deleted'); renderAnnouncements(); } else toast('Not allowed'); }); }
+window.renderAnnouncements=renderAnnouncements; window.annPaint=annPaint; window.annCompose=annCompose; window.annPhotoPick=annPhotoPick; window.annPost=annPost; window.annDelete=annDelete;
+
 /* ============================================================ CHÚ BA — read-only checklist viewer (all stores) */
 function baSetStore(v){ State.ba.store=v; renderBaView(); }
 function baSetDate(v){ State.ba.date=v||ckTodayStr(); renderBaView(); }

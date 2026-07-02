@@ -1194,3 +1194,20 @@ table.jobduty td{vertical-align:top}
 .mcq-modal-body .ck-editor__editable{min-height:160px;max-height:46vh}
 .ck-body-wrapper{z-index:100000 !important}   /* toolbars/dropdowns above the modal overlay */
 .ck.ck-balloon-panel{z-index:100001 !important}
+/* ---- Announcements ---- */
+.ann-filter{display:flex;align-items:center;gap:10px;margin-bottom:14px}
+.ann-filter label{font-size:12px;color:#64748b;font-weight:600}
+.ann-filter select{padding:7px 10px;border:1px solid var(--line,#e5e7eb);border-radius:9px;font:inherit}
+.ann-list{display:flex;flex-direction:column;gap:14px}
+.ann-card{background:#fff;border:1px solid var(--line,#e5e7eb);border-radius:16px;padding:16px 18px;box-shadow:0 2px 10px rgba(0,0,0,.04)}
+.ann-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:12px}
+.ann-scope{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;padding:3px 10px;border-radius:999px;font-weight:700}
+.ann-scope.all{background:#faf5ff;color:#7c3aed;border-color:#e9d5ff}
+.ann-meta{color:#94a3b8}
+.ann-del{margin-left:auto;color:var(--bad,#dc2626)}
+.ann-title{margin:10px 0 6px;font-size:18px;color:#1f2937}
+.ann-img{width:100%;max-height:340px;object-fit:cover;border-radius:12px;margin:8px 0;cursor:zoom-in}
+.ann-body{font-size:14.5px;line-height:1.6;color:#374151}
+.ann-body img{max-width:100%;border-radius:8px}
+.ann-photo-pick{display:inline-flex;align-items:center;gap:6px;padding:9px 14px;border:1px dashed #cbd5e1;border-radius:10px;cursor:pointer;color:#475569;font-size:13px}
+.ann-prev-img{max-height:140px;border-radius:10px;margin-top:8px}
