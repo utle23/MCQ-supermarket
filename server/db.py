@@ -21,17 +21,18 @@ DATA   = os.path.join(BASE, 'data')
 DB_PATH = os.path.join(DATA, 'mcq.db')
 UPLOADS = os.path.join(BASE, 'uploads')
 
-STORES = ['Morley', 'Mirrabooka', 'Malaga', 'Subiaco', 'Armadale',
-          'Beechboro Fresh', 'Market West', 'Warehouse', 'Demo']
+STORES = ['Morley', 'Mirrabooka', 'Malaga', 'Subiaco', 'Armadale', 'Warehouse', 'Demo']
+# Stores that were removed — their data is purged on init (see init_db).
+RETIRED_STORES = ['Beechboro Fresh', 'Market West']
 
 # seed passwords (same scheme as the old frontend). These live ONLY on the server now.
 SUPER_PW = '99999'
 # Per-store admin passwords (each store admin has its own). Change here, then the next
 # app start re-seeds new ones (existing data is untouched).
 ADMIN_PW = {'Morley':'1010','Mirrabooka':'2020','Malaga':'3030','Subiaco':'4040',
-            'Armadale':'5050','Beechboro Fresh':'6060','Market West':'7070','Warehouse':'8080','Demo':'0000'}
+            'Armadale':'5050','Warehouse':'8080','Demo':'0000'}
 BRANCH_PW = {'Morley':'1111','Mirrabooka':'2222','Malaga':'3333','Subiaco':'4444',
-             'Armadale':'5555','Beechboro Fresh':'6666','Market West':'7000','Warehouse':'8000','Demo':'0000'}
+             'Armadale':'5555','Warehouse':'8000','Demo':'0000'}
 
 TOKEN_TTL = 60 * 60 * 24 * 30   # 30 days
 
@@ -139,6 +140,17 @@ def init_db():
         add_user('admin', s, pw, sync=True)
     for s, pw in BRANCH_PW.items():
         add_user('staff', s, pw)
+    # one-time purge of retired stores (Beechboro Fresh, Market West) — data permanently removed
+    for rs in RETIRED_STORES:
+        for tbl in ('records', 'staff', 'checklist_submissions', 'bin_records',
+                    'schedule_history', 'store_state', 'store_state_snapshots',
+                    'store_config', 'photos', 'audit_logs'):
+            try: conn.execute('DELETE FROM %s WHERE store_id=?' % tbl, (rs,))
+            except Exception: pass
+        try: conn.execute('DELETE FROM stores WHERE id=?', (rs,))
+        except Exception: pass
+        try: conn.execute('UPDATE users SET password_hash=? WHERE store_id=?', ('retired-'+secrets.token_hex(8), rs))
+        except Exception: pass
     conn.commit(); conn.close()
 
 # ---- auth ----
