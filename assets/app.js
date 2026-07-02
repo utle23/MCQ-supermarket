@@ -324,7 +324,24 @@ function enterApp(){
   startIdleWatch();
   // warm the rarely-used modules in the background so deep pages open instantly later
   try{ const idle=window.requestIdleCallback||function(f){return setTimeout(f,1200);}; idle(()=>{ try{ ensureLazyModules(); }catch(e){} }); }catch(e){}
+  startLiveRefresh();   // Super Admin + Chú Ba see records/checklists live
 }
+let _liveTimer=null;
+const LIVE_ROUTES=['home','manager','analytics','history','photos','feedback','baview'];
+function startLiveRefresh(){
+  if(_liveTimer) return;
+  _liveTimer=setInterval(()=>{
+    if(!State.account || !(isSuper()||isBa()) || !(window.MCQDB&&MCQDB.loadForAccount)) return;
+    const ae=document.activeElement, typing=ae&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName||'');
+    const busy=$('.drawer.open') || [...document.querySelectorAll('.lb-overlay,.ck-block-ov,.ck-success-ov,#email-log-modal,#mgr-rec-modal')].some(e=>e && e.style.display && e.style.display!=='none');
+    if(typing||busy) return;   // never interrupt active editing / an open dialog
+    MCQDB.loadForAccount(State.account).then(()=>{
+      if(!State.account || !(isSuper()||isBa())) return;
+      if(isBa() || LIVE_ROUTES.includes(State.route.mod)) render();   // repaint only read-only views; data is fresh regardless
+    }).catch(()=>{});
+  }, 30000);
+}
+function stopLiveRefresh(){ if(_liveTimer){ clearInterval(_liveTimer); _liveTimer=null; } }
 async function logout(reason){
   // flush any unsaved work and WAIT for the server to confirm BEFORE clearing the account,
   // otherwise the next login could read the server before this save lands → last edits lost.
@@ -332,6 +349,7 @@ async function logout(reason){
     try{ State.dataSync={status:'loading',message:'Saving…'}; refreshSyncUi(); }catch(e){}
     await MCQDB.saveAll();
   } }catch(e){}
+  stopLiveRefresh();
   dataSyncRun++;
   State.superFullSyncStarted=false;
   State.superFullSyncFailedAt=0;
@@ -394,6 +412,7 @@ function buildSidebar(){
   let html = navLink('home','fa-gauge-high','Dashboard','',true);
   html += navSolo('issue','fa-flag','Report Issue');
   html += navSolo('violation','fa-gavel','Violation');
+  html += navLink('feedback','fa-comment-dots',isSuper()?'Feedback Inbox':'Share Your Thought','',true);
   if(!isAdmin()){   // staff also get Training + Report Violation
     html += navLink('training','fa-graduation-cap','Training','',true);
     html += navLink('violation','fa-gavel','Report Violation','',true);

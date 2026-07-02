@@ -419,9 +419,12 @@ function perfScore(name){
   C.complaints=d.complaintsAgainst.reduce((s,r)=>s+(r.severity==='Major'?-15:r.severity==='Moderate'?-8:-4),0);
   let total=C.base+C.reliability+C.reporting+C.training+C.rewards+C.violations+C.complaints;
   total=Math.max(0,Math.min(150,Math.round(total)));
+  // admin manual override (0–150) stored on the staff record
+  const sm=(DB.staff||[]).find(x=>x.name===name); let override=false;
+  if(sm && sm.perfManual!=null && sm.perfManual!=='' && Number.isFinite(Number(sm.perfManual))){ total=Math.max(0,Math.min(150,Math.round(Number(sm.perfManual)))); override=true; }
   const band=total>=130?{label:'Outstanding',tone:'ok'}:total>=110?{label:'Strong',tone:'ok'}:total>=95?{label:'Good',tone:'info'}:total>=80?{label:'Needs improvement',tone:'warn'}:{label:'At risk',tone:'bad'};
   const raise=total>=130?'Recommend raise · +5–8%':total>=115?'Eligible for review · +3–5%':total>=100?'Maintain — on track':total>=80?'Coaching plan — hold raise':'Performance management';
-  return {name,d,C,total,band,raise};
+  return {name,d,C,total,band,raise,override};
 }
 function perfBands(){ return [['Outstanding','≥130','#0a8a5f'],['Strong','110–129','#0e9f6e'],['Good','95–109','#1565c0'],['Needs improvement','80–94','#f59e0b'],['At risk','<80','#ef4444']]; }
 function perfPick(v){ State.perf=State.perf||{}; State.perf.sel=v; renderPerformance(); }
@@ -465,6 +468,13 @@ function renderPerformance(){
       </tbody></table></div></div>`;
 }
 function perfColor(t){ return t>=130?'#0a8a5f':t>=110?'#0e9f6e':t>=95?'#1565c0':t>=80?'#f59e0b':'#ef4444'; }
+function perfSetManual(name){ if(!isAdmin()) return; const s=DB.staff.find(x=>x.name===name); if(!s) return;
+  const v=Number(($('#perf-manual')&&$('#perf-manual').value)||''); if(!Number.isFinite(v)||v<0||v>150){ toast('Enter a score between 0 and 150'); return; }
+  const before=JSON.parse(JSON.stringify(s)); s.perfManual=Math.round(v); auditLog&&auditLog('update','staff',s.id,s.store,before,s,'performance score set');
+  if(window.persist) window.persist(); toast('✓ Performance score set to '+s.perfManual); renderPerformance(); }
+function perfClearManual(name){ if(!isAdmin()) return; const s=DB.staff.find(x=>x.name===name); if(!s) return;
+  const before=JSON.parse(JSON.stringify(s)); delete s.perfManual; auditLog&&auditLog('update','staff',s.id,s.store,before,s,'performance score reset to automatic');
+  if(window.persist) window.persist(); toast('Score reset to automatic'); renderPerformance(); }
 function perfDetail(name,selector){
   const p=perfScore(name), d=p.d, s=DB.staff.find(x=>x.name===name)||{};
   const comp=[['Checklist reliability',p.C.reliability,'Verified submissions & completion','fa-clipboard-check'],
@@ -486,7 +496,15 @@ function perfDetail(name,selector){
         <div class="perf-score">${p.total}</div><div class="perf-of">/ 150</div>
         <div class="badge ${p.band.tone}" style="font-size:13px;padding:5px 14px">${esc(p.band.label)}</div>
         <div class="perf-raise">💡 ${esc(p.raise)}</div>
+        ${p.override?'<div class="perf-override-tag">✎ Manually set by admin</div>':''}
       </div>
+      ${isAdmin()?`<div class="card perf-adjust"><div class="card-head"><h3>Admin · adjust score</h3></div><div class="card-pad">
+        <p class="fhint" style="margin:0 0 8px">Set a manual score (0–150) to override the calculated one, or clear it to use the automatic score.</p>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <input id="perf-manual" class="login-input" style="max-width:120px" type="number" min="0" max="150" value="${esc(s.perfManual!=null?s.perfManual:'')}" placeholder="0–150">
+          <button class="btn sm primary" onclick="perfSetManual('${ckJS(name)}')">Save score</button>
+          <button class="btn sm" onclick="perfClearManual('${ckJS(name)}')">Use automatic</button>
+        </div></div></div>`:''}
       <div class="card perf-breakdown"><div class="card-head"><h3>Score breakdown</h3><span class="ch-sub">Base ${PERF_BASE} ± activity</span></div>
         <div class="card-pad"><div class="perf-base">Base score <b>${PERF_BASE}</b></div>${comp.map(bar).join('')}<div class="perf-total">Total performance index <b style="color:${perfColor(p.total)}">${p.total}</b></div></div></div>
     </div>

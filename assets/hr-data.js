@@ -41,6 +41,8 @@ DB.emailConfig = { channel:'brevo', apiKey:'', fromEmail:'mcqcafe.notify@gmail.c
 DB.emailLog = [];
 /* Per-store department-lead emails: { [store]: { [dept]: [ {name,email}, … ] } } — isolated per store */
 DB.checklistLeadEmails = {};
+/* "Share Your Thought" — confidential staff feedback to the owner. Store-scoped; only Super Admin views the inbox. */
+DB.feedback = [];
 /* default recipients per category group */
 const _GROUP_RECIPIENTS = {
   'Maintenance & Facility':['fac','ho'],
@@ -833,4 +835,5 @@ DB.customPages = {
   data:     { label:'Data Management', icon:'🗄️', render:'renderData', admin:true },
   rules:    { label:'Supermarket Rules', icon:'📖', render:'renderRules' },
   faceid:   { label:'Face ID', icon:'🪪', render:'renderFaceId' },
+  feedback: { label:'Share Your Thought', icon:'💬', render:'renderFeedback' },
 };

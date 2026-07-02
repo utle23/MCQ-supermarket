@@ -207,6 +207,41 @@ function renderChecklist(){
 }
 function ckSetDate(v){ State.chk.date=v||ckTodayStr(); State.chk.editing=null; State.chk.editDeptH=null; State.chk.editArea=null; renderChecklist(); }
 
+/* ============================================================ SHARE YOUR THOUGHT (confidential feedback → owner) */
+function fbSubmit(){
+  const name=($('#fb-name')&&$('#fb-name').value.trim())||'';
+  const msg=($('#fb-msg')&&$('#fb-msg').value.trim())||'';
+  const anon=$('#fb-anon')&&$('#fb-anon').checked;
+  if(!msg){ toast('Please write your message first'); return; }
+  const rec={ id:'FB-'+Date.now().toString(36), store:State.branch, name:anon?'(anonymous)':(name||'(unnamed)'),
+    role:(State.account&&State.account.role)||'staff', message:msg, ts:new Date().toISOString() };
+  DB.feedback=DB.feedback||[]; DB.feedback.unshift(rec);
+  if(window.persist) window.persist();
+  // also email the owner/office silently if recipients exist (confidential — not shown to store admin)
+  try{ if(window.mcqEmail&&mcqEmail.notify) mcqEmail.notify('feedback', `Staff feedback · ${State.branch}`, `From: ${rec.name} (${rec.role})\nStore: ${State.branch}\n\n${msg}`, {}); }catch(e){}
+  const c=$('#content'); if(c) c.innerHTML=`<div class="fb-thanks"><div class="fb-thanks-ic">💚</div><h2>Thank you</h2><p>Your message has been sent privately to the owner. It is kept confidential.</p><button class="btn primary" onclick="renderFeedback()">Share another thought</button></div>`;
+}
+function renderFeedback(){
+  setAccent('#7c3aed'); setCrumb('💬', isSuper()?'Feedback Inbox':'Share Your Thought', isSuper()?'Confidential staff feedback · all stores':'Private message to the owner');
+  if(isSuper()){
+    const list=(DB.feedback||[]).slice().sort((a,b)=>String(b.ts).localeCompare(String(a.ts)));
+    $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">💬</div><div><h2>Feedback Inbox</h2><p>Confidential messages staff shared directly with you. Only you (owner) can see these.</p></div></div>
+      <div class="fb-list">${list.length?list.map(f=>`<div class="fb-card"><div class="fb-card-h"><b>${esc(f.name||'(unnamed)')}</b><span>${esc(f.store||'')} · ${esc((f.ts||'').slice(0,16).replace('T',' '))}</span></div><div class="fb-msg">${esc(f.message||'')}</div></div>`).join(''):'<div class="empty"><div class="e-ic">💬</div>No feedback yet.</div>'}</div>`;
+    return;
+  }
+  const names=(typeof staffNamesScoped==='function')?staffNamesScoped('',{fallbackAll:true}):[];
+  $('#content').innerHTML=`<div class="form-shell"><div class="card card-pad fb-form">
+      <div class="fb-hero">💬</div>
+      <h2>Share your thought</h2>
+      <p class="fb-intro">This is your safe space. Share any feedback, idea, concern or complaint <b>directly and privately with the owner</b>. Your store manager will <b>not</b> see this — please speak freely and honestly. Your voice matters. 💚</p>
+      <div class="field"><label>Your name (optional)</label>${staffPick('fb-name','', (State.account&&State.account.name)||'', 'Search your name…',{fallbackAll:true})}</div>
+      <label class="check-row" style="margin:6px 0 12px"><input type="checkbox" id="fb-anon"> Send anonymously (hide my name)</label>
+      <div class="field"><label>Your message</label><textarea id="fb-msg" rows="6" placeholder="Write anything you'd like the owner to know…"></textarea></div>
+      <button class="btn primary lg block" onclick="fbSubmit()"><i class="fas fa-paper-plane"></i>&nbsp; Send privately to the owner</button>
+      <p class="fb-note">🔒 Confidential — delivered only to the owner.</p>
+    </div></div>`;
+}
+
 /* ============================================================ CHÚ BA — read-only checklist viewer (all stores) */
 function baSetStore(v){ State.ba.store=v; renderBaView(); }
 function baSetDate(v){ State.ba.date=v||ckTodayStr(); renderBaView(); }
