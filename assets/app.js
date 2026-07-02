@@ -335,6 +335,20 @@ function enterApp(){
   // warm the rarely-used modules in the background so deep pages open instantly later
   try{ const idle=window.requestIdleCallback||function(f){return setTimeout(f,1200);}; idle(()=>{ try{ ensureLazyModules(); }catch(e){} }); }catch(e){}
   startLiveRefresh();   // Super Admin + Chú Ba see records/checklists live
+  startUnreadPoll();    // inbox unread badge for every role (light GET, guarded)
+}
+let _unreadTimer=null;
+function startUnreadPoll(){
+  if(!window.mcqRefreshUnread) return;
+  try{ mcqRefreshUnread(); }catch(e){}
+  if(_unreadTimer) return;
+  _unreadTimer=setInterval(()=>{
+    if(!State.account) return;
+    const busy=document.getElementById('mcq-modal') || $('.drawer.open');
+    const ae=document.activeElement, typing=ae&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName||'');
+    if(busy||typing) return;
+    try{ mcqRefreshUnread(); }catch(e){}
+  }, 30000);
 }
 let _liveTimer=null;
 const LIVE_ROUTES=['home','manager','analytics','history','photos','feedback','baview'];
@@ -441,6 +455,8 @@ function buildSidebar(){
     html += navLink('training','fa-graduation-cap','Training','',true);
     html += navLink('violation','fa-gavel','Report Violation','',true);
   }
+  { const ub=(window.inboxUnread?inboxUnread():0);
+    html += navLink('inbox','fa-inbox',isSuper()?'Inbox':'Store Inbox', ub?`<span class="count">${ub}</span>`:'', true); }
   html += navLink('feedback','fa-comment-dots',isSuper()?'Feedback Inbox':'Share Your Thought','',true);
   DB.navGroups.forEach(g=>{
     if(g.admin && !isAdmin()) return;
@@ -525,6 +541,8 @@ function render(){
     // fall through to customPages/module routing for the shared pages the employee may use
   }
   if(mod==='home') return isAdmin()?renderHome():renderStaffHome();
+  if(mod==='inbox' && window.renderInbox) return renderInbox();
+  if(mod==='announcements' && window.renderAnnouncements) return renderAnnouncements();
   if(DB.customPages[mod]){
     const page=DB.customPages[mod];
     if((page.admin&&!isAdmin())||(page.super&&!isSuper())){ location.hash='#/home'; return; }

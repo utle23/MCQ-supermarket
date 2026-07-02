@@ -48,6 +48,22 @@
   window.mcqStaffAccountDelete=function(store,staffId){ return _authFetch('/api/staff-account/delete',{method:'POST',body:JSON.stringify({store:store,staff_id:staffId})}); };
   // employee edits ONE staff row (own profile) — patches only, never the whole store blob
   window.mcqStaffProfile=function(store,staffId,patch){ return _authFetch('/api/staff-profile',{method:'POST',body:JSON.stringify({store:store,staff_id:staffId,patch:patch||{}})}); };
+  // ---- inbox / messaging ----
+  window.mcqMsgSend=function(payload){ return _authFetch('/api/message',{method:'POST',body:JSON.stringify(payload||{})}); };
+  window.mcqMsgList=function(){ return _authFetch('/api/messages'); };
+  window.mcqMsgRead=function(id){ return _authFetch('/api/message/read',{method:'POST',body:JSON.stringify({id:id})}); };
+  window.mcqThread=function(threadId){ return _authFetch('/api/thread/'+encodeURIComponent(threadId)); };
+  // cached unread count for sidebar/topbar badges (refreshed by the light poll)
+  window.__inboxUnread=0;
+  window.inboxUnread=function(){ return window.__inboxUnread||0; };
+  window.mcqRefreshUnread=function(){
+    if(!(window.localStorage&&localStorage.getItem('mcq_token'))) return Promise.resolve(0);
+    return _authFetch('/api/messages/unread').then(function(r){ var n=(r&&r.unread)||0; var changed=(n!==window.__inboxUnread); window.__inboxUnread=n;
+      if(changed){ try{ if(window.buildSidebar)buildSidebar(); if(window.refreshInboxBadge)refreshInboxBadge(); }catch(e){} } return n; }).catch(function(){ return window.__inboxUnread; }); };
+  // ---- announcements ----
+  window.mcqAnnList=function(){ return _authFetch('/api/announcements'); };
+  window.mcqAnnPost=function(payload){ return _authFetch('/api/announcement',{method:'POST',body:JSON.stringify(payload||{})}); };
+  window.mcqAnnDelete=function(id){ return _authFetch('/api/announcement/delete',{method:'POST',body:JSON.stringify({id:id})}); };
   // explicit delete — the per-store save MERGES (never mass-deletes), so real deletions
   // are propagated here. table: records|staff|checklist_submissions|bin_records|schedule_history
   window.mcqDeleteRecords = function(table, ids, opts){

@@ -219,6 +219,8 @@ function fbSubmit(){
   if(window.persist) window.persist();
   // also email the owner/office silently if recipients exist (confidential — not shown to store admin)
   try{ if(window.mcqEmail&&mcqEmail.notify) mcqEmail.notify('feedback', `Staff feedback · ${State.branch}`, `From: ${rec.name} (${rec.role})\nStore: ${State.branch}\n\n${msg}`, {}); }catch(e){}
+  // → Superadmin inbox (Ideas & Feedback), owner-only
+  try{ if(window.mcqMsgSend) mcqMsgSend({kind:'feedback', subject:`Feedback · ${State.branch}`, body_html:`<p><b>From:</b> ${esc(rec.name)} (${esc(rec.role)}) · <b>Store:</b> ${esc(State.branch)}</p><p>${esc(msg).replace(/\n/g,'<br>')}</p>`}); }catch(e){}
   const c=$('#content'); if(c) c.innerHTML=`<div class="fb-thanks"><div class="fb-thanks-ic">💚</div><h2>Thank you</h2><p>Your message has been sent privately to the owner. It is kept confidential.</p><button class="btn primary" onclick="renderFeedback()">Share another thought</button></div>`;
 }
 function renderFeedback(){
@@ -354,6 +356,100 @@ async function empProfileSave(){
 }
 window.renderEmployeeHome=renderEmployeeHome; window.renderEmployeeProfile=renderEmployeeProfile; window.renderMyViolations=renderMyViolations;
 window.empPhotoPick=empPhotoPick; window.empProfileSave=empProfileSave; window.myStaff=myStaff; window.myRegRecords=myRegRecords;
+
+/* ============================================================ SHARED — modal + safe HTML */
+function mcqModal(title, inner, opts){
+  opts=opts||{}; let ov=document.getElementById('mcq-modal'); if(ov) ov.remove();
+  ov=document.createElement('div'); ov.id='mcq-modal'; ov.className='lb-overlay'; ov.style.display='flex';
+  ov.onclick=e=>{ if(e.target===ov) mcqModalClose(); };
+  ov.innerHTML=`<div class="lb-panel mcq-modal-panel ${opts.wide?'wide':''}" onclick="event.stopPropagation()">
+    <div class="card-head" style="padding:14px 16px"><h3>${title}</h3><button class="x-btn" onclick="mcqModalClose()">✕</button></div>
+    <div class="card-pad mcq-modal-body">${inner}</div></div>`;
+  document.body.appendChild(ov); return ov;
+}
+function mcqModalClose(){ const ov=document.getElementById('mcq-modal'); if(ov) ov.remove(); }
+// render trusted-ish HTML (from our own composer) with scripts/handlers stripped
+function safeHtml(html){ const d=document.createElement('div'); d.innerHTML=String(html==null?'':html);
+  d.querySelectorAll('script,iframe,object,embed,link,meta,style,form').forEach(e=>e.remove());
+  d.querySelectorAll('*').forEach(e=>{ [...e.attributes].forEach(a=>{ const n=a.name.toLowerCase();
+    if(n.indexOf('on')===0 || ((n==='href'||n==='src')&&/^\s*javascript:/i.test(a.value))) e.removeAttribute(a.name); }); });
+  return d.innerHTML; }
+window.mcqModal=mcqModal; window.mcqModalClose=mcqModalClose; window.safeHtml=safeHtml;
+
+/* ============================================================ INBOX / MESSAGING */
+const MSG_KINDS={feedback:['💡','Feedback','#7c3aed'],issue:['🚩','Report Issue','#e53935'],violation:['⚖️','Violation','#b45309'],document:['📄','Document','#0891b2'],reply:['↩️','Reply','#0e9f6e'],announcement:['📣','Announcement','#7c3aed']};
+function renderInbox(){
+  setAccent('#0891b2');
+  const sub=isSuper()?'Feedback, violations & report-issues from all stores':(isAdmin()?('Violations & report-issues · MCQ '+(State.branch||'')):(isEmployee()?'Documents & notices sent to you':'Store messages'));
+  setCrumb('📥','Inbox',sub);
+  const canCompose=isAdmin()||isSuper();
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">📥</div><div><h2>${isEmployee()?'My Inbox':(isSuper()?'Inbox':'Store Inbox')}</h2><p>${esc(sub)}.</p></div>
+    ${canCompose?`<div class="ph-actions"><button class="btn primary" onclick="composeOpen()"><i class="fas fa-pen-to-square"></i>&nbsp; Compose</button></div>`:''}</div>
+    <div id="inbox-body"><div class="empty"><div class="e-ic">⏳</div>Loading messages…</div></div>`;
+  if(!window.mcqMsgList){ const b=$('#inbox-body'); if(b) b.innerHTML='<div class="empty">Sign in online to use your inbox.</div>'; return; }
+  mcqMsgList().then(r=>{ window.__inboxUnread=(r&&r.unread)||0; if(window.buildSidebar) buildSidebar(); inboxPaint((r&&r.messages)||[]); })
+    .catch(()=>{ const b=$('#inbox-body'); if(b) b.innerHTML='<div class="empty">Could not load your inbox.</div>'; });
+}
+function inboxSnippet(html){ return String(html||'').replace(/<[^>]+>/g,' ').replace(/\s+/g,' ').trim().slice(0,120); }
+function inboxPaint(msgs){
+  const b=$('#inbox-body'); if(!b) return;
+  if(!msgs.length){ b.innerHTML='<div class="empty"><div class="e-ic">📭</div>No messages yet.</div>'; return; }
+  b.innerHTML=`<div class="msg-list">`+msgs.map(m=>{ const km=MSG_KINDS[m.kind]||['✉️',(m.kind||'Message'),'#64748b'];
+    return `<button class="msg-row ${m.read?'':'unread'}" onclick="inboxOpen('${ckJS(m.thread_id)}',${m.id})">
+      <span class="msg-ic" style="--c:${km[2]}">${km[0]}</span>
+      <span class="msg-main"><span class="msg-top"><b>${esc(m.subject||km[1])}</b>${m.read?'':'<span class="msg-dot"></span>'}</span>
+        <span class="msg-sub"><span class="badge mute">${km[1]}</span> from ${esc(m.from_name||m.from_role||'')}${isSuper()&&m.store?(' · '+esc(m.store)):''}</span>
+        <span class="msg-snip">${esc(inboxSnippet(m.body_html))}</span></span>
+      <span class="msg-time">${esc(relTime(m.created_at))}</span></button>`; }).join('')+`</div>`;
+}
+function inboxOpen(threadId,msgId){
+  if(msgId&&window.mcqMsgRead) mcqMsgRead(msgId).then(r=>{ window.__inboxUnread=(r&&r.unread)||0; if(window.buildSidebar) buildSidebar(); });
+  if(!window.mcqThread) return;
+  mcqThread(threadId).then(r=>inboxShowThread(threadId,(r&&r.messages)||[]));
+}
+function inboxShowThread(threadId,msgs){
+  const bubbles=msgs.map(m=>{ const km=MSG_KINDS[m.kind]||['✉️','',''];
+    return `<div class="th-msg ${m.from_role==='super'?'th-super':(m.from_role==='employee'?'th-emp':'')}">
+      <div class="th-h"><b>${esc(m.from_name||m.from_role)}</b><span>${esc((m.created_at||'').slice(0,16).replace('T',' '))}</span></div>
+      ${m.subject?`<div class="th-subj">${km[0]} ${esc(m.subject)}</div>`:''}
+      <div class="th-body">${safeHtml(m.body_html)}</div></div>`; }).join('')||'<div class="empty">No messages.</div>';
+  const canReply=!isBa();
+  const reply=canReply?`<div class="th-reply"><textarea id="th-reply-txt" rows="3" placeholder="Write a reply…"></textarea>
+    <button class="btn primary" onclick="inboxReply('${ckJS(threadId)}')"><i class="fas fa-paper-plane"></i>&nbsp; Send reply</button></div>`:'';
+  mcqModal('📥 Conversation', `<div class="th-scroll">${bubbles}</div>${reply}`, {wide:true});
+}
+function inboxReply(threadId){
+  const el=document.getElementById('th-reply-txt'); const txt=(el&&el.value||'').trim();
+  if(!txt){ toast('Write a reply first'); return; }
+  mcqMsgSend({kind:'reply', thread_id:threadId, subject:'Reply', body_html:esc(txt).replace(/\n/g,'<br>')}).then(r=>{
+    if(r&&r.ok){ toast('✓ Reply sent'); mcqModalClose(); renderInbox(); } else toast('Could not send reply'); });
+}
+// Manager/Super compose a document → a specific employee or all staff of a store
+function composeStaffOptions(store){ return (DB.staff||[]).filter(s=>s.store===store && s.active!==0).map(s=>`<option value="id:${esc(s.id)}">👤 ${esc(s.name)}</option>`).join(''); }
+function composeOpen(){
+  const stores=isSuper()?DB.stores:[State.branch]; const first=stores[0]||State.branch;
+  const storeSel=isSuper()?`<div class="field"><label>Store</label><select id="cmp-store" onchange="composeStoreChange()">${stores.map(s=>`<option>${esc(s)}</option>`).join('')}</select></div>`:'';
+  mcqModal('✉️ Send a document', `${storeSel}
+    <div class="field"><label>Send to</label><select id="cmp-target"><option value="all">📢 All staff at this store</option>${composeStaffOptions(first)}</select></div>
+    <div class="field"><label>Subject</label><input id="cmp-subj" placeholder="e.g. New roster / policy update"></div>
+    <div class="field"><label>Message</label><div id="cmp-body-wrap"><textarea id="cmp-body" rows="8" placeholder="Write your document / message…"></textarea></div></div>
+    <div style="display:flex;gap:10px;margin-top:10px"><button class="btn primary" onclick="composeSend()"><i class="fas fa-paper-plane"></i>&nbsp; Send</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>`, {wide:true});
+  if(window.ckMount) ckMount('cmp-body');   // Phase 5 upgrades the textarea to CKEditor when available
+}
+function composeStoreChange(){ const st=document.getElementById('cmp-store')?.value||State.branch; const t=document.getElementById('cmp-target'); if(t) t.innerHTML=`<option value="all">📢 All staff at this store</option>`+composeStaffOptions(st); }
+function composeSend(){
+  const store=isSuper()?(document.getElementById('cmp-store')?.value||State.branch):State.branch;
+  const target=document.getElementById('cmp-target')?.value||'all';
+  const subj=(document.getElementById('cmp-subj')?.value||'').trim();
+  const raw=(document.getElementById('cmp-body')?.value||'').trim();
+  const body=(window.ckRead?ckRead('cmp-body'):'')||esc(raw).replace(/\n/g,'<br>');
+  if(!raw && !(window.ckRead&&ckRead('cmp-body'))){ toast('Write a message first'); return; }
+  const payload={kind:'document', store, subject:subj||'Document', body_html:body};
+  if(target==='all') payload.to_store_all=true; else if(target.indexOf('id:')===0) payload.to_staff_id=target.slice(3);
+  mcqMsgSend(payload).then(r=>{ if(r&&r.ok){ toast('✓ Document sent'); mcqModalClose(); renderInbox(); } else toast('Could not send'); });
+}
+window.renderInbox=renderInbox; window.inboxOpen=inboxOpen; window.inboxReply=inboxReply;
+window.composeOpen=composeOpen; window.composeStoreChange=composeStoreChange; window.composeSend=composeSend;
 
 /* ============================================================ CHÚ BA — read-only checklist viewer (all stores) */
 function baSetStore(v){ State.ba.store=v; renderBaView(); }
@@ -1292,6 +1388,8 @@ function issSubmit(){
   const cat=State.iss.cat;
   const names=(DB.issueEmailRoutes[cat]||[]).map(k=>(DB.emailRecipients.find(x=>x.key===k)||{}).name).filter(Boolean);
   if(window.mcqEmail) mcqEmail.notify('issue', `${ref} · ${c.label} · ${store}`, `New report: ${c.label}\nReference: ${ref}\nStore: ${store}\nReported by: ${name}\nPriority: ${prio}\n\n${desc}`, {cat});
+  // → Manager + Dept-Lead inbox (this store) AND Superadmin inbox (all stores)
+  try{ if(window.mcqMsgSend) mcqMsgSend({kind:'issue', store, subject:`${ref} · ${c.label}`, body_html:`<p><b>Reported by:</b> ${esc(name)} · <b>Priority:</b> ${esc(prio)} · <b>Store:</b> ${esc(store)}</p><p>${esc(desc).replace(/\n/g,'<br>')}</p>`}); }catch(e){}
   State.iss={cat:'',photo:null,prio:'Normal',tab:'report'};
   if(window.persist) window.persist();
   toast(`✓ ${ref} → ${DB.modules[modOut].short}${names.length?' · 📧 '+names.length+' notified':''}`); buildSidebar(); renderIssue();

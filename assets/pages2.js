@@ -145,6 +145,11 @@ function vioSubmit(){
     if(sm&&sm.email&&window.mcqEmail){ mcqEmail._brevo([{email:sm.email,name:sm.name}],subject,body,mcqEmail.cfg()); toast('📧 Violation emailed to '+sm.name); }
     if(window.mcqEmail&&mcqEmail.notify) mcqEmail.notify('violation',subject,body,{});   // office / all recipients
   }catch(e){}
+  // → the employee's own inbox (violation notice) + Superadmin inbox (all stores)
+  try{ if(window.mcqMsgSend){ const smi=(typeof staffByName==='function')&&staffByName(staff);
+    mcqMsgSend({kind:'violation', store, to_staff_id:(smi&&smi.id)||null,
+      subject:`Violation notice — ${State.vio.ruleTitle} (${step})`,
+      body_html:`<p>A violation has been recorded against you.</p><ul><li><b>Rule:</b> ${esc(State.vio.ruleTitle)}</li><li><b>Severity:</b> ${esc(rec.severity)}</li><li><b>Step:</b> ${esc(step)}</li></ul><p>${esc(desc).replace(/\n/g,'<br>')}</p>${rec.actionTaken?`<p><b>Action:</b> ${esc(rec.actionTaken)}</p>`:''}`}); } }catch(e){}
   State.vio={rule:'',sev:'Minor',step:'Verbal Discussion',tab:'records'}; toast(`✓ Violation logged · ${step}`); buildSidebar(); renderViolation();
 }
 /* Auto-suggest the next escalation step from the staff's history (Verbal→Written→Final→Termination) */

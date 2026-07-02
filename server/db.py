@@ -76,9 +76,23 @@ CREATE TABLE IF NOT EXISTS schedule_history (
   id INTEGER PRIMARY KEY AUTOINCREMENT, store_id TEXT, data_json TEXT, created_at TEXT);
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY, value_json TEXT, updated_at TEXT);
+-- inbox / messaging (scales with employee count; kept OUT of the per-store state blob)
+CREATE TABLE IF NOT EXISTS messages (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, store_id TEXT,
+  from_role TEXT, from_name TEXT, from_staff_id TEXT,
+  to_staff_id TEXT, to_super INTEGER DEFAULT 0, to_managers INTEGER DEFAULT 0, to_store_all INTEGER DEFAULT 0,
+  kind TEXT, subject TEXT, body_html TEXT, thread_id TEXT,
+  read_by_json TEXT DEFAULT '[]', created_at TEXT);
+-- announcements (store-scoped or ALL; read-only feed for staff)
+CREATE TABLE IF NOT EXISTS announcements (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, store_id TEXT, title TEXT, body_html TEXT,
+  image_id TEXT, author TEXT, created_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_audit_store ON audit_logs(store_id);
 CREATE INDEX IF NOT EXISTS idx_photos_store ON photos(store_id);
 CREATE INDEX IF NOT EXISTS idx_snap_store ON store_state_snapshots(store_id);
+CREATE INDEX IF NOT EXISTS idx_msg_store ON messages(store_id);
+CREATE INDEX IF NOT EXISTS idx_msg_thread ON messages(thread_id);
+CREATE INDEX IF NOT EXISTS idx_ann_store ON announcements(store_id);
 """
 
 def connect():
@@ -286,6 +300,126 @@ def delete_staff_account(store, staff_id):
     try:
         conn.execute('DELETE FROM staff_accounts WHERE store_id=? AND staff_id=?', (store, str(staff_id)))
         conn.commit()
+    finally:
+        conn.close()
+
+# ---- inbox / messaging ----
+def _role_display(au, store=None):
+    return au.get('staff_name') or {'super': 'Head Office', 'ba': 'Chú Ba',
+        'admin': (store or au.get('store_id') or '') + ' Manager',
+        'staff': (store or au.get('store_id') or '') + ' Dept Lead'}.get(au.get('role'), au.get('role') or 'User')
+
+def _reader_key(au):
+    r = au.get('role')
+    if r in ('super', 'ba'): return 'super'
+    if r in ('admin', 'staff'): return 'mgr:' + str(au.get('store_id'))
+    if r == 'employee': return 'emp:' + str(au.get('staff_id'))
+    return str(r)
+
+def _route_for(kind):
+    """Default inbox routing per message kind → (to_super, to_managers, to_store_all)."""
+    k = kind or 'document'
+    if k == 'feedback':  return (1, 0, 0)   # confidential to the owner/super only
+    if k == 'issue':     return (1, 1, 0)   # super + this store's Manager/Dept-Lead
+    if k == 'violation': return (1, 0, 0)   # super sees every violation; employee gets it via to_staff_id
+    if k == 'reply':     return (1, 1, 0)   # replies visible to super + store managers
+    return (0, 0, 0)                        # document/other → explicit targeting only
+
+def send_message(au, store, kind, subject, body_html, to_staff_id=None, to_store_all=False,
+                 thread_id=None, to_super=None, to_managers=None):
+    conn = connect()
+    try:
+        ts, tm, ta = _route_for(kind)
+        if to_super is not None: ts = 1 if to_super else 0
+        if to_managers is not None: tm = 1 if to_managers else 0
+        if to_store_all: ta = 1
+        conn.execute('''INSERT INTO messages(store_id,from_role,from_name,from_staff_id,to_staff_id,
+            to_super,to_managers,to_store_all,kind,subject,body_html,thread_id,read_by_json,created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (store, au.get('role'), _role_display(au, store), au.get('staff_id'),
+             (str(to_staff_id) if to_staff_id else None), ts, tm, (1 if ta else 0),
+             kind, subject or '', body_html or '', thread_id, '[]', now()))
+        mid = conn.execute('SELECT last_insert_rowid() AS id').fetchone()['id']
+        if not thread_id:
+            thread_id = 'T' + str(mid)
+            conn.execute('UPDATE messages SET thread_id=? WHERE id=?', (thread_id, mid))
+        conn.commit()
+        return {'id': mid, 'thread_id': thread_id}
+    finally:
+        conn.close()
+
+def _msg_dict(row, key):
+    try: rb = json.loads(row['read_by_json'] or '[]')
+    except Exception: rb = []
+    return {'id': row['id'], 'store': row['store_id'], 'from_role': row['from_role'],
+            'from_name': row['from_name'], 'from_staff_id': row['from_staff_id'],
+            'to_staff_id': row['to_staff_id'], 'kind': row['kind'], 'subject': row['subject'],
+            'body_html': row['body_html'], 'thread_id': row['thread_id'],
+            'created_at': row['created_at'], 'read': key in rb}
+
+def _inbox_query(au):
+    r = au.get('role')
+    if r in ('super', 'ba'):
+        return ('SELECT * FROM messages WHERE to_super=1 ORDER BY id DESC LIMIT ?', (500,))
+    if r in ('admin', 'staff'):
+        return ('SELECT * FROM messages WHERE store_id=? AND to_managers=1 ORDER BY id DESC LIMIT ?', (au['store_id'], 500))
+    if r == 'employee':
+        return ('SELECT * FROM messages WHERE store_id=? AND (to_staff_id=? OR to_store_all=1) ORDER BY id DESC LIMIT ?',
+                (au['store_id'], str(au.get('staff_id')), 500))
+    return (None, None)
+
+def list_messages(au):
+    q, args = _inbox_query(au)
+    if not q: return {'messages': [], 'unread': 0}
+    conn = connect()
+    try:
+        rows = conn.execute(q, args).fetchall()
+        key = _reader_key(au)
+        out = [_msg_dict(r, key) for r in rows]
+        unread = sum(1 for m in out if not m['read'])
+        return {'messages': out, 'unread': unread}
+    finally:
+        conn.close()
+
+def unread_count(au):
+    q, args = _inbox_query(au)
+    if not q: return 0
+    conn = connect()
+    try:
+        rows = conn.execute(q, args).fetchall()
+        key = _reader_key(au)
+        return sum(1 for r in rows if key not in (json.loads(r['read_by_json'] or '[]') if r['read_by_json'] else []))
+    finally:
+        conn.close()
+
+def mark_message_read(au, msg_id):
+    conn = connect()
+    try:
+        row = conn.execute('SELECT read_by_json FROM messages WHERE id=?', (msg_id,)).fetchone()
+        if not row: return False
+        try: rb = json.loads(row['read_by_json'] or '[]')
+        except Exception: rb = []
+        key = _reader_key(au)
+        if key not in rb:
+            rb.append(key)
+            conn.execute('UPDATE messages SET read_by_json=? WHERE id=?', (json.dumps(rb), msg_id))
+            conn.commit()
+        return True
+    finally:
+        conn.close()
+
+def thread_messages(au, thread_id):
+    """All messages in a thread the caller can see (their own inbox rows in that thread)."""
+    conn = connect()
+    try:
+        rows = conn.execute('SELECT * FROM messages WHERE thread_id=? ORDER BY id ASC', (thread_id,)).fetchall()
+        key = _reader_key(au); r = au.get('role'); sid = str(au.get('staff_id')); store = au.get('store_id')
+        def visible(row):
+            if r in ('super', 'ba'): return row['to_super'] == 1 or row['from_role'] in ('super', 'ba')
+            if r in ('admin', 'staff'): return row['store_id'] == store and (row['to_managers'] == 1 or row['from_role'] in ('admin', 'staff'))
+            if r == 'employee': return row['store_id'] == store and (row['to_staff_id'] == sid or row['to_store_all'] == 1 or row['from_staff_id'] == sid)
+            return False
+        return [_msg_dict(x, key) for x in rows if visible(x)]
     finally:
         conn.close()
 

@@ -100,6 +100,51 @@ def staff_profile():
     db.write_audit(uid(au), store, 'profile', 'staff', sid, None, {'fields': list(patch.keys()) if isinstance(patch, dict) else []})
     return jsonify(ok=True, staff=cur)
 
+# ---------- inbox / messaging ----------
+# who may originate each kind of message
+_MSG_ALLOWED = {
+    'employee': {'feedback', 'issue', 'reply'},
+    'staff':    {'feedback', 'issue', 'reply'},
+    'admin':    {'feedback', 'issue', 'reply', 'document', 'violation'},
+    'super':    {'feedback', 'issue', 'reply', 'document', 'violation', 'announcement'},
+}
+@api.route('/api/message', methods=['POST'])
+def message_send():
+    au = require_auth(); require_write(au)   # Chú Ba (ba) can't send
+    d = request.get_json(force=True, silent=True) or {}
+    role = au['role']; kind = d.get('kind') or 'document'
+    # store is pinned to the caller's own store; only Super may target another store
+    store = d.get('store') if role == 'super' else au['store_id']
+    if not store: store = au['store_id']
+    require_store(au, store)
+    if kind not in _MSG_ALLOWED.get(role, set()): abort(403)
+    res = db.send_message(au, store, kind, d.get('subject'), d.get('body_html'),
+                          to_staff_id=d.get('to_staff_id'), to_store_all=bool(d.get('to_store_all')),
+                          thread_id=d.get('thread_id'), to_super=d.get('to_super'), to_managers=d.get('to_managers'))
+    return jsonify(ok=True, **res)
+
+@api.route('/api/messages', methods=['GET'])
+def messages_list():
+    au = require_auth()
+    return jsonify(ok=True, **db.list_messages(au))
+
+@api.route('/api/messages/unread', methods=['GET'])
+def messages_unread():
+    au = require_auth()
+    return jsonify(ok=True, unread=db.unread_count(au))
+
+@api.route('/api/message/read', methods=['POST'])
+def message_read():
+    au = require_auth()
+    d = request.get_json(force=True, silent=True) or {}
+    db.mark_message_read(au, d.get('id'))
+    return jsonify(ok=True, unread=db.unread_count(au))
+
+@api.route('/api/thread/<thread_id>', methods=['GET'])
+def thread_view(thread_id):
+    au = require_auth()
+    return jsonify(ok=True, messages=db.thread_messages(au, thread_id))
+
 # ---------- store list / summary ----------
 @api.route('/api/stores')
 def stores():
