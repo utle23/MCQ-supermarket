@@ -1200,7 +1200,8 @@ table.jobduty td{vertical-align:top}
 .th-h b{color:#1f2937}
 .th-subj{font-weight:700;font-size:13.5px;margin-bottom:4px}
 .th-body{font-size:14px;line-height:1.55}
-.th-body img{max-width:100%;border-radius:8px}
+.th-body img{max-width:min(100%,300px);max-height:230px;height:auto;border-radius:10px;border:1px solid #e5e7eb;cursor:zoom-in;margin:6px 0;transition:transform .15s}
+.th-body img:hover{transform:scale(1.02)}
 .th-reply{border-top:1px solid #e5e7eb;padding-top:12px;display:flex;flex-direction:column;gap:8px}
 .th-reply textarea{width:100%;border:1px solid var(--line,#e5e7eb);border-radius:10px;padding:10px;font:inherit;resize:vertical}
 /* ---- CKEditor 5 in modals ---- */
@@ -1220,9 +1221,11 @@ table.jobduty td{vertical-align:top}
 .ann-meta{color:#94a3b8}
 .ann-del{margin-left:auto;color:var(--bad,#dc2626)}
 .ann-title{margin:10px 0 6px;font-size:18px;color:#1f2937}
-.ann-img{width:100%;max-height:340px;object-fit:cover;border-radius:12px;margin:8px 0;cursor:zoom-in}
+.ann-img{width:auto;max-width:min(100%,440px);max-height:240px;height:auto;border-radius:12px;margin:10px 0;cursor:zoom-in;border:1px solid #e5e7eb;box-shadow:0 3px 12px rgba(0,0,0,.08);transition:transform .15s,box-shadow .15s}
+.ann-img:hover{transform:scale(1.02);box-shadow:0 8px 22px rgba(0,0,0,.16)}
 .ann-body{font-size:14.5px;line-height:1.6;color:#374151}
-.ann-body img{max-width:100%;border-radius:8px}
+.ann-body img{max-width:min(100%,300px);max-height:230px;height:auto;border-radius:10px;border:1px solid #e5e7eb;cursor:zoom-in;margin:6px 0;transition:transform .15s}
+.ann-body img:hover{transform:scale(1.02)}
 .ann-photo-pick{display:inline-flex;align-items:center;gap:6px;padding:9px 14px;border:1px dashed #cbd5e1;border-radius:10px;cursor:pointer;color:#475569;font-size:13px}
 .ann-prev-img{max-height:140px;border-radius:10px;margin-top:8px}
 /* ---- Super email-a-store composer ---- */

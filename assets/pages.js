@@ -395,6 +395,12 @@ function safeHtml(html){ const d=document.createElement('div'); d.innerHTML=Stri
     if(n.indexOf('on')===0 || ((n==='href'||n==='src')&&/^\s*javascript:/i.test(a.value))) e.removeAttribute(a.name); }); });
   return d.innerHTML; }
 window.mcqModal=mcqModal; window.mcqModalClose=mcqModalClose; window.safeHtml=safeHtml;
+// click any image inside an announcement/inbox body → open the full-size lightbox.
+// CAPTURE phase, because the modal panel calls stopPropagation() (bubble) and would block us.
+if(!window._mcqImgZoom){ window._mcqImgZoom=true;
+  document.addEventListener('click', function(e){ const t=e.target;
+    if(t && t.tagName==='IMG' && t.closest && t.closest('.ann-body,.th-body') && window.openLightbox){ e.preventDefault(); e.stopPropagation(); openLightbox(t.currentSrc||t.src); }
+  }, true); }
 
 /* ============================================================ INBOX / MESSAGING */
 const MSG_KINDS={feedback:['💡','Feedback','#7c3aed'],issue:['🚩','Report Issue','#e53935'],violation:['⚖️','Violation','#b45309'],document:['📄','Document','#0891b2'],reply:['↩️','Reply','#0e9f6e'],announcement:['📣','Announcement','#7c3aed']};
@@ -575,7 +581,7 @@ function annCompose(){
 }
 async function annPhotoPick(inp){
   const file=inp.files&&inp.files[0]; if(!file) return;
-  let ref; try{ ref=await compressImage(file,1400,.8); }catch(e){ try{ ref=URL.createObjectURL(file); }catch(_){ ref=null; } }
+  let ref; try{ ref=await compressImage(file,1280,.78); }catch(e){ try{ ref=URL.createObjectURL(file); }catch(_){ ref=null; } }
   _annPhoto=ref;   // inline data URL → visible to every reader
   const p=document.getElementById('ann-photo-prev'); if(p) p.innerHTML=ref?`<img src="${imgSrc(ref)}" class="ann-prev-img">`:'';
   const l=document.getElementById('ann-photo-lbl'); if(l) l.innerHTML='<i class="fas fa-check"></i>&nbsp; Photo added — tap to change';
