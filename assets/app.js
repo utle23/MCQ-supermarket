@@ -504,19 +504,30 @@ function openCount(mod){
 }
 function paintActive(){ $$('#nav .nav-item').forEach(el=>el.classList.toggle('active', el.dataset.mod===State.route.mod)); }
 // global Super store filter (topbar): scope every page to one store, or 'ALL'
-function superSetStore(v){ State.superStore=(v==='ALL')?'':v; try{ if(State.mgr) State.mgr.store=State.superStore||'ALL'; }catch(e){} render(); }
+function superSetStore(v){ State.superStore=(v==='ALL')?'':v; try{ if(State.mgr) State.mgr.store=State.superStore||'ALL'; }catch(e){} buildTopbar(); render(); }
 window.superSetStore=superSetStore;
+// Active scope label for crumbs/titles — reflects the Super store filter (or the user's fixed store)
+function superScopeLabel(){ return isSuper()?((State.superStore&&State.superStore!=='ALL')?State.superStore:'All stores'):State.branch; }
+window.superScopeLabel=superScopeLabel;
 
 /* ============================================================ TOPBAR */
 function buildTopbar(){
   const u=me();
   const scopeLabel=isSuper()?'All stores':State.branch;
   const roleLabel=isSuper()?'Super':State.account&&State.account.role==='ba'?'Chú Ba':State.account&&State.account.role==='admin'?'Manager':State.account&&State.account.role==='employee'?'Staff':'Dept Lead';
-  const superStoreSel = isSuper()
-    ? `<span class="tb-store-filter"><i class="fas fa-store"></i><select id="tb-store" onchange="superSetStore(this.value)" title="Filter every page by store">
-        <option value="ALL" ${(!State.superStore||State.superStore==='ALL')?'selected':''}>All stores</option>
-        ${DB.stores.map(s=>`<option value="${esc(s)}" ${State.superStore===s?'selected':''}>${esc(s)}</option>`).join('')}</select></span>`
-    : `<span class="tb-badge"><i class="fas fa-store"></i> ${esc(scopeLabel)}</span>`;
+  // Super: the store filter gets its own prominent bar under the topbar (see #store-scope-bar).
+  // Everyone else: a small badge in the topbar showing their fixed store.
+  const scopeBar=$('#store-scope-bar');
+  if(scopeBar){
+    scopeBar.innerHTML = isSuper()
+      ? `<div class="ssb-inner"><span class="ssb-label"><i class="fas fa-store"></i> Viewing store</span>
+          <select id="tb-store" class="ssb-select" onchange="superSetStore(this.value)" title="Filter every page by store">
+            <option value="ALL" ${(!State.superStore||State.superStore==='ALL')?'selected':''}>🏬 All stores</option>
+            ${DB.stores.map(s=>`<option value="${esc(s)}" ${State.superStore===s?'selected':''}>${esc(s)}</option>`).join('')}</select>
+          <span class="ssb-hint">${(!State.superStore||State.superStore==='ALL')?'Showing every store — pick one to focus':'Every page is scoped to this store'}</span></div>`
+      : '';
+  }
+  const superStoreSel = isSuper() ? '' : `<span class="tb-badge"><i class="fas fa-store"></i> ${esc(scopeLabel)}</span>`;
   $('#topbar-right').innerHTML = `
     ${State.branch==='Demo'?'<span class="tb-badge" style="background:#fdf2f8;color:#9d174d;border-color:#f9c9e0">🎬 Sample data</span>':''}
     ${superStoreSel}
@@ -572,7 +583,7 @@ function render(){
 
 /* ============================================================ HOME */
 function renderHome(){
-  setAccent('#4f46e5'); setCrumb('🏠','Dashboard',`${DB.brand.org} · ${isSuper()?'All stores':State.branch}`);
+  setAccent('#4f46e5'); setCrumb('🏠','Dashboard',`${DB.brand.org} · ${superScopeLabel()}`);
   const u=me();
   let totalOpen=0,critical=0,records=0;
   DB.order.forEach(id=>{ totalOpen+=openCount(id); records+=scopedRecords(id).length;

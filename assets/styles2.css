@@ -243,27 +243,28 @@ table.sched td{vertical-align:middle}
 .ck-resp-field b{color:var(--bad)}
 .ck-resp-field input{width:100%;border:1.5px solid var(--line);border-radius:10px;padding:9px 10px;font-size:12.5px;font-family:inherit;background:#fff}
 .ck-resp-field input:focus{outline:0;border-color:var(--accent);box-shadow:0 0 0 3px var(--accent-soft)}
-.ck-area-h{font-size:11px;font-weight:800;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:14px 0 8px 2px}
+.ck-area-h{font-size:12.5px;font-weight:900;letter-spacing:.05em;text-transform:uppercase;color:var(--accent);margin:18px 0 10px;padding-bottom:5px;border-bottom:2px solid var(--accent-soft)}
 .ck-task{display:flex;gap:13px;align-items:flex-start;padding:13px 15px;border:1.5px solid var(--line);border-radius:14px;background:var(--surface);margin-bottom:9px;transition:.15s;box-shadow:var(--shadow)}
 .ck-task.done{border-color:var(--ok);background:linear-gradient(0deg,var(--ok-bg),var(--ok-bg))}
 .ck-check{flex:none;width:30px;height:30px;border-radius:9px;border:2px solid var(--line);background:#fff;cursor:pointer;font-size:15px;font-weight:900;color:#fff;transition:.14s;margin-top:2px}
 .ck-check:hover{border-color:var(--ok)}
 .ck-task.done .ck-check{background:var(--ok);border-color:var(--ok)}
-.ck-main{flex:1;min-width:0}
+.ck-main{flex:1;min-width:0;display:flex;gap:14px;align-items:stretch}
+.ck-text{flex:1 1 auto;min-width:0;max-width:460px;display:flex;flex-direction:column;gap:7px}
 .ck-name{font-weight:650;font-size:13.5px;color:var(--ink);line-height:1.45}
 .ck-task.done .ck-name{color:var(--ink-soft)}
-.ck-note{margin-top:9px;width:100%;max-width:460px;border:1px solid var(--line);border-radius:10px;padding:8px 11px;font-size:12.5px;font-family:inherit;display:block}
-.ck-photos{margin-top:11px;background:var(--surface-2);border:1px solid var(--line-soft);border-radius:12px;padding:11px 12px}
+.ck-note{margin-top:0;width:100%;max-width:none;border:1px solid var(--line);border-radius:10px;padding:8px 11px;font-size:12.5px;font-family:inherit;display:block}
+.ck-photos{flex:0 0 auto;align-self:stretch;display:flex;flex-direction:column;justify-content:center;background:var(--surface-2);border:1px solid var(--line-soft);border-radius:12px;padding:6px 8px}
 .ck-photos.locked{background:#f8fafc;border-style:dashed}
-.ck-photos-h{display:flex;align-items:center;gap:9px;font-size:12px;margin-bottom:9px}
+.ck-photos-h{display:flex;align-items:center;gap:7px;font-size:10.5px;margin-bottom:4px}
 .ck-lock{font-size:11px;font-weight:750;color:var(--muted)}
 .ck-pc{font-size:11px;font-weight:800;padding:2px 9px;border-radius:20px;background:var(--mute-bg);color:#5b6678}
 .ck-pc.ok{background:var(--ok-bg);color:#0a8a5f}
-.ck-slots{display:flex;gap:9px;flex-wrap:wrap}
-.ck-slot{position:relative;width:66px;height:66px;border:1.6px dashed var(--line);border-radius:13px;display:grid;place-items:center;cursor:pointer;overflow:hidden;background:#fff;transition:.14s}
+.ck-slots{display:flex;gap:6px;flex-wrap:wrap}
+.ck-slot{position:relative;width:44px;height:44px;border:1.6px dashed var(--line);border-radius:10px;display:grid;place-items:center;cursor:pointer;overflow:hidden;background:#fff;transition:.14s}
 .ck-slot:hover{border-color:var(--accent);background:var(--accent-soft)}
 .ck-slot input{position:absolute;inset:0;opacity:0;cursor:pointer}
-.ck-slot-empty{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:20px;color:var(--muted)}
+.ck-slot-empty{display:flex;flex-direction:column;align-items:center;gap:2px;font-size:15px;color:var(--muted)}
 .ck-slot-empty small{font-size:9px;font-weight:700;letter-spacing:.03em}
 .ck-slot.filled{border-style:solid;border-color:var(--ok)}
 .ck-slot-img{width:100%;height:100%;object-fit:cover}
@@ -1128,10 +1129,8 @@ table.jobduty td{vertical-align:top}
 @media(max-width:600px){.ba-thumb{height:44vw}}
 .ba-incomplete{margin-top:10px;padding:8px 12px;border-radius:8px;background:#fef2f2;color:#b91c1c;font-size:12.5px;font-weight:600}
 
-/* ---- Checklist: photo beside note + Done screen ---- */
-.ck-note-row{display:flex;gap:10px;align-items:flex-start;flex-wrap:wrap;margin-top:6px}
-.ck-note-row .ck-note{flex:1 1 200px;min-width:150px;margin-top:0}
-.ck-note-row .ck-photos{flex:0 0 auto;margin-top:0}
+/* ---- Checklist: compact photo beside name+note; stack on phones ---- */
+@media(max-width:600px){.ck-main{flex-direction:column;gap:9px}.ck-photos{align-self:flex-start}}
 .ck-done{text-align:center;background:var(--card,#fff);border:1px solid #bbf7d0;border-radius:16px;padding:26px 20px;box-shadow:0 4px 18px rgba(14,159,110,.12)}
 .ck-done-ring{width:66px;height:66px;margin:0 auto 10px}
 .ck-done-ring svg{width:66px;height:66px}
@@ -1251,10 +1250,6 @@ table.jobduty td{vertical-align:top}
 .ba-out-card.none{opacity:.7}
 .ba-out-h{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .ba-out-list{margin-top:8px;font-size:12px;color:#7f1d1d;line-height:1.6}
-/* ---- Checklist: "needs a note" indicator (unticked + no reason) ---- */
-.ck-need-note{display:inline-block;margin-left:8px;font-size:11px;font-weight:700;color:#b45309;background:#fffbeb;border:1px solid #fde68a;padding:2px 8px;border-radius:999px;vertical-align:middle}
-.ck-note.needs-note{border-color:#f59e0b !important;box-shadow:0 0 0 2px rgba(245,158,11,.16);background:#fffdf5}
-.ck-task.ck-need{box-shadow:inset 3px 0 0 #f59e0b}
 
 /* ============================================================ MOBILE / RESPONSIVE POLISH */
 html,body{max-width:100%}
@@ -1289,7 +1284,6 @@ html,body{max-width:100%}
   .ba-out-grid{grid-template-columns:1fr}
   .ann-filter{flex-wrap:wrap}
   .store-pick{max-height:160px}
-  .ck-need-note{display:block;margin:4px 0 0 0;width:fit-content}
   /* topbar trim */
   #idle-ind{display:none}
   .tb-badge.sync-top{max-width:130px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -1300,10 +1294,17 @@ html,body{max-width:100%}
   .login-card{padding:22px 18px}
 }
 /* ---- Super global store filter (topbar) ---- */
-.tb-store-filter{display:inline-flex;align-items:center;gap:7px;background:#fff;border:1px solid var(--line,#e5e7eb);border-radius:999px;padding:5px 10px 5px 12px;font-size:12.5px;color:#334155}
-.tb-store-filter i{color:#0e9f6e}
-.tb-store-filter select{border:0;background:transparent;font:inherit;font-weight:800;color:#0f172a;cursor:pointer;outline:none;max-width:130px}
-@media(max-width:600px){.tb-store-filter{padding:5px 8px}.tb-store-filter select{max-width:96px}}
+/* Super store filter — prominent bar directly under the topbar */
+#store-scope-bar:empty{display:none}
+#store-scope-bar{position:sticky;top:0;z-index:30;background:linear-gradient(90deg,#ecfdf5,#f0fdfa);border-bottom:1px solid #bbf7d0;box-shadow:0 1px 0 rgba(16,185,129,.06)}
+.ssb-inner{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:11px 22px;max-width:1500px}
+.ssb-label{display:inline-flex;align-items:center;gap:8px;font-size:13px;font-weight:800;color:#065f46;letter-spacing:.01em}
+.ssb-label i{color:#0e9f6e}
+.ssb-select{border:1.5px solid #6ee7b7;background:#fff;border-radius:11px;padding:9px 15px;font:inherit;font-size:14px;font-weight:800;color:#064e3b;cursor:pointer;outline:none;min-width:200px;box-shadow:0 1px 2px rgba(16,185,129,.12)}
+.ssb-select:hover{border-color:#10b981}
+.ssb-select:focus{border-color:#10b981;box-shadow:0 0 0 3px rgba(16,185,129,.18)}
+.ssb-hint{font-size:12px;color:#047857;opacity:.85}
+@media(max-width:600px){.ssb-inner{padding:9px 14px;gap:9px}.ssb-select{min-width:0;flex:1}.ssb-hint{display:none}}
 /* ---- Staff: violation standing banner + escalation ladder ---- */
 .vio-standing{background:#fff;border:1px solid var(--line,#e5e7eb);border-left:5px solid var(--sc,#f59e0b);border-radius:16px;padding:16px 18px;box-shadow:0 4px 16px rgba(0,0,0,.05);margin-bottom:6px}
 .vio-standing.good{border-left-color:#0e9f6e}

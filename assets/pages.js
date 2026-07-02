@@ -172,7 +172,7 @@ function renderChecklist(){
   const today=ckTodayStr(); if(!s.date) s.date=today; const viewing=s.date!==today;
   const reopened=!!(State.chk.reopen && State.chk.reopen[s.dept+'|'+s.session]);
   const submitted=!viewing && !isAdmin() && ckSubmittedFor(s.dept,s.session,today) && !reopened;   // show the Done screen for staff after submit
-  setCrumb('✅','Store Operation Checklist',`${isSuper()?'All stores':State.branch} · ${s.session}${viewing?' · '+s.date:''}`);
+  setCrumb('✅','Store Operation Checklist',`${superScopeLabel()} · ${s.session}${viewing?' · '+s.date:''}`);
   const chips=C.depts.map(d=>{ const m=C.deptMeta[d]||{}; const col=m.color||'#0e9f6e';
     return `<button class="dept-chip ${d===s.dept?'active':''}" style="--dc:${col}" ${isAdmin()?`ondblclick="ckDeptHEdit('${ckJS(d)}')" title="Double-click to rename / delete"`:''} onclick="ckDept('${ckJS(d)}')">${m.icon?`<i class="fas ${m.icon}"></i> `:''}${esc(d)}</button>`; }).join('')
     + (isAdmin()?`<button class="dept-chip ghost" onclick="ckAddDept()" title="Add department"><i class="fas fa-plus"></i>&nbsp;Add</button>`:'');
@@ -745,14 +745,10 @@ function ckList(){
   return ckRows(false);
 }
 function ckAreaChips(){
-  const s=State.chk, admin=isAdmin();
-  const areas=[...new Set(ckRows(true).map(r=>r.area))];
-  if(!admin){ s.area='ALL'; return ''; }   // staff: ONE long list per department — sections shown as headings, submit once
-  if(areas.length>1 && !areas.includes(s.area)) s.area=areas[0];
-  if(areas.length<=1) s.area='ALL';
-  const chips=areas.map(a=>{ const done=ckAreaDone(a); return `<button class="area-chip ${a===s.area?'active':''} ${done?'sec-ok':'sec-pending'}" ${admin?`ondblclick="ckSectionEdit('${ckJS(s.dept)}','${ckJS(a)}')" title="Double-click to rename / delete"`:''} onclick="ckArea('${ckJS(a)}')">${done?'✓ ':'○ '}${esc(a)}</button>`; }).join('')
-    + (admin?`<button class="area-chip ghost" onclick="ckAddSection('${ckJS(s.dept)}')" title="Add a section"><i class="fas fa-plus"></i>&nbsp;Section</button>`:'');
-  return `<div class="ck-subtoolbar"><span>Sections</span><div class="area-chips">${chips}</div>${admin?'<span class="ck-sub-hint">double-click a section to rename / delete</span>':''}</div>`;
+  // ONE long checklist per department for everyone — each section is a heading inside the list
+  // (no section tabs). Admins add sections via the Builder bar / the ＋ under each section.
+  State.chk.area='ALL';
+  return '';
 }
 function ckCurrentArea(){
   const areas=[...new Set(ckRows(true).map(r=>r.area))];
@@ -825,12 +821,13 @@ function ckDraw(){
             photoHtml=`<div class="ck-photos" id="ck-photo-${r.i}"><div class="ck-photos-h">${photoChip(r.photo)} <span class="ck-pc ${have>=need?'ok':''}">${have}/${need}</span></div><div class="ck-slots">${slots}</div></div>`;
           }
         }
-        const needNote = !done && !String(st.note||'').trim();   // unticked + no reason → must add a note
-        html+=`<div class="ck-task ${done?'done':''} ${needNote?'ck-need':''}" id="ck-row-${r.i}" ${isAdmin()?`ondblclick="ckEditTask(${r.i})" title="Double-click to edit / delete"`:''}>
+        html+=`<div class="ck-task ${done?'done':''}" id="ck-row-${r.i}" ${isAdmin()?`ondblclick="ckEditTask(${r.i})" title="Double-click to edit / delete"`:''}>
           <button class="ck-check" onclick="ckTick(${r.i})">${done?'✓':''}</button>
-          <div class="ck-main"><div class="ck-name">${esc(r.task)}<span class="ck-need-note" style="display:${needNote?'':'none'}">⚠️ Chưa tick — ghi lý do</span></div>
-            ${r.meta.temp?ckTempBox(r,st):''}
-            <div class="ck-note-row"><input id="ck-note-${r.i}" class="ck-note ${needNote?'needs-note':''}" placeholder="Add note / reason…" value="${esc(st.note||'')}" oninput="ckNote(${r.i},this.value)">${photoHtml}</div></div></div>`;
+          <div class="ck-main">
+            <div class="ck-text"><div class="ck-name">${esc(r.task)}</div>
+              ${r.meta.temp?ckTempBox(r,st):''}
+              <input id="ck-note-${r.i}" class="ck-note" placeholder="Note / reason…" value="${esc(st.note||'')}" oninput="ckNote(${r.i},this.value)"></div>
+            ${photoHtml}</div></div>`;
       });
       if(isAdmin()) html+=`<button class="ck-add-ghost" onclick="ckAddTask('${ckJS(dept)}','${ckJS(area)}')"><i class="fas fa-plus"></i> Add task</button>`;
     });
@@ -952,13 +949,9 @@ function ckTick(i){
   if(row){row.classList.toggle('done',st.done);row.querySelector('.ck-check').textContent=st.done?'✓':'';ckNeedNoteUi(i);}
   ckProgress(); ckSaveDraft();
 }
-// live-toggle the amber "needs a note" flag on a task card (no full re-render)
-function ckNeedNoteUi(i){ const st=State.chk.state[i]||{}, row=document.getElementById('ck-row-'+i); if(!row) return;
-  const need=!st.done && !String(st.note||'').trim();
-  row.classList.toggle('ck-need',need);
-  const inp=document.getElementById('ck-note-'+i); if(inp) inp.classList.toggle('needs-note',need);
-  const chip=row.querySelector('.ck-need-note'); if(chip) chip.style.display=need?'':'none'; }
-function ckNote(i,v){const st=State.chk.state[i]=State.chk.state[i]||{};st.note=v;ckNeedNoteUi(i);ckSaveDraft();ckUpdateSubmitBtn();}
+// (inline "needs a note" flag removed by request — unchecked tasks are only reported when you press Submit)
+function ckNeedNoteUi(){}
+function ckNote(i,v){const st=State.chk.state[i]=State.chk.state[i]||{};st.note=v;ckSaveDraft();ckUpdateSubmitBtn();}
 async function ckPhoto(input,i){
   const f=input.files&&input.files[0]; if(!f)return;
   const r=ckItem(DB.checklist.items[i],i), st=State.chk.state[i]=State.chk.state[i]||{};
@@ -1709,8 +1702,10 @@ function renderStructure(){
 /* ============================================================ STAFF MEMBERS */
 function renderStaff(){
   setAccent('#0e9f6e'); setCrumb('🧑‍🤝‍🧑','Staff Members',`${DB.staff.length} people`);
-  const rows=DB.staff.filter(s=> isSuper() ? (!State.superStore||State.superStore==='ALL'||s.store===State.superStore) : s.store===State.branch);
-  const active=rows.filter(s=>s.active).length;
+  const allRows=DB.staff.filter(s=> isSuper() ? (!State.superStore||State.superStore==='ALL'||s.store===State.superStore) : s.store===State.branch);
+  const q=(State.staffQ||'').trim().toLowerCase();
+  const rows=q ? allRows.filter(s=>[s.name,s.role,s.classification,s.dept,s.store].some(v=>String(v||'').toLowerCase().includes(q))) : allRows;
+  const active=allRows.filter(s=>s.active).length;
   const canAcct=!!(window.mcqStaffAccounts && (window.localStorage&&localStorage.getItem('mcq_token'))); // individual logins need the server
   const ed=State.staffEdit, roles=DB.staffRoles||['Staff'];
   let editForm='';
@@ -1751,13 +1746,15 @@ function renderStaff(){
   }
   $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🧑‍🤝‍🧑</div><div><h2>Staff Members</h2><p>Team directory${isSuper()?' · all stores':' · '+esc(State.branch)}.</p></div>
       <div class="ph-actions"><button class="btn primary" onclick="staffNew()"><i class="fas fa-user-plus"></i>&nbsp; Add member</button></div></div>
-    <div class="kpi-grid"><div class="kpi tone-info"><div class="k-top"><div class="k-ic">👥</div></div><div class="k-val">${rows.length}</div><div class="k-lbl">Total staff</div></div>
+    <div class="kpi-grid"><div class="kpi tone-info"><div class="k-top"><div class="k-ic">👥</div></div><div class="k-val">${allRows.length}</div><div class="k-lbl">Total staff</div></div>
       <div class="kpi tone-ok"><div class="k-top"><div class="k-ic">✅</div></div><div class="k-val">${active}</div><div class="k-lbl">Active</div></div>
-      <div class="kpi tone-warn"><div class="k-top"><div class="k-ic">🏪</div></div><div class="k-val">${new Set(rows.map(s=>s.store)).size}</div><div class="k-lbl">Stores</div></div>
-      <div class="kpi tone-mute"><div class="k-top"><div class="k-ic">🧰</div></div><div class="k-val">${new Set(rows.map(s=>s.role)).size}</div><div class="k-lbl">Roles</div></div></div>
+      <div class="kpi tone-warn"><div class="k-top"><div class="k-ic">🏪</div></div><div class="k-val">${new Set(allRows.map(s=>s.store)).size}</div><div class="k-lbl">Stores</div></div>
+      <div class="kpi tone-mute"><div class="k-top"><div class="k-ic">🧰</div></div><div class="k-val">${new Set(allRows.map(s=>s.role)).size}</div><div class="k-lbl">Roles</div></div></div>
     ${editForm}
-    <div class="card" style="margin-top:16px"><div class="card-head"><h3>Directory · ${rows.length}</h3><span class="ch-sub">${exportBtns('staff-table','Staff Directory — '+(isSuper()?'All stores':State.branch))}</span></div><div class="table-wrap"><table class="grid" id="staff-table"><thead><tr><th>Name</th><th>Dept</th><th>Role</th><th>Store</th><th>Phone</th><th>Email</th><th>DOB</th><th>Started</th><th>Type</th><th>Status</th>${canAcct?'<th>Staff login</th>':''}<th></th></tr></thead><tbody>
-      ${rows.map(s=>`<tr><td><b>${esc(s.name)}</b></td><td>${s.admin?'<span class="badge ok">ADMIN · all</span>':((Array.isArray(s.roles)&&s.roles.length)?s.roles.map(r=>`<span class="badge mute">${esc(r)}</span>`).join(' '):(s.dept?`<span class="badge mute">${esc(s.dept)}</span>`:'—'))}</td><td>${esc(s.role||s.classification||'')}</td><td>${esc(s.store)}</td><td>${esc(s.phone||'')}</td><td>${esc(s.email||'')}</td><td>${esc(s.dob||'—')}</td><td>${esc(s.start||'')}</td><td>${esc(s.estatus||s.category||'')}</td><td>${s.active?'<span class="badge ok"><span class="bdot"></span>Active</span>':'<span class="badge mute"><span class="bdot"></span>Inactive</span>'}</td>${canAcct?`<td class="acct-cell" data-sid="${esc(s.id)}" data-store="${esc(s.store)}"><span class="muted">…</span></td>`:''}<td><span class="ck-task-admin"><button onclick="staffEditOpen('${esc(s.id)}')" title="Edit">✎</button><button onclick="staffDelete('${esc(s.id)}')" title="Delete">🗑</button></span></td></tr>`).join('')}
+    <div class="card" style="margin-top:16px"><div class="card-head"><h3>Directory · ${rows.length}${q?` of ${allRows.length}`:''}</h3>
+        <input class="staff-search" id="staff-search" type="search" placeholder="🔍  Search staff by name…" value="${esc(State.staffQ||'')}" oninput="staffSearch(this.value)" style="flex:1;min-width:180px;max-width:340px;margin:0 12px;border:1px solid var(--line);border-radius:9px;padding:7px 12px;font-size:13px;font-family:inherit">
+        <span class="ch-sub">${exportBtns('staff-table','Staff Directory — '+(isSuper()?'All stores':State.branch))}</span></div><div class="table-wrap"><table class="grid" id="staff-table"><thead><tr><th>Name</th><th>Dept</th><th>Role</th><th>Store</th><th>Phone</th><th>Email</th><th>DOB</th><th>Started</th><th>Type</th><th>Status</th>${canAcct?'<th>Staff login</th>':''}<th></th></tr></thead><tbody>
+      ${rows.length?rows.map(s=>`<tr><td><b>${esc(s.name)}</b></td><td>${s.admin?'<span class="badge ok">ADMIN · all</span>':((Array.isArray(s.roles)&&s.roles.length)?s.roles.map(r=>`<span class="badge mute">${esc(r)}</span>`).join(' '):(s.dept?`<span class="badge mute">${esc(s.dept)}</span>`:'—'))}</td><td>${esc(s.role||s.classification||'')}</td><td>${esc(s.store)}</td><td>${esc(s.phone||'')}</td><td>${esc(s.email||'')}</td><td>${esc(s.dob||'—')}</td><td>${esc(s.start||'')}</td><td>${esc(s.estatus||s.category||'')}</td><td>${s.active?'<span class="badge ok"><span class="bdot"></span>Active</span>':'<span class="badge mute"><span class="bdot"></span>Inactive</span>'}</td>${canAcct?`<td class="acct-cell" data-sid="${esc(s.id)}" data-store="${esc(s.store)}"><span class="muted">…</span></td>`:''}<td><span class="ck-task-admin"><button onclick="staffEditOpen('${esc(s.id)}')" title="Edit">✎</button><button onclick="staffDelete('${esc(s.id)}')" title="Delete">🗑</button></span></td></tr>`).join(''):`<tr><td colspan="${canAcct?12:11}" style="text-align:center;padding:26px;color:var(--muted)">No staff match “${esc(State.staffQ||'')}”.</td></tr>`}
       </tbody></table></div></div>`;
   if(canAcct) staffAcctFill();
 }
@@ -1783,6 +1780,8 @@ window.staffAcctFill=staffAcctFill; window.staffAcctCreate=staffAcctCreate; wind
 function staffNew(){ State.staffEdit='new'; renderStaff(); window.scrollTo({top:0,behavior:'smooth'}); }
 function staffEditOpen(id){ const s=DB.staff.find(x=>x.id===id); if(!recordInScope(s)){ toast('This staff member belongs to another store'); return; } State.staffEdit=id; renderStaff(); window.scrollTo({top:0,behavior:'smooth'}); }
 function staffCancel(){ State.staffEdit=null; renderStaff(); }
+function staffSearch(v){ State.staffQ=v; renderStaff(); const el=document.getElementById('staff-search'); if(el){ el.focus(); const n=el.value.length; try{el.setSelectionRange(n,n);}catch(e){} } }
+window.staffSearch=staffSearch;
 function staffSave(ed){
   const g=id=>(document.getElementById(id)?.value||'');
   const name=g('st-name').trim(); if(!name){ toast('Enter a name'); return; }
