@@ -473,9 +473,12 @@ function inboxShowThread(threadId,msgs){
   mcqModal('📥 Conversation', `<div class="th-scroll">${bubbles}</div>${reply}`, {wide:true});
   if(canReply && window.ckMount) ckMount('th-reply-txt');
 }
+// an image in the body counts as content — don't require typed text when the user only inserted a photo
+function msgHasContent(html){ return !!(String(html||'').replace(/<[^>]+>/g,'').trim() || /<img/i.test(html||'')); }
+window.msgHasContent=msgHasContent;
 function inboxReply(threadId){
-  const html=(window.ckHtml?ckHtml('th-reply-txt'):''); const plain=String(html).replace(/<[^>]+>/g,'').trim();
-  if(!plain){ toast('Write a reply first'); return; }
+  const html=(window.ckHtml?ckHtml('th-reply-txt'):'');
+  if(!msgHasContent(html)){ toast('Write a reply first'); return; }
   mcqMsgSend({kind:'reply', thread_id:threadId, subject:'Reply', body_html:html}).then(r=>{
     if(r&&r.ok){ toast('✓ Reply sent'); mcqModalClose(); renderInbox(); } else toast('Could not send reply'); });
 }
@@ -497,7 +500,7 @@ function composeSend(){
   const target=document.getElementById('cmp-target')?.value||'all';
   const subj=(document.getElementById('cmp-subj')?.value||'').trim();
   const body=(window.ckHtml?ckHtml('cmp-body'):(document.getElementById('cmp-body')?.value||''));
-  if(!String(body).replace(/<[^>]+>/g,'').trim()){ toast('Write a message first'); return; }
+  if(!msgHasContent(body)){ toast('Write a message first'); return; }
   const payload={kind:'document', store, subject:subj||'Document', body_html:body};
   if(target==='all') payload.to_store_all=true; else if(target.indexOf('id:')===0) payload.to_staff_id=target.slice(3);
   mcqMsgSend(payload).then(r=>{ if(r&&r.ok){ toast('✓ Document sent'); mcqModalClose(); renderInbox(); } else toast('Could not send'); });
@@ -519,7 +522,7 @@ function staffCompose(){
 function staffComposeSend(){
   const subj=(document.getElementById('scm-subj')?.value||'').trim();
   const body=(window.ckHtml?ckHtml('scm-body'):(document.getElementById('scm-body')?.value||''));
-  if(!String(body).replace(/<[^>]+>/g,'').trim()){ toast('Write a message first'); return; }
+  if(!msgHasContent(body)){ toast('Write a message first'); return; }
   if(window.mcqMsgSend) mcqMsgSend({kind:'message', subject:subj||'Message', body_html:body}).then(r=>{ toast(r&&r.ok?'✉️ Sent to management':'Could not send'); });
   mcqModalClose();
 }
@@ -2737,7 +2740,7 @@ function storeEmailSend(){
   const subj=(document.getElementById('se-subj')?.value||'').trim();
   const body=(window.ckHtml?ckHtml('mail-body'):(document.getElementById('mail-body')?.value||''));
   if(!subj){ toast('Add a subject'); return; }
-  if(!String(body).replace(/<[^>]+>/g,'').trim()){ toast('Write a message'); return; }
+  if(!msgHasContent(body)){ toast('Write a message'); return; }
   const to=[], seen={};
   stores.forEach(s=>mgrStoreRecipients(s).forEach(r=>{ const e=String(r.email||'').toLowerCase(); if(e&&!seen[e]){ seen[e]=1; to.push(r); } }));
   if(!to.length){ toast('No email addresses for the selected store(s)'); return; }
