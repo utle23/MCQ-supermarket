@@ -382,6 +382,14 @@ def _inbox_query(au):
                 (au['store_id'], str(au.get('staff_id')), 500))
     return (None, None)
 
+def _list_body(html):
+    """Lighten a message body for the LIST view: drop inline base64 images (the heavy part) and
+    cap length. The inbox list only shows a text snippet; the full body loads on thread open."""
+    if not html: return html
+    import re
+    html = re.sub(r'<img\b[^>]*src="data:[^"]*"[^>]*>', '', html, flags=re.I)   # strip embedded base64 photos
+    return html[:1500]
+
 def list_messages(au):
     q, args = _inbox_query(au)
     if not q: return {'messages': [], 'unread': 0}
@@ -390,6 +398,7 @@ def list_messages(au):
         rows = conn.execute(q, args).fetchall()
         key = _reader_key(au)
         out = [_msg_dict(r, key) for r in rows]
+        for m in out: m['body_html'] = _list_body(m.get('body_html'))   # keep the list payload small/fast
         unread = sum(1 for m in out if not m['read'])
         return {'messages': out, 'unread': unread}
     finally:

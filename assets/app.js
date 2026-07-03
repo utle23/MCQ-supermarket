@@ -333,8 +333,9 @@ function enterApp(){
   if(!location.hash || location.hash==='#') location.hash='#/home'; else render();
   buildTopbar(); buildSidebar(); render();
   startIdleWatch();
-  // warm the rarely-used modules in the background so deep pages open instantly later
-  try{ const idle=window.requestIdleCallback||function(f){return setTimeout(f,1200);}; idle(()=>{ try{ ensureLazyModules(); }catch(e){} }); }catch(e){}
+  // warm the rarely-used modules AND the rich-text editor in the background so deep pages and
+  // every composer (inbox, Share Your Thought, announcements…) open with CKEditor 5 instantly
+  try{ const idle=window.requestIdleCallback||function(f){return setTimeout(f,1200);}; idle(()=>{ try{ ensureLazyModules(); }catch(e){} try{ if(window.ensureCKE) ensureCKE(); }catch(e){} }); }catch(e){}
   startLiveRefresh();   // Super Admin + Chú Ba see records/checklists live
   startUnreadPoll();    // inbox unread badge for every role (light GET, guarded)
 }

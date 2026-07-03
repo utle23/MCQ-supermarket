@@ -425,6 +425,7 @@ function renderInbox(){
     ${composeBtn?`<div class="ph-actions">${composeBtn}</div>`:''}</div>
     <div id="inbox-body"><div class="empty"><div class="e-ic">⏳</div>Loading messages…</div></div>`;
   if(!window.mcqMsgList){ const b=$('#inbox-body'); if(b) b.innerHTML='<div class="empty">Sign in online to use your inbox.</div>'; return; }
+  if(Array.isArray(window.__inboxCache)&&window.__inboxCache.length) inboxPaint(window.__inboxCache);   // instant paint from last load, then refresh below
   mcqMsgList().then(r=>{ window.__inboxUnread=(r&&r.unread)||0; if(window.buildSidebar) buildSidebar(); inboxPaint((r&&r.messages)||[]); })
     .catch(()=>{ const b=$('#inbox-body'); if(b) b.innerHTML='<div class="empty">Could not load your inbox.</div>'; });
 }
@@ -569,7 +570,7 @@ function ckHtml(elId){ const ed=_ckInst[elId]; try{ if(ed) return ed.getData(); 
 function ckDestroy(elId){ const ed=_ckInst[elId]; if(ed){ try{ ed.destroy(); }catch(e){} delete _ckInst[elId]; } }
 function ckSet(elId,html){ const ed=_ckInst[elId]; try{ if(ed){ ed.setData(html||''); return; } }catch(e){} const el=document.getElementById(elId); if(el) el.value=String(html||'').replace(/<[^>]+>/g,''); }
 function ckMounted(elId){ return !!_ckInst[elId]; }
-window.ckMount=ckMount; window.ckRead=ckRead; window.ckHtml=ckHtml; window.ckDestroy=ckDestroy; window.ckSet=ckSet; window.ckMounted=ckMounted;
+window.ckMount=ckMount; window.ckRead=ckRead; window.ckHtml=ckHtml; window.ckDestroy=ckDestroy; window.ckSet=ckSet; window.ckMounted=ckMounted; window.ensureCKE=ensureCKE;
 
 /* ============================================================ ANNOUNCEMENTS
    Everyone sees posts for their store + company-wide (ALL). Manager posts to their store,
@@ -583,6 +584,7 @@ function renderAnnouncements(){
     ${canPost?`<div class="ph-actions"><button class="btn primary" onclick="annCompose()"><i class="fas fa-bullhorn"></i>&nbsp; New announcement</button></div>`:''}</div>
     <div id="ann-feed"><div class="empty"><div class="e-ic">⏳</div>Loading…</div></div>`;
   if(!window.mcqAnnList){ const f=$('#ann-feed'); if(f) f.innerHTML='<div class="empty">Sign in online to see announcements.</div>'; return; }
+  if(Array.isArray(window.__annCache)&&window.__annCache.length) annPaint('');   // instant paint from last load, then refresh below
   mcqAnnList().then(r=>{ window.__annCache=(r&&r.announcements)||[]; annPaint(''); })
     .catch(()=>{ const f=$('#ann-feed'); if(f) f.innerHTML='<div class="empty">Could not load announcements.</div>'; });
 }
