@@ -1637,7 +1637,7 @@ function renderIssueEmail(){
     <div class="card"><div class="table-wrap"><table class="grid er-table"><thead><tr><th>Category</th>${recips.map(r=>`<th class="ctr">${esc(r.name.split(' ')[0])}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div></div>
     <div class="rail-tip" style="margin-top:14px">💡 When staff submit a report in a category, the ticked people are emailed automatically. <b>(Demo shows who would be notified.)</b></div>`;
 }
-function issEmailToggle(cat,rk,on){ const a=DB.issueEmailRoutes[cat]=DB.issueEmailRoutes[cat]||[]; const i=a.indexOf(rk); if(on&&i<0)a.push(rk); if(!on&&i>=0)a.splice(i,1); }
+function issEmailToggle(cat,rk,on){ const a=DB.issueEmailRoutes[cat]=DB.issueEmailRoutes[cat]||[]; const i=a.indexOf(rk); if(on&&i<0)a.push(rk); if(!on&&i>=0)a.splice(i,1); if(window.persist) window.persist(); }
 function renderIssueAnalytics(){
   setAccent('#e53935'); setCrumb('🚩','Report an Issue · Analytics',isSuper()?'By category & branch comparison':'By category within '+State.branch);
   const regMods=['issue','maintenance','incident','complaint'];
@@ -3184,7 +3184,7 @@ window.mcqEmail={
   recipients(eventType,meta){ const recips=DB.emailRecipients||[]; let chosen;
     if(eventType==='checklist'){ const keys=(DB.checklistEmailRoutes&&DB.checklistEmailRoutes[meta&&meta.dept])||[]; chosen=recips.filter(r=>(keys.includes(r.key)||r.all)&&r.email); }
     else if(eventType==='issue'){ const keys=(DB.issueEmailRoutes&&DB.issueEmailRoutes[meta&&meta.cat])||[]; chosen=recips.filter(r=>(keys.includes(r.key)||r.all)&&r.email); }
-    else if(eventType==='violation'){ chosen=recips.filter(r=>(r.vio!==false||r.all)&&r.email); }   // per-recipient violation opt-in (default on)
+    else if(eventType==='violation'){ chosen=recips.filter(r=>(r.vio===true||r.all)&&r.email); }   // per-recipient violation opt-in (default OFF — tick to enable)
     else chosen=recips.filter(r=>r.email);   // feedback & other → all recipients
     // a "customised" recipient flagged `all` receives EVERY alert from EVERY store
     const seen={}; return chosen.filter(r=>{ const e=String(r.email).toLowerCase(); if(seen[e])return false; seen[e]=1; return true; }); },
@@ -3302,7 +3302,8 @@ function renderEmail(){
   const unifiedList=recips.map(r=>{
     const open=State.emailOpen===r.key; const c=emailRecipCount(r.key);
     const dd=open?`<div class="email-dd">
-      <label class="email-cat vio"><input type="checkbox" ${r.vio!==false?'checked':''} onchange="recipSet('${r.key}','vio',this.checked);emailRefreshCount('${r.key}')"><i class="fas fa-gavel" style="color:#b45309"></i> <b>Violation alerts</b></label>
+      <div class="email-dd-tools"><span class="email-dd-hint">Nothing is selected by default — tick what this person should receive.</span><button class="btn xs primary" onclick="recipSelectAll('${r.key}',true)">✓ Select all</button><button class="btn xs" onclick="recipSelectAll('${r.key}',false)">Clear all</button></div>
+      <label class="email-cat vio"><input type="checkbox" ${r.vio===true?'checked':''} onchange="recipSet('${r.key}','vio',this.checked);emailRefreshCount('${r.key}')"><i class="fas fa-gavel" style="color:#b45309"></i> <b>Violation alerts</b></label>
       <div class="email-grp">Report Issue — categories</div>
       ${groups.map(g=>{const inG=Object.entries(cats).filter(([k,cc])=>cc.group===g); return inG.length?`<div class="email-cats">`+inG.map(([k,cc])=>{const on=(DB.issueEmailRoutes[k]||[]).includes(r.key);return `<label class="email-cat"><input type="checkbox" ${on?'checked':''} onchange="issEmailToggle('${k}','${r.key}',this.checked);emailRefreshCount('${r.key}')"><i class="fas ${cc.icon}" style="color:${cc.color}"></i> ${esc(cc.label)}</label>`;}).join('')+`</div>`:'';}).join('')}
       <div class="email-grp">Checklist — departments</div>
@@ -3321,7 +3322,7 @@ function renderEmail(){
   }).join('');
   // staff (with an email) you can add as recipients — default to violation alerts only
   const staffWithEmail=(DB.staff||[]).filter(s=>s.email && (isSuper()?(!State.superStore||State.superStore==='ALL'||s.store===State.superStore):s.store===State.branch));
-  const staffAdd=`<span class="recip-staff-add"><input class="login-input" list="recip-staff-dl" placeholder="＋ Add staff (violation alerts)…" onchange="recipAddStaffPick(this.value);this.value='';" style="min-width:230px"><datalist id="recip-staff-dl">${staffWithEmail.map(s=>`<option value="${esc(s.name)}" label="${esc(s.email)}${isSuper()&&s.store?' · '+esc(s.store):''}"></option>`).join('')}</datalist></span>`;
+  const staffAdd=`<span class="recip-staff-add"><input class="login-input" list="recip-staff-dl" placeholder="＋ Add staff by name…" onchange="recipAddStaffPick(this.value);this.value='';" style="min-width:230px"><datalist id="recip-staff-dl">${staffWithEmail.map(s=>`<option value="${esc(s.name)}" label="${esc(s.email)}${isSuper()&&s.store?' · '+esc(s.store):''}"></option>`).join('')}</datalist></span>`;
   // department-lead block (per store)
   const leadStore=isSuper()?(State.emailLeadStore||DB.stores[0]):State.branch;
   const leadStorePicker=isSuper()?`<select class="login-input" style="max-width:220px" onchange="emailLeadStore(this.value)">${(DB.stores||[]).map(s=>`<option ${s===leadStore?'selected':''}>${esc(s)}</option>`).join('')}</select>`:'';
@@ -3355,7 +3356,7 @@ function renderEmail(){
       <div class="card-pad">
         <div class="email-list">${unifiedList||'<div class="fhint">No recipients yet.</div>'}</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px"><button class="btn sm primary" onclick="recipAdd()">＋ Add recipient</button>${staffAdd}</div>
-        <div class="fhint" style="margin-top:10px">Tap <b>Customise</b> on a person to choose exactly which alerts they get — <b>Violation</b>, Report-Issue categories, and Checklist departments, all in one place. Staff added here receive <b>violation alerts</b> by default.</div>
+        <div class="fhint" style="margin-top:10px">New recipients start with <b>no alerts</b> — tap <b>Customise</b> to choose exactly what they get (<b>Violation</b>, Report-Issue categories, Checklist departments), or use <b>Select all</b> inside to enable everything at once. Changes sync automatically to every device.</div>
       </div></div>
     <div class="section-title" style="margin-top:24px">Department leaders · verified-note recipients ${leadStorePicker}</div>
     <p class="fhint" style="margin:-4px 0 12px">When a manager verifies a checklist with an assessment note, the leader(s) below for that department receive a branded PDF report. ${isSuper()?'Pick a store above — each store has its own leaders.':'These are for <b>'+esc(State.branch)+'</b>.'}</p>
@@ -3415,13 +3416,25 @@ function emailToggleDD(k){ State.emailOpen=State.emailOpen===k?null:k; renderEma
 function emailRecipCount(k){ const cats=DB.issueCategories||{}, depts=(DB.checklist&&DB.checklist.depts)||[]; const r=(DB.emailRecipients||[]).find(x=>x.key===k)||{};
   const ic=Object.keys(cats).filter(c=>((DB.issueEmailRoutes||{})[c]||[]).includes(k)).length;
   const cc=depts.filter(d=>((DB.checklistEmailRoutes||{})[d]||[]).includes(k)).length;
-  const v=(r.vio!==false)?1:0; return {ic,cc,v,total:ic+cc+v}; }
+  const v=(r.vio===true)?1:0; return {ic,cc,v,total:ic+cc+v}; }
 function emailRefreshCount(k){ const c=emailRecipCount(k); const el=document.getElementById('email-cnt-'+k); if(el) el.textContent=c.total+(c.total!==1?' alerts':' alert'); }
 // add a staff member (with an email) as a recipient — default: violation alerts only
 function recipAddStaffPick(name){ name=(name||'').trim(); const s=(DB.staff||[]).find(x=>x.name===name && x.email); if(!s){ toast('Pick a staff member who has an email'); return; } recipAddStaff(s.name,s.email); }
 function recipAddStaff(name,email){ DB.emailRecipients=DB.emailRecipients||[];
   if(DB.emailRecipients.some(r=>String(r.email||'').toLowerCase()===String(email).toLowerCase())){ toast(name+' is already a recipient'); return; }
-  DB.emailRecipients.push({key:'r'+Date.now().toString(36),name,email,vio:true,staff:true}); if(window.persist) window.persist(); renderEmail(); toast('✓ '+name+' added — violation alerts'); }
+  const key='r'+Date.now().toString(36);
+  DB.emailRecipients.push({key,name,email,staff:true}); if(window.persist) window.persist(); State.emailOpen=key; renderEmail(); toast('✓ '+name+' added — open Customise to pick their alerts'); }
+// Select all / clear all alerts for one recipient (violation + every issue category + every checklist department)
+function recipSelectAll(key,on){
+  const r=(DB.emailRecipients||[]).find(x=>x.key===key); if(!r) return;
+  r.vio=!!on;
+  const cats=DB.issueCategories||{}; DB.issueEmailRoutes=DB.issueEmailRoutes||{};
+  Object.keys(cats).forEach(k=>{ const a=DB.issueEmailRoutes[k]=DB.issueEmailRoutes[k]||[]; const i=a.indexOf(key); if(on&&i<0)a.push(key); if(!on&&i>=0)a.splice(i,1); });
+  const depts=(DB.checklist&&DB.checklist.depts)||[]; DB.checklistEmailRoutes=DB.checklistEmailRoutes||{};
+  depts.forEach(d=>{ const a=DB.checklistEmailRoutes[d]=DB.checklistEmailRoutes[d]||[]; const i=a.indexOf(key); if(on&&i<0)a.push(key); if(!on&&i>=0)a.splice(i,1); });
+  if(window.persist) window.persist(); renderEmail();
+}
+window.recipSelectAll=recipSelectAll;
 window.recipAddStaffPick=recipAddStaffPick; window.recipAddStaff=recipAddStaff; window.emailRecipCount=emailRecipCount;
 function emailToggleChk(k){ State.emailOpenChk=State.emailOpenChk===k?null:k; renderEmail(); }
 function emailRefreshChkCount(k){ const depts=(DB.checklist&&DB.checklist.depts)||[]; const n=depts.filter(d=>(DB.checklistEmailRoutes[d]||[]).includes(k)).length; const el=document.getElementById('chkmail-cnt-'+k); if(el) el.textContent=n+' checklists'; }
