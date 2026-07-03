@@ -135,6 +135,7 @@
           rows=rows.filter(Boolean);
           if(FB.resetToBase) FB.resetToBase();
           if(rows.length && FB.aggregateStates) FB.aggregateStates(rows);
+          FB._loadedStores=rows.map(function(r){return r.store;});   // only these are safe for Super to save back
           try{ if(window.MCQDemo) MCQDemo.inject(); }catch(e){}   // ensure Demo shows for Super even before its first save
           FB._loaded=true;
           FB.lastSync={status:'synced',message:'Loaded '+rows.length+' store(s)'};
@@ -167,6 +168,11 @@
     // we deliberately do NOT gate on _loaded (that previously disabled saves for a whole
     // session after one load hiccup → silent data loss).
     if(acct.role==='super'){
+      // NEVER save a store Super hasn't fully loaded — its blob (feedback, email config…) would be
+      // written back EMPTY and wipe the server copy. Only stores returned by the multi-store load
+      // are safe. If none loaded yet, skip entirely (keeps dirty flag → retried after load).
+      var loaded=FB._loadedStores;
+      if(!loaded || !loaded.length){ return Promise.resolve(); }
       // Only upload stores whose CONTENT changed since the last successful save (per-store
       // hash). Content-based → it can never miss a real change; it just skips the unchanged
       // stores, removing the cost of POSTing all 9 every time. On failure the hash is NOT
@@ -174,7 +180,8 @@
       var first=Object.keys(_storeHash).length===0;   // nothing saved yet → save everything (and seed hashes)
       var skipVolatile=function(k,v){ return k==='updatedAt'?undefined:v; };  // ignore the per-build timestamp
       var changed=[];
-      stores().forEach(function(s){ var st=FB.buildStoreState?FB.buildStoreState(s):null; if(!st) return;
+      stores().forEach(function(s){ if(loaded.indexOf(s)<0) return;   // unloaded → skip (don't wipe its blob)
+        var st=FB.buildStoreState?FB.buildStoreState(s):null; if(!st) return;
         var h=JSON.stringify(st, skipVolatile); if(first || h!==_storeHash[s]) changed.push({s:s, st:st, h:h}); });
       if(!changed.length){ try{ localStorage.removeItem('mcq_dirty_super'); }catch(_){} setSave('synced','Saved · all stores'); return Promise.resolve(); }
       setSave('loading','Saving…');
@@ -201,22 +208,33 @@
   // ---- photos (files on the server) ----
   var PS = window.PhotoStore = window.PhotoStore || {};
   var pending = {};
+  function dataUrlToBlob(u){
+    try{ var parts=String(u).split(','); var mime=((parts[0]||'').match(/:(.*?);/)||[])[1]||'image/jpeg';
+      var bin=atob(parts[1]||''); var n=bin.length; var arr=new Uint8Array(n);
+      for(var i=0;i<n;i++) arr[i]=bin.charCodeAt(i);
+      return new Blob([arr],{type:mime}); }catch(e){ return null; }
+  }
   FB.savePhoto = function(dataUrl){
     var id='p_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
     PS[id]=dataUrl;
     var acct=(window.State&&State.account)||{}; var store=acct.branch&&acct.role!=='super'?acct.branch:(acct.branch||stores()[0]||'Morley');
     try{
-      var fd=new FormData(); fd.append('id',id); fd.append('store_id',store); fd.append('dataUrl',dataUrl);
+      var fd=new FormData(); fd.append('id',id); fd.append('store_id',store);
+      // send as a real file part — form FIELDS are capped at 500KB by Werkzeug (413), files are not
+      var blob=dataUrlToBlob(dataUrl);
+      if(blob){ fd.append('image', blob, id+'.jpg'); } else { fd.append('dataUrl', dataUrl); }
       fetch(api('/api/photos'), {method:'POST', headers:headers(), body:fd}).catch(function(){});
     }catch(e){}
     return id;
   };
+  // batch photo-driven re-renders: many images loading in a burst → ONE re-render, not N (smooth)
+  var _photoRR; function photoRerenderSoon(){ clearTimeout(_photoRR); _photoRR=setTimeout(function(){ if(FB.rerenderApp) FB.rerenderApp(); }, 180); }
   FB.fetchPhoto = function(id){
     if(!id || PS[id] || pending[id]) return;
     pending[id]=true;
     fetch(api('/api/photos/'+encodeURIComponent(id)), {headers:headers()})
       .then(function(r){ if(!r.ok) throw new Error('photo '+r.status); return r.blob(); })
-      .then(function(b){ PS[id]=URL.createObjectURL(b); delete pending[id]; if(FB.rerenderApp) FB.rerenderApp(); })
+      .then(function(b){ PS[id]=URL.createObjectURL(b); delete pending[id]; photoRerenderSoon(); })
       .catch(function(){ delete pending[id]; });
   };
 

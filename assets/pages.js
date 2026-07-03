@@ -620,8 +620,10 @@ function annCompose(){
 }
 async function annPhotoPick(inp){
   const file=inp.files&&inp.files[0]; if(!file) return;
-  let ref; try{ ref=await compressImage(file,1280,.78); }catch(e){ try{ ref=URL.createObjectURL(file); }catch(_){ ref=null; } }
-  _annPhoto=ref;   // inline data URL → visible to every reader
+  // upload to the server photo store and keep only a tiny id (like checklist/report photos) —
+  // this keeps the announcement post small so it saves reliably and the feed loads fast.
+  let ref; try{ const d=await compressImage(file,1280,.78); ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d; }catch(e){ try{ ref=URL.createObjectURL(file); }catch(_){ ref=null; } }
+  _annPhoto=ref;   // a server photo id (small) — resolved by imgSrc() for every reader
   const p=document.getElementById('ann-photo-prev'); if(p) p.innerHTML=ref?`<img src="${imgSrc(ref)}" class="ann-prev-img">`:'';
   const l=document.getElementById('ann-photo-lbl'); if(l) l.innerHTML='<i class="fas fa-check"></i>&nbsp; Photo added — tap to change';
 }

@@ -30,6 +30,10 @@ import app as backend   # server/app.py  (provides the `api` blueprint + add_cor
 import db               # server/db.py
 
 app = Flask(__name__, static_folder=None)
+# allow large photo uploads and image-in-body posts (Werkzeug caps form FIELDS at 500KB by
+# default → 413; photos now upload as files, and these lift the ceilings as a safety net)
+app.config['MAX_CONTENT_LENGTH'] = 32 * 1024 * 1024
+app.config['MAX_FORM_MEMORY_SIZE'] = 32 * 1024 * 1024   # Werkzeug 3.1+ (ignored on older versions)
 db.init_db()                       # create/seed SQLite on first boot
 app.register_blueprint(backend.api)  # mounts /api/* on this same app
 backend.add_cors(app)              # harmless on same-origin; helps if you ever split origins

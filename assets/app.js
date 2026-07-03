@@ -295,7 +295,7 @@ function startAccountSync(force){
 function maybeStartRouteSync(){
   if(!State.account || State.account.role!=='super' || State.superFullSyncStarted) return;
   if(State.superFullSyncFailedAt && Date.now()-State.superFullSyncFailedAt<30000) return;
-  const heavy=['manager','history','analytics','photos','data','storeconfig','checklist','binadmin','schedules','issue','complaint','maintenance','incident','delivery','violation','reward','training','raise','birthday'];
+  const heavy=['manager','history','analytics','photos','data','storeconfig','checklist','binadmin','schedules','issue','complaint','maintenance','incident','delivery','violation','reward','training','raise','birthday','feedback','staff','structure','schedule','performance'];
   if(heavy.includes(State.route.mod)){
     State.superFullSyncStarted=true;
     State.superFullSyncFailedAt=0;

@@ -276,12 +276,23 @@ def get_photo(photo_id):
     au = require_auth()
     conn = db.connect()
     row = conn.execute('SELECT store_id,filename,mime FROM photos WHERE id=?', (photo_id,)).fetchone()
+    allowed = False
+    if row:
+        allowed = db.can_access(au, row['store_id'])
+        if not allowed:
+            # a photo attached to an announcement is readable by that announcement's audience —
+            # company-wide ('ALL') by everyone, a store post by that store's people.
+            ann = conn.execute('SELECT store_id FROM announcements WHERE image_id=? LIMIT 1', (photo_id,)).fetchone()
+            if ann and (ann['store_id'] == 'ALL' or db.can_access(au, ann['store_id'])):
+                allowed = True
     conn.close()
     if not row: abort(404)
-    if not db.can_access(au, row['store_id']): abort(403)
+    if not allowed: abort(403)
     path = os.path.join(db.UPLOADS, db_safe(row['store_id']), row['filename'])
     if not os.path.isfile(path): abort(404)
-    return send_file(path, mimetype=row['mime'])
+    resp = send_file(path, mimetype=row['mime'])
+    resp.headers['Cache-Control'] = 'private, max-age=31536000, immutable'   # photo ids are unique → cache hard so images don't re-download
+    return resp
 
 # ---------- history (normalized rows + state snapshots + audit) ----------
 @api.route('/api/history/<store_id>')
