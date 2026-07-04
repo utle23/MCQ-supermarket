@@ -455,7 +455,7 @@ function inboxPaint(msgs){
         <span class="msg-top"><b class="msg-subj">${esc(m.subject||km[1])}</b><span class="msg-kind" style="--c:${km[2]}">${km[1]}</span></span>
         <span class="msg-sub">${esc(who)}${isSuper()&&m.store?(' · '+esc(m.store)):''}</span>
         <span class="msg-snip">${esc(inboxSnippet(m.body_html))}</span></span>
-      <span class="msg-side"><span class="msg-time">${esc(relTime(m.created_at))}</span>${m.read?'':'<span class="msg-dot"></span>'}</span></button>`; }).join('')+`</div>`;
+      <span class="msg-side"><span class="msg-time">${esc(relTime(m.created_at))}</span>${(m.attachments&&m.attachments.length)?'<span class="msg-att" title="Has attachments">📎</span>':''}${m.read?'':'<span class="msg-dot"></span>'}</span></button>`; }).join('')+`</div>`;
 }
 function inboxOpen(threadId,msgId){
   if(msgId&&window.mcqMsgRead) mcqMsgRead(msgId).then(r=>{ window.__inboxUnread=(r&&r.unread)||0; if(window.buildSidebar) buildSidebar(); });
@@ -463,35 +463,93 @@ function inboxOpen(threadId,msgId){
   mcqThread(threadId).then(r=>inboxShowThread(threadId,(r&&r.messages)||[]));
 }
 function inboxShowThread(threadId,msgs){
-  const bubbles=msgs.map(m=>{ const km=MSG_KINDS[m.kind]||['✉️','',''];
+  window.__thMsgs=msgs; msgAttReset();
+  const bubbles=msgs.map((m,i)=>{ const km=MSG_KINDS[m.kind]||['✉️','',''];
     return `<div class="th-msg ${m.from_role==='super'?'th-super':(m.from_role==='employee'?'th-emp':'')}">
-      <div class="th-h"><b>${esc(m.from_name||m.from_role)}</b><span>${esc((m.created_at||'').slice(0,16).replace('T',' '))}</span></div>
+      <div class="th-h"><b>${esc(m.from_name||m.from_role)}</b><span>${esc((m.created_at||'').slice(0,16).replace('T',' '))}</span><button class="btn xs th-fwd" onclick="msgForward(${i})" title="Forward this message">↪ Forward</button></div>
       ${m.subject?`<div class="th-subj">${km[0]} ${esc(m.subject)}</div>`:''}
-      <div class="th-body">${safeHtml(m.body_html)}</div></div>`; }).join('')||'<div class="empty">No messages.</div>';
+      <div class="th-body">${safeHtml(m.body_html)}</div>${attCards(m.attachments)}</div>`; }).join('')||'<div class="empty">No messages.</div>';
   const canReply=!isBa();
   const reply=canReply?`<div class="th-reply"><textarea id="th-reply-txt" rows="3" placeholder="Write a reply…"></textarea>
+    ${msgAttHtml()}
     <button class="btn primary" onclick="inboxReply('${ckJS(threadId)}')"><i class="fas fa-paper-plane"></i>&nbsp; Send reply</button></div>`:'';
   mcqModal('📥 Conversation', `<div class="th-scroll">${bubbles}</div>${reply}`, {wide:true});
   if(canReply && window.ckMount) ckMount('th-reply-txt');
 }
+// Forward a message (Gmail-style): opens the right composer prefilled with the quoted body
+// and the SAME attachments (files are immutable — no re-upload needed).
+function msgForward(i){
+  const m=(window.__thMsgs||[])[i]; if(!m) return;
+  const subj=/^fwd:/i.test(m.subject||'')?(m.subject||''):('Fwd: '+(m.subject||'Message'));
+  const quoted=`<p><br></p><blockquote><p>—— Forwarded message ——<br><b>From:</b> ${esc(m.from_name||m.from_role||'')} · ${esc((m.created_at||'').slice(0,16).replace('T',' '))}</p>${m.body_html||''}</blockquote>`;
+  const atts=(m.attachments||[]).map(a=>({id:a.id,name:a.name,size:a.size,mime:a.mime,state:'ok'}));
+  mcqModalClose();
+  if(isEmployee()) staffCompose(); else composeOpen();
+  setTimeout(()=>{
+    const sEl=document.getElementById('cmp-subj')||document.getElementById('scm-subj'); if(sEl) sEl.value=subj;
+    const bodyId=document.getElementById('cmp-body')?'cmp-body':'scm-body';
+    const trySet=(n)=>{ if(window.ckMounted&&ckMounted(bodyId)){ ckSet(bodyId,quoted); } else if(n>0){ setTimeout(()=>trySet(n-1),300); } else { const t=document.getElementById(bodyId); if(t) t.value=quoted; } };
+    trySet(12);
+    _msgAtts=atts; msgAttPaint();
+  },350);
+}
+window.msgForward=msgForward;
 // an image in the body counts as content — don't require typed text when the user only inserted a photo
 function msgHasContent(html){ return !!(String(html||'').replace(/<[^>]+>/g,'').trim() || /<img/i.test(html||'')); }
 window.msgHasContent=msgHasContent;
+/* ---- Gmail-style attachments (30 MB per file) — shared by every composer ---- */
+let _msgAtts=[];
+function msgAttReset(){ _msgAtts=[]; }
+function attFmtSize(n){ n=+n||0; if(n>=1048576) return (n/1048576).toFixed(1)+' MB'; if(n>=1024) return Math.round(n/1024)+' KB'; return n+' B'; }
+function attIcon(name,mime){ const s=(String(name||'')+' '+String(mime||'')).toLowerCase();
+  if(/pdf/.test(s)) return '📄'; if(/word|docx?|rtf/.test(s)) return '📝'; if(/excel|xlsx?|csv|sheet/.test(s)) return '📊';
+  if(/powerpoint|pptx?/.test(s)) return '📽️'; if(/image|png|jpe?g|gif|webp|heic/.test(s)) return '🖼️';
+  if(/zip|rar|7z|tar/.test(s)) return '🗜️'; if(/video|mp4|mov/.test(s)) return '🎬'; if(/audio|mp3|m4a|wav/.test(s)) return '🎵'; return '📎'; }
+function msgAttHtml(){ return `<div class="field"><div class="att-list" id="att-list"></div>
+  <label class="btn sm att-pick"><input type="file" multiple style="display:none" onchange="msgAttPick(this)"><i class="fas fa-paperclip"></i>&nbsp; Attach files <span class="att-hint">(up to 30 MB each)</span></label></div>`; }
+function msgAttPaint(){
+  const el=document.getElementById('att-list'); if(!el) return;
+  el.innerHTML=_msgAtts.map((a,i)=>`<span class="att-chip ${a.state}">
+      <span class="att-ic">${attIcon(a.name,a.mime)}</span>
+      <span class="att-nm" title="${esc(a.name)}">${esc(a.name)}</span>
+      <span class="att-sz">${a.state==='up'?(a.pct||0)+'%':(a.state==='err'?'failed':attFmtSize(a.size))}</span>
+      ${a.state==='up'?`<span class="att-bar"><span style="width:${a.pct||0}%"></span></span>`:''}
+      <button class="att-x" onclick="msgAttDel(${i})" title="Remove">✕</button></span>`).join('');
+}
+function msgAttPick(inp){
+  const files=[...(inp.files||[])]; inp.value='';
+  files.forEach(f=>{
+    if(f.size>30*1024*1024){ toast('“'+f.name+'” is larger than 30 MB'); return; }
+    const a={name:f.name,size:f.size,mime:f.type,state:'up',pct:0}; _msgAtts.push(a); msgAttPaint();
+    mcqFileUpload(f,pct=>{ a.pct=pct; msgAttPaint(); })
+      .then(j=>{ a.id=j.id; a.mime=j.mime||a.mime; a.state='ok'; msgAttPaint(); })
+      .catch(e=>{ a.state='err'; msgAttPaint(); toast('Could not upload “'+f.name+'”'); });
+  });
+}
+function msgAttDel(i){ _msgAtts.splice(i,1); msgAttPaint(); }
+function msgAttPayload(){ return _msgAtts.filter(a=>a.state==='ok'&&a.id).map(a=>({id:a.id,name:a.name,size:a.size,mime:a.mime})); }
+function msgAttPending(){ return _msgAtts.some(a=>a.state==='up'); }
+function attCards(atts){ return (atts&&atts.length)?`<div class="att-cards">`+atts.map(a=>`<button class="att-card" onclick="mcqFileDownload('${ckJS(a.id)}','${ckJS(a.name||'file')}')" title="Download">
+    <span class="att-ic">${attIcon(a.name,a.mime)}</span><span class="att-meta"><b>${esc(a.name||'file')}</b><small>${attFmtSize(a.size)}</small></span><span class="att-dl"><i class="fas fa-download"></i></span></button>`).join('')+`</div>`:''; }
+window.msgAttPick=msgAttPick; window.msgAttDel=msgAttDel; window.msgAttReset=msgAttReset;
 function inboxReply(threadId){
   const html=(window.ckHtml?ckHtml('th-reply-txt'):'');
-  if(!msgHasContent(html)){ toast('Write a reply first'); return; }
-  mcqMsgSend({kind:'reply', thread_id:threadId, subject:'Reply', body_html:html}).then(r=>{
+  if(!msgHasContent(html) && !msgAttPayload().length){ toast('Write a reply or attach a file'); return; }
+  if(msgAttPending()){ toast('Please wait — attachment still uploading…'); return; }
+  mcqMsgSend({kind:'reply', thread_id:threadId, subject:'Reply', body_html:html, attachments:msgAttPayload()}).then(r=>{
     if(r&&r.ok){ toast('✓ Reply sent'); mcqModalClose(); renderInbox(); } else toast('Could not send reply'); });
 }
 // Manager/Super compose a document → a specific employee or all staff of a store
 function composeStaffOptions(store){ return (DB.staff||[]).filter(s=>s.store===store && s.active!==0).map(s=>`<option value="id:${esc(s.id)}">👤 ${esc(s.name)}</option>`).join(''); }
 function composeOpen(){
+  msgAttReset();
   const stores=isSuper()?DB.stores:[State.branch]; const first=stores[0]||State.branch;
   const storeSel=isSuper()?`<div class="field"><label>Store</label><select id="cmp-store" onchange="composeStoreChange()">${stores.map(s=>`<option>${esc(s)}</option>`).join('')}</select></div>`:'';
   mcqModal('✉️ Send a document', `${storeSel}
     <div class="field"><label>Send to</label><select id="cmp-target"><option value="all">📢 All staff at this store</option>${composeStaffOptions(first)}</select></div>
     <div class="field"><label>Subject</label><input id="cmp-subj" placeholder="e.g. New roster / policy update"></div>
     <div class="field"><label>Message</label><div id="cmp-body-wrap"><textarea id="cmp-body" rows="8" placeholder="Write your document / message…"></textarea></div></div>
+    ${msgAttHtml()}
     <div style="display:flex;gap:10px;margin-top:10px"><button class="btn primary" onclick="composeSend()"><i class="fas fa-paper-plane"></i>&nbsp; Send</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>`, {wide:true});
   if(window.ckMount) ckMount('cmp-body');   // Phase 5 upgrades the textarea to CKEditor when available
 }
@@ -501,8 +559,9 @@ function composeSend(){
   const target=document.getElementById('cmp-target')?.value||'all';
   const subj=(document.getElementById('cmp-subj')?.value||'').trim();
   const body=(window.ckHtml?ckHtml('cmp-body'):(document.getElementById('cmp-body')?.value||''));
-  if(!msgHasContent(body)){ toast('Write a message first'); return; }
-  const payload={kind:'document', store, subject:subj||'Document', body_html:body};
+  if(!msgHasContent(body) && !msgAttPayload().length){ toast('Write a message or attach a file'); return; }
+  if(msgAttPending()){ toast('Please wait — attachment still uploading…'); return; }
+  const payload={kind:'document', store, subject:subj||'Document', body_html:body, attachments:msgAttPayload()};
   if(target==='all') payload.to_store_all=true; else if(target.indexOf('id:')===0) payload.to_staff_id=target.slice(3);
   mcqMsgSend(payload).then(r=>{ if(r&&r.ok){ toast('✓ Document sent'); mcqModalClose(); renderInbox(); } else toast('Could not send'); });
 }
@@ -513,6 +572,7 @@ window.renderInbox=renderInbox; window.inboxOpen=inboxOpen; window.inboxReply=in
 window.composeOpen=composeOpen; window.composeStoreChange=composeStoreChange; window.composeSend=composeSend;
 // staff compose — pick WHO receives it: a store's management, Head Office (Super), or one person
 function staffCompose(){
+  msgAttReset();
   const my=State.branch, me=String((State.account&&State.account.staffId)||'');
   const people=(DB.staff||[]).filter(s=>s.store===my && s.active!==0 && String(s.id)!==me);
   mcqModal('✉️ Message management', `
@@ -527,6 +587,7 @@ function staffCompose(){
     </div>
     <div class="field"><label>Subject</label><input id="scm-subj" placeholder="e.g. Shift swap request"></div>
     <div class="field"><label>Message</label><textarea id="scm-body" rows="7" placeholder="Write your message…"></textarea></div>
+    ${msgAttHtml()}
     <div style="display:flex;gap:10px;margin-top:10px"><button class="btn primary" onclick="staffComposeSend()"><i class="fas fa-paper-plane"></i>&nbsp; Send</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>`, {wide:true});
   if(window.ckMount) ckMount('scm-body');
 }
@@ -539,9 +600,9 @@ function staffComposeLevel(){
 function staffComposeSend(){
   const subj=(document.getElementById('scm-subj')?.value||'').trim();
   const body=(window.ckHtml?ckHtml('scm-body'):(document.getElementById('scm-body')?.value||''));
-  if(!msgHasContent(body)){ toast('Write a message first'); return; }
-  const lvl=document.getElementById('scm-level')?.value||'mgmt';
-  const payload={kind:'message', subject:subj||'Message', body_html:body};
+  if(!msgHasContent(body) && !msgAttPayload().length){ toast('Write a message or attach a file'); return; }
+  if(msgAttPending()){ toast('Please wait — attachment still uploading…'); return; }
+  const payload={kind:'message', subject:subj||'Message', body_html:body, attachments:msgAttPayload()};
   let sentTo='management';
   if(lvl==='super'){ payload.to_super=true; payload.to_managers=false; sentTo='Head Office'; }
   else if(lvl==='person'){ const p=document.getElementById('scm-person'); payload.to_staff_id=p?.value||''; payload.to_super=false; payload.to_managers=false; sentTo=p?.selectedOptions[0]?.textContent||'the person'; if(!payload.to_staff_id){ toast('Pick a person'); return; } }

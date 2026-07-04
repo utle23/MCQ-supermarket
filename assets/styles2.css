@@ -1205,6 +1205,30 @@ table.jobduty td{vertical-align:top}
 .th-body img:hover{transform:scale(1.02)}
 .th-reply{border-top:1px solid #e5e7eb;padding-top:12px;display:flex;flex-direction:column;gap:8px}
 .th-reply textarea{width:100%;border:1px solid var(--line,#e5e7eb);border-radius:10px;padding:10px;font:inherit;resize:vertical}
+.th-h .th-fwd{margin-left:auto;flex:none}
+.th-h{gap:8px;align-items:center}
+/* ---- Gmail-style attachments ---- */
+.att-list{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+.att-list:empty{display:none}
+.att-chip{position:relative;display:inline-flex;align-items:center;gap:7px;background:#f1f5f9;border:1px solid var(--line,#e5e7eb);border-radius:999px;padding:6px 10px;font-size:12.5px;max-width:260px;overflow:hidden}
+.att-chip.err{background:#fef2f2;border-color:#fecaca;color:#b91c1c}
+.att-chip .att-nm{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;font-weight:650}
+.att-chip .att-sz{color:var(--muted,#64748b);font-size:11.5px;flex:none}
+.att-chip .att-x{border:0;background:transparent;cursor:pointer;color:#94a3b8;font-size:12px;padding:0 2px}
+.att-chip .att-x:hover{color:#ef4444}
+.att-bar{position:absolute;left:0;bottom:0;height:3px;width:100%;background:#e2e8f0}
+.att-bar>span{display:block;height:100%;background:var(--accent,#0e9f6e);transition:width .2s}
+.att-pick{cursor:pointer}
+.att-pick .att-hint{font-weight:500;color:var(--muted,#64748b);font-size:11px}
+.att-cards{display:flex;flex-wrap:wrap;gap:8px;margin-top:9px}
+.att-card{display:inline-flex;align-items:center;gap:9px;background:#fff;border:1px solid var(--line,#e5e7eb);border-radius:11px;padding:8px 12px;cursor:pointer;font:inherit;text-align:left;max-width:300px;transition:.13s}
+.att-card:hover{border-color:var(--accent,#0e9f6e);background:var(--accent-soft,#ecfdf5)}
+.att-card .att-ic{font-size:20px}
+.att-card .att-meta{display:flex;flex-direction:column;min-width:0}
+.att-card .att-meta b{font-size:12.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:190px}
+.att-card .att-meta small{font-size:11px;color:var(--muted,#64748b)}
+.att-card .att-dl{color:var(--accent,#0e9f6e);font-size:13px}
+.msg-att{font-size:12px;margin-left:4px}
 /* ---- CKEditor 5 in modals ---- */
 .mcq-modal-body .ck.ck-editor{width:100%}
 .mcq-modal-body .ck-editor__editable{min-height:160px;max-height:46vh}

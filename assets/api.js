@@ -67,6 +67,25 @@
       } return n; }).catch(function(){ return window.__inboxUnread; }); };
   // ---- AI Assistant (parse only; execution stays on the normal store-scoped endpoints) ----
   window.mcqAiCommand=function(text,roster,stores,rules){ return _authFetch('/api/ai-command',{method:'POST',body:JSON.stringify({text:text,roster:roster||[],stores:stores||[],rules:rules||[]})}); };
+  // ---- message attachments (Gmail-style; 30MB/file, uploaded as real file parts) ----
+  window.mcqFileUpload=function(file,onProgress){
+    return new Promise(function(res,rej){
+      var fd=new FormData(); fd.append('file',file,file.name||'file');
+      var x=new XMLHttpRequest(); x.open('POST', api('/api/file'));
+      x.setRequestHeader('Authorization','Bearer '+TOKEN);
+      if(x.upload&&onProgress) x.upload.onprogress=function(e){ if(e.lengthComputable) onProgress(Math.round(e.loaded*100/e.total)); };
+      x.onload=function(){ try{ var j=JSON.parse(x.responseText||'{}'); if(x.status<300&&j.ok) res(j); else rej(new Error(j.error||('upload failed ('+x.status+')'))); }catch(e){ rej(e); } };
+      x.onerror=function(){ rej(new Error('network')); };
+      x.send(fd);
+    });
+  };
+  window.mcqFileDownload=function(id,name){
+    return fetch(api('/api/file/'+encodeURIComponent(id)), {headers:headers()})
+      .then(function(r){ if(!r.ok) throw new Error('download '+r.status); return r.blob(); })
+      .then(function(b){ var u=URL.createObjectURL(b); var a=document.createElement('a'); a.href=u; a.download=name||'file';
+        document.body.appendChild(a); a.click(); a.remove(); setTimeout(function(){ URL.revokeObjectURL(u); },4000); return true; })
+      .catch(function(e){ if(window.toast) toast('Could not download the file'); throw e; });
+  };
   // ---- announcements ----
   window.mcqAnnList=function(){ return _authFetch('/api/announcements'); };
   window.mcqAnnPost=function(payload){ return _authFetch('/api/announcement',{method:'POST',body:JSON.stringify(payload||{})}); };

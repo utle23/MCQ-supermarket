@@ -87,6 +87,10 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE TABLE IF NOT EXISTS announcements (
   id INTEGER PRIMARY KEY AUTOINCREMENT, store_id TEXT, title TEXT, body_html TEXT,
   image_id TEXT, author TEXT, created_at TEXT, pinned INTEGER DEFAULT 0);
+-- message attachments (Gmail-style): metadata row; bytes live on disk in uploads/_files
+CREATE TABLE IF NOT EXISTS files (
+  id TEXT PRIMARY KEY, store_id TEXT, name TEXT, mime TEXT, size INTEGER,
+  filename TEXT, created_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_audit_store ON audit_logs(store_id);
 CREATE INDEX IF NOT EXISTS idx_photos_store ON photos(store_id);
 CREATE INDEX IF NOT EXISTS idx_snap_store ON store_state_snapshots(store_id);
@@ -146,6 +150,8 @@ def init_db():
     try: conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_staffacct ON staff_accounts(store_id, staff_id)')
     except Exception: pass
     try: conn.execute('ALTER TABLE announcements ADD COLUMN pinned INTEGER DEFAULT 0')   # pin-to-top support
+    except Exception: pass
+    try: conn.execute("ALTER TABLE messages ADD COLUMN attachments_json TEXT DEFAULT '[]'")   # Gmail-style attachments
     except Exception: pass
     # seed stores
     for s in STORES:
@@ -339,6 +345,33 @@ def get_my_password(au):
     finally:
         conn.close()
 
+def file_meta(file_id):
+    conn = connect()
+    try:
+        return conn.execute('SELECT * FROM files WHERE id=?', (str(file_id),)).fetchone()
+    finally:
+        conn.close()
+
+def can_download_file(au, file_id):
+    """Gmail-style ACL: you may download a file if you can SEE a message carrying it."""
+    conn = connect()
+    try:
+        rows = conn.execute('SELECT * FROM messages WHERE attachments_json LIKE ? ORDER BY id DESC LIMIT 20',
+                            ('%"' + str(file_id) + '"%',)).fetchall()
+        r = au.get('role'); sid = str(au.get('staff_id')); store = au.get('store_id')
+        for row in rows:
+            if r in ('super', 'ba'):
+                if row['to_super'] == 1 or row['from_role'] in ('super', 'ba'): return True
+            elif r in ('admin', 'staff'):
+                if row['store_id'] == store and (row['to_managers'] == 1 or row['from_role'] in ('admin', 'staff')): return True
+            elif r == 'employee':
+                if row['to_staff_id'] == sid or row['from_staff_id'] == sid or (row['store_id'] == store and row['to_store_all'] == 1): return True
+        # not attached to any message yet → only the uploader's store (compose-time preview)
+        f = conn.execute('SELECT store_id FROM files WHERE id=?', (str(file_id),)).fetchone()
+        return bool(f and can_access(au, f['store_id']))
+    finally:
+        conn.close()
+
 def thread_store(thread_id):
     """The store a thread lives in (from its first message) — used to route replies."""
     conn = connect()
@@ -350,7 +383,18 @@ def thread_store(thread_id):
         conn.close()
 
 def send_message(au, store, kind, subject, body_html, to_staff_id=None, to_store_all=False,
-                 thread_id=None, to_super=None, to_managers=None):
+                 thread_id=None, to_super=None, to_managers=None, attachments=None):
+    # attachments: sanitized [{id,name,size,mime}] — ids must exist in the files table
+    atts = []
+    if isinstance(attachments, list):
+        conn0 = connect()
+        try:
+            for a in attachments[:10]:
+                if not isinstance(a, dict) or not a.get('id'): continue
+                row = conn0.execute('SELECT id,name,mime,size FROM files WHERE id=?', (str(a['id']),)).fetchone()
+                if row: atts.append({'id': row['id'], 'name': row['name'], 'mime': row['mime'], 'size': row['size']})
+        finally:
+            conn0.close()
     conn = connect()
     try:
         ts, tm, ta = _route_for(kind)
@@ -377,11 +421,11 @@ def send_message(au, store, kind, subject, body_html, to_staff_id=None, to_store
                             if cand and str(cand) != me:
                                 to_staff_id = cand; break
         conn.execute('''INSERT INTO messages(store_id,from_role,from_name,from_staff_id,to_staff_id,
-            to_super,to_managers,to_store_all,kind,subject,body_html,thread_id,read_by_json,created_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            to_super,to_managers,to_store_all,kind,subject,body_html,thread_id,read_by_json,attachments_json,created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
             (store, au.get('role'), _role_display(au, store), au.get('staff_id'),
              (str(to_staff_id) if to_staff_id else None), ts, tm, (1 if ta else 0),
-             kind, subject or '', body_html or '', thread_id, '[]', now()))
+             kind, subject or '', body_html or '', thread_id, '[]', json.dumps(atts), now()))
         mid = conn.execute('SELECT last_insert_rowid() AS id').fetchone()['id']
         if not thread_id:
             thread_id = 'T' + str(mid)
@@ -394,11 +438,13 @@ def send_message(au, store, kind, subject, body_html, to_staff_id=None, to_store
 def _msg_dict(row, key):
     try: rb = json.loads(row['read_by_json'] or '[]')
     except Exception: rb = []
+    try: atts = json.loads((row['attachments_json'] if 'attachments_json' in row.keys() else None) or '[]')
+    except Exception: atts = []
     return {'id': row['id'], 'store': row['store_id'], 'from_role': row['from_role'],
             'from_name': row['from_name'], 'from_staff_id': row['from_staff_id'],
             'to_staff_id': row['to_staff_id'], 'kind': row['kind'], 'subject': row['subject'],
             'body_html': row['body_html'], 'thread_id': row['thread_id'],
-            'created_at': row['created_at'], 'read': key in rb}
+            'created_at': row['created_at'], 'read': key in rb, 'attachments': atts}
 
 def _inbox_query(au):
     r = au.get('role')

@@ -137,7 +137,8 @@ def message_send():
     if kind not in _MSG_ALLOWED.get(role, set()): abort(403)
     res = db.send_message(au, store, kind, d.get('subject'), d.get('body_html'),
                           to_staff_id=d.get('to_staff_id'), to_store_all=bool(d.get('to_store_all')),
-                          thread_id=d.get('thread_id'), to_super=d.get('to_super'), to_managers=d.get('to_managers'))
+                          thread_id=d.get('thread_id'), to_super=d.get('to_super'), to_managers=d.get('to_managers'),
+                          attachments=d.get('attachments'))
     return jsonify(ok=True, **res)
 
 @api.route('/api/messages', methods=['GET'])
@@ -250,6 +251,42 @@ def post_config(store_id):
     conn.commit(); conn.close()
     db.write_audit(uid(au), store_id, 'save', 'store_config', store_id, None, None)
     return jsonify(ok=True, store=store_id)
+
+# ---------- message attachments (Gmail-style, 30 MB per file) ----------
+MAX_FILE_BYTES = 30 * 1024 * 1024
+
+@api.route('/api/file', methods=['POST'])
+def post_file():
+    au = require_auth(); require_write(au)
+    f = request.files.get('file')
+    if not f: abort(400)
+    f.stream.seek(0, 2); size = f.stream.tell(); f.stream.seek(0)
+    if size > MAX_FILE_BYTES:
+        return jsonify(ok=False, error='File is larger than 30 MB'), 413
+    store_id = au['store_id'] if au['role'] not in ('super', 'ba') else 'ALL'
+    fid = 'f_' + time.strftime('%Y%m%d') + '_' + secrets.token_hex(9)
+    name = (f.filename or 'file').replace('/', '_').replace('\\', '_')[-120:]
+    folder = os.path.join(db.UPLOADS, '_files'); os.makedirs(folder, exist_ok=True)
+    f.save(os.path.join(folder, fid + '.bin'))
+    conn = db.connect()
+    conn.execute('INSERT INTO files(id,store_id,name,mime,size,filename,created_at) VALUES(?,?,?,?,?,?,?)',
+                 (fid, store_id, name, f.mimetype or 'application/octet-stream', size, fid + '.bin', db.now()))
+    conn.commit(); conn.close()
+    db.write_audit(uid(au), store_id, 'create', 'file', fid, None, {'name': name, 'size': size})
+    return jsonify(ok=True, id=fid, name=name, size=size, mime=f.mimetype or 'application/octet-stream')
+
+@api.route('/api/file/<fid>', methods=['GET'])
+def get_file(fid):
+    au = require_auth()
+    row = db.file_meta(fid)
+    if not row: abort(404)
+    if not db.can_download_file(au, fid): abort(403)
+    path = os.path.join(db.UPLOADS, '_files', row['filename'])
+    if not os.path.isfile(path): abort(404)
+    resp = send_file(path, mimetype=row['mime'] or 'application/octet-stream',
+                     as_attachment=True, download_name=row['name'] or 'file')
+    resp.headers['Cache-Control'] = 'private, max-age=31536000, immutable'   # ids are unique → cache hard
+    return resp
 
 # ---------- photos: files + metadata row ----------
 @api.route('/api/photos', methods=['POST'])
