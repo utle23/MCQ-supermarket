@@ -91,6 +91,14 @@ CREATE TABLE IF NOT EXISTS announcements (
 CREATE TABLE IF NOT EXISTS files (
   id TEXT PRIMARY KEY, store_id TEXT, name TEXT, mime TEXT, size INTEGER,
   filename TEXT, created_at TEXT);
+-- unified user accounts (activation system): 4-digit unique ID, self-chosen password,
+-- role/store assigned centrally (account admin). First digit = store: Morley 1, Mirrabooka 2,
+-- Malaga 3, Subiaco 4, Armadale 5, Warehouse 8, Demo 9, head-office/no-store 7.
+CREATE TABLE IF NOT EXISTS accounts (
+  id TEXT PRIMARY KEY, password TEXT, role TEXT DEFAULT 'employee',
+  store_id TEXT, staff_id TEXT, name TEXT, email TEXT, department TEXT,
+  activated INTEGER DEFAULT 0, acct_admin INTEGER DEFAULT 0, needs_profile INTEGER DEFAULT 0,
+  created_at TEXT, updated_at TEXT);
 CREATE INDEX IF NOT EXISTS idx_audit_store ON audit_logs(store_id);
 CREATE INDEX IF NOT EXISTS idx_photos_store ON photos(store_id);
 CREATE INDEX IF NOT EXISTS idx_snap_store ON store_state_snapshots(store_id);
@@ -144,7 +152,7 @@ def init_db():
     try: conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_sched_recid ON schedule_history(store_id, rec_id)')
     except Exception: pass
     # migration: tokens carry the employee identity (staff_id/name) for individual logins
-    for col in ('staff_id', 'staff_name'):
+    for col in ('staff_id', 'staff_name', 'account_id'):
         try: conn.execute('ALTER TABLE tokens ADD COLUMN %s TEXT' % col)
         except Exception: pass
     try: conn.execute('CREATE UNIQUE INDEX IF NOT EXISTS idx_staffacct ON staff_accounts(store_id, staff_id)')
@@ -173,6 +181,9 @@ def init_db():
         add_user('admin', s, pw, sync=True)
     for s, pw in BRANCH_PW.items():
         add_user('staff', s, pw)
+    conn.commit()
+    try: seed_named_supers()   # 6 ready-made Super Admin accounts (7001-7006)
+    except Exception: pass
     # one-time purge of retired stores (Beechboro Fresh, Market West) — data permanently removed
     for rs in RETIRED_STORES:
         for tbl in ('records', 'staff', 'checklist_submissions', 'bin_records',
@@ -187,9 +198,13 @@ def init_db():
     conn.commit(); conn.close()
 
 # ---- auth ----
-def verify_login(mode, store, pw):
+def verify_login(mode, store, pw, login_id=None):
     """Returns (role, store_id[, meta]) on success or None. store_id is 'ALL' for super.
-    For mode 'employee' the 3rd element is {staff_id, staff_name}."""
+    For mode 'employee' the 3rd element is {staff_id, staff_name}.
+    When an ID is supplied → unified-account login (ID + own password) for EVERY tab;
+    the legacy store/master passwords keep working when no ID is given."""
+    if str(login_id or '').strip():
+        return account_login(login_id, pw, mode)
     conn = connect()
     try:
         if mode == 'super':
@@ -215,11 +230,11 @@ def verify_login(mode, store, pw):
     finally:
         conn.close()
 
-def issue_token(role, store_id, staff_id=None, staff_name=None):
+def issue_token(role, store_id, staff_id=None, staff_name=None, account_id=None):
     tok = secrets.token_hex(24)
     conn = connect()
-    conn.execute('INSERT INTO tokens(token,role,store_id,created_at,expires_at,staff_id,staff_name) VALUES(?,?,?,?,?,?,?)',
-                 (tok, role, store_id, time.time(), time.time() + TOKEN_TTL, staff_id, staff_name))
+    conn.execute('INSERT INTO tokens(token,role,store_id,created_at,expires_at,staff_id,staff_name,account_id) VALUES(?,?,?,?,?,?,?,?)',
+                 (tok, role, store_id, time.time(), time.time() + TOKEN_TTL, staff_id, staff_name, account_id))
     conn.commit(); conn.close()
     return tok
 
@@ -227,11 +242,12 @@ def auth_from_token(token):
     if not token: return None
     conn = connect()
     try:
-        row = conn.execute('SELECT role,store_id,expires_at,staff_id,staff_name FROM tokens WHERE token=?', (token,)).fetchone()
+        row = conn.execute('SELECT role,store_id,expires_at,staff_id,staff_name,account_id FROM tokens WHERE token=?', (token,)).fetchone()
         if not row or row['expires_at'] < time.time(): return None
         return {'role': row['role'], 'store_id': row['store_id'],
                 'staff_id': row['staff_id'] if 'staff_id' in row.keys() else None,
-                'staff_name': row['staff_name'] if 'staff_name' in row.keys() else None}
+                'staff_name': row['staff_name'] if 'staff_name' in row.keys() else None,
+                'account_id': row['account_id'] if 'account_id' in row.keys() else None}
     finally:
         conn.close()
 
@@ -311,6 +327,211 @@ def delete_staff_account(store, staff_id):
     finally:
         conn.close()
 
+# ============================================================ UNIFIED ACCOUNTS (activation system)
+# Every person activates once with the Gmail they use in Deputy: matched against the chosen
+# store's staff directory -> gets a unique 4-digit ID (first digit = store) + their own password.
+ACCT_ID_PREFIX = {'Morley': '1', 'Mirrabooka': '2', 'Malaga': '3', 'Subiaco': '4',
+                  'Armadale': '5', 'Warehouse': '8', 'Demo': '9'}
+ACCT_TABS = {'employee': 'Staff', 'staff': 'Dept Lead', 'admin': 'Manager', 'super': 'Super'}
+
+def _gen_account_id(conn, store):
+    prefix = ACCT_ID_PREFIX.get(store or '', '7')   # head-office / no-store -> 7xxx
+    import random
+    for _ in range(500):
+        cand = prefix + str(random.randint(100, 999))
+        if not conn.execute('SELECT 1 FROM accounts WHERE id=?', (cand,)).fetchone():
+            return cand
+    raise RuntimeError('no free account id for prefix ' + prefix)
+
+def _store_staff_by_email(conn, store, email):
+    e = str(email or '').strip().lower()
+    if not e: return None
+    for r in conn.execute('SELECT id,data_json FROM staff WHERE store_id=?', (store,)).fetchall():
+        try: d = json.loads(r['data_json'] or '{}')
+        except Exception: d = {}
+        if str(d.get('email') or '').strip().lower() == e:
+            return {'staff_id': r['id'], 'name': d.get('name') or '', 'data': d}
+    return None
+
+def activate_lookup(email, store):
+    """Step 1 of activation: does this Gmail exist in the chosen store's staff directory?"""
+    conn = connect()
+    try:
+        acc = conn.execute('SELECT id,role,store_id,activated FROM accounts WHERE lower(email)=lower(?)',
+                           (str(email or '').strip(),)).fetchone()
+        if acc and acc['activated']:
+            return {'already': True, 'id': acc['id'], 'role': acc['role'], 'tab': ACCT_TABS.get(acc['role'], 'Staff')}
+        hit = _store_staff_by_email(conn, store, email)
+        return {'already': False, 'match': bool(hit), 'name': (hit or {}).get('name', '')}
+    finally:
+        conn.close()
+
+def activate_account(email, store, password, name=None):
+    """Step 2: create (or claim) the account. Returns the new credentials + assigned access."""
+    email = str(email or '').strip()
+    if not email or '@' not in email: return {'error': 'Enter a valid email address'}
+    if len(str(password or '')) < 6: return {'error': 'Password must be at least 6 characters'}
+    conn = connect()
+    try:
+        acc = conn.execute('SELECT * FROM accounts WHERE lower(email)=lower(?)', (email,)).fetchone()
+        if acc and acc['activated']:
+            return {'error': 'This email is already activated — your ID is ' + acc['id']}
+        hit = _store_staff_by_email(conn, store, email)
+        if acc:   # pre-assigned by the account admin -> claim it (keep assigned role/store)
+            conn.execute('UPDATE accounts SET password=?, activated=1, updated_at=? WHERE id=?',
+                         (str(password), now(), acc['id']))
+            conn.commit()
+            a = conn.execute('SELECT * FROM accounts WHERE id=?', (acc['id'],)).fetchone()
+            return {'id': a['id'], 'role': a['role'], 'store': a['store_id'], 'name': a['name'],
+                    'tab': ACCT_TABS.get(a['role'], 'Staff'), 'matched': True}
+        if hit:   # CASE 1: email matches the store's staff directory
+            aid = _gen_account_id(conn, store)
+            conn.execute('''INSERT INTO accounts(id,password,role,store_id,staff_id,name,email,activated,needs_profile,created_at,updated_at)
+                            VALUES(?,?,?,?,?,?,?,1,0,?,?)''',
+                         (aid, str(password), 'employee', store, hit['staff_id'], hit['name'], email, now(), now()))
+            conn.commit()
+            return {'id': aid, 'role': 'employee', 'store': store, 'name': hit['name'],
+                    'tab': 'Staff', 'matched': True}
+        # CASE 2: brand-new member — create their staff row too, flag "set up your profile"
+        import random
+        disp = (name or '').strip() or email.split('@')[0].replace('.', ' ').title()
+        sid = (store[:3].upper() if store else 'GEN') + '-' + str(20000 + random.randint(0, 9999))
+        srec = {'id': sid, 'name': disp, 'email': email, 'store': store, 'active': 1,
+                'role': '', 'dept': '', 'start': time.strftime('%Y-%m-%d')}
+        conn.execute('INSERT OR REPLACE INTO staff(id,store_id,data_json) VALUES(?,?,?)',
+                     (sid, store, json.dumps(srec)))
+        aid = _gen_account_id(conn, store)
+        conn.execute('''INSERT INTO accounts(id,password,role,store_id,staff_id,name,email,activated,needs_profile,created_at,updated_at)
+                        VALUES(?,?,?,?,?,?,?,1,1,?,?)''',
+                     (aid, str(password), 'employee', store, sid, disp, email, now(), now()))
+        conn.commit()
+        return {'id': aid, 'role': 'employee', 'store': store, 'name': disp,
+                'tab': 'Staff', 'matched': False, 'needs_profile': True}
+    finally:
+        conn.close()
+
+def account_login(login_id, pw, mode):
+    """ID + password login (all tabs). The chosen tab must match the account's assigned role."""
+    conn = connect()
+    try:
+        a = conn.execute('SELECT * FROM accounts WHERE id=? AND activated=1', (str(login_id or '').strip(),)).fetchone()
+        if not a or a['password'] != str(pw or ''): return None
+        if a['role'] != mode:
+            return {'wrong_tab': ACCT_TABS.get(a['role'], 'Staff')}
+        meta = {'staff_id': a['staff_id'] or a['id'], 'staff_name': a['name'], 'account_id': a['id'],
+                'needs_profile': bool(a['needs_profile'])}
+        if a['role'] == 'super':
+            return ('super', 'ALL', meta)
+        store = a['store_id']
+        if not store or store not in STORES: return None
+        return (a['role'], store, meta)
+    finally:
+        conn.close()
+
+def account_of(au):
+    if not au or not au.get('account_id'): return None
+    conn = connect()
+    try:
+        return conn.execute('SELECT * FROM accounts WHERE id=?', (au['account_id'],)).fetchone()
+    finally:
+        conn.close()
+
+def is_account_admin(au):
+    a = account_of(au)
+    return bool(a and a['acct_admin'])
+
+def list_accounts(q=''):
+    conn = connect()
+    try:
+        rows = conn.execute('SELECT * FROM accounts ORDER BY store_id, name').fetchall()
+        out = []
+        ql = str(q or '').strip().lower()
+        for r in rows:
+            d = {k: r[k] for k in r.keys()}
+            if ql and ql not in ' '.join(str(d.get(k) or '').lower() for k in ('id', 'name', 'email', 'store_id', 'role', 'department')):
+                continue
+            out.append(d)
+        return out
+    finally:
+        conn.close()
+
+def update_account(aid, patch):
+    """Account admin edits: role / store / department / password / name."""
+    allowed = {'role', 'store_id', 'department', 'password', 'name'}
+    sets, vals = [], []
+    for k, v in (patch or {}).items():
+        if k in allowed:
+            sets.append(k + '=?'); vals.append(str(v) if v is not None else None)
+    if not sets: return False
+    sets.append('updated_at=?'); vals.append(now()); vals.append(str(aid))
+    conn = connect()
+    try:
+        conn.execute('UPDATE accounts SET ' + ','.join(sets) + ' WHERE id=?', vals)
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+def delete_account(aid):
+    conn = connect()
+    try:
+        conn.execute('DELETE FROM accounts WHERE id=? AND acct_admin=0', (str(aid),))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+def set_own_password(au, new_pw):
+    if len(str(new_pw or '')) < 6: return False
+    conn = connect()
+    try:
+        if au.get('account_id'):
+            conn.execute('UPDATE accounts SET password=?, updated_at=? WHERE id=?',
+                         (str(new_pw), now(), au['account_id']))
+        elif au.get('role') == 'employee':   # legacy numeric login
+            conn.execute('UPDATE staff_accounts SET password=?, updated_at=? WHERE store_id=? AND staff_id=?',
+                         (str(new_pw), now(), au.get('store_id'), str(au.get('staff_id'))))
+        else:
+            return False
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+def activation_status(store):
+    """staff_id -> {activated, account_id, role} for the Staff Members page."""
+    conn = connect()
+    try:
+        out = {}
+        for r in conn.execute('SELECT id,staff_id,activated,role FROM accounts WHERE store_id=?', (store,)).fetchall():
+            if r['staff_id']: out[str(r['staff_id'])] = {'activated': bool(r['activated']), 'id': r['id'], 'role': r['role']}
+        return out
+    finally:
+        conn.close()
+
+NAMED_SUPERS = [   # ready-made Super Admin accounts (7xxx = head office)
+    ('7001', 'Diana Lam', 0), ('7002', 'Cong', 0), ('7003', 'Le Tan Khoi Nguyen', 1),
+    ('7004', 'Tony Lam', 0), ('7005', 'Nhi Le', 0), ('7006', 'Kelvin', 0),
+]
+
+def seed_named_supers():
+    """6 named Super Admin accounts with generated passwords (created once, never regenerated).
+    Khoi Nguyen (7003) is the account admin. His account links to his Mirrabooka staff row."""
+    import random
+    conn = connect()
+    try:
+        for aid, nm, adm in NAMED_SUPERS:
+            if conn.execute('SELECT 1 FROM accounts WHERE id=?', (aid,)).fetchone(): continue
+            pw = str(random.randint(100000, 999999))
+            email = 'letankhoinguyen@gmail.com' if aid == '7003' else ''
+            staff_id = 'E0074' if aid == '7003' else None
+            conn.execute('''INSERT INTO accounts(id,password,role,store_id,staff_id,name,email,activated,acct_admin,created_at,updated_at)
+                            VALUES(?,?,?,?,?,?,?,1,?,?,?)''',
+                         (aid, pw, 'super', '', staff_id, nm, email, adm, now(), now()))
+        conn.commit()
+    finally:
+        conn.close()
+
 # ---- inbox / messaging ----
 def _role_display(au, store=None):
     return au.get('staff_name') or {'super': 'Head Office', 'ba': 'Chú Ba',
@@ -335,13 +556,17 @@ def _route_for(kind):
     return (0, 0, 0)                        # document/other → explicit targeting only
 
 def get_my_password(au):
-    """An employee can view their own numeric login password."""
+    """A user can view their own login credentials (unified account, or legacy numeric login)."""
+    a = account_of(au)
+    if a:
+        return {'id': a['id'], 'password': a['password'], 'role': a['role'],
+                'store': a['store_id'], 'department': a['department'], 'name': a['name']}
     if au.get('role') != 'employee': return None
     conn = connect()
     try:
         row = conn.execute('SELECT password FROM staff_accounts WHERE store_id=? AND staff_id=?',
                            (au.get('store_id'), str(au.get('staff_id')))).fetchone()
-        return row['password'] if row else None
+        return {'password': row['password']} if row else None
     finally:
         conn.close()
 
@@ -369,6 +594,53 @@ def can_download_file(au, file_id):
         # not attached to any message yet → only the uploader's store (compose-time preview)
         f = conn.execute('SELECT store_id FROM files WHERE id=?', (str(file_id),)).fetchone()
         return bool(f and can_access(au, f['store_id']))
+    finally:
+        conn.close()
+
+def cleanup_old(store, before, kinds):
+    """Delete NON-critical data older than `before` (YYYY-MM-DD): photos (incl. files on disk),
+    checklist submissions, cleaning/maintenance history, bin records. Important data
+    (records, staff, audit logs, messages) is never touched."""
+    counts = {}
+    conn = connect()
+    try:
+        cut = str(before) + ' 00:00:00'
+        if 'photos' in kinds:
+            rows = conn.execute('SELECT id,store_id,filename FROM photos WHERE store_id=? AND created_at<?', (store, cut)).fetchall()
+            for r in rows:
+                try: os.remove(os.path.join(UPLOADS, ''.join(c if c.isalnum() else '-' for c in r['store_id'].lower()), r['filename']))
+                except Exception: pass
+            conn.execute('DELETE FROM photos WHERE store_id=? AND created_at<?', (store, cut))
+            counts['photos'] = len(rows)
+        if 'checklistSubs' in kinds:
+            n = conn.execute('SELECT COUNT(*) c FROM checklist_submissions WHERE store_id=? AND created_at<?', (store, cut)).fetchone()['c']
+            conn.execute('DELETE FROM checklist_submissions WHERE store_id=? AND created_at<?', (store, cut))
+            counts['checklistSubs'] = n
+        if 'scheduleHistory' in kinds:
+            n = conn.execute('SELECT COUNT(*) c FROM schedule_history WHERE store_id=? AND created_at<?', (store, cut)).fetchone()['c']
+            conn.execute('DELETE FROM schedule_history WHERE store_id=? AND created_at<?', (store, cut))
+            counts['scheduleHistory'] = n
+        if 'binRecords' in kinds:
+            n = conn.execute('SELECT COUNT(*) c FROM bin_records WHERE store_id=? AND created_at<?', (store, cut)).fetchone()['c']
+            conn.execute('DELETE FROM bin_records WHERE store_id=? AND created_at<?', (store, cut))
+            counts['binRecords'] = n
+        conn.commit()
+        return counts
+    finally:
+        conn.close()
+
+def delete_message(au, msg_id):
+    """Super may delete any message; Manager/Dept Lead only within their own store."""
+    conn = connect()
+    try:
+        row = conn.execute('SELECT store_id FROM messages WHERE id=?', (msg_id,)).fetchone()
+        if not row: return False
+        r = au.get('role')
+        if not (r == 'super' or (r in ('admin', 'staff') and row['store_id'] == au.get('store_id'))):
+            return False
+        conn.execute('DELETE FROM messages WHERE id=?', (msg_id,))
+        conn.commit()
+        return True
     finally:
         conn.close()
 
@@ -550,7 +822,8 @@ def list_announcements(au):
         conn.close()
 
 def _ann_can_manage(au, store_id):
-    return au.get('role') == 'super' or (au.get('role') == 'admin' and store_id == au.get('store_id'))
+    # Super anywhere; Manager AND Dept Lead within their own store
+    return au.get('role') == 'super' or (au.get('role') in ('admin', 'staff') and store_id == au.get('store_id'))
 
 def set_announcement_pin(au, aid, pinned):
     conn = connect()

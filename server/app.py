@@ -50,15 +50,77 @@ def health():
 @api.route('/api/login', methods=['POST'])
 def login():
     d = request.get_json(force=True, silent=True) or {}
-    res = db.verify_login(d.get('mode'), d.get('store'), d.get('password'))
+    res = db.verify_login(d.get('mode'), d.get('store'), d.get('password'), login_id=d.get('id'))
+    if isinstance(res, dict) and res.get('wrong_tab'):
+        return jsonify(ok=False, error='This ID belongs to a %s account — please use the %s tab.'
+                       % (res['wrong_tab'], res['wrong_tab'])), 401
     if not res:
         return jsonify(ok=False, error='Invalid credentials'), 401
     role, store = res[0], res[1]
     meta = res[2] if len(res) > 2 else {}
-    tok = db.issue_token(role, store, meta.get('staff_id'), meta.get('staff_name'))
+    tok = db.issue_token(role, store, meta.get('staff_id'), meta.get('staff_name'), meta.get('account_id'))
     return jsonify(ok=True, token=tok, role=role, store=store,
                    staff_id=meta.get('staff_id'), staff_name=meta.get('staff_name'),
+                   account_id=meta.get('account_id'), needs_profile=bool(meta.get('needs_profile')),
+                   acct_admin=db.is_account_admin({'account_id': meta.get('account_id')}) if meta.get('account_id') else False,
                    stores=db.STORES if role in ('super', 'ba') else [store])
+
+# ---------- account activation (Gmail must match the store's staff directory) ----------
+@api.route('/api/activate/lookup', methods=['POST'])
+def activate_lookup():
+    d = request.get_json(force=True, silent=True) or {}
+    if d.get('store') not in db.STORES: abort(400)
+    return jsonify(ok=True, **db.activate_lookup(d.get('email'), d.get('store')))
+
+@api.route('/api/activate', methods=['POST'])
+def activate():
+    d = request.get_json(force=True, silent=True) or {}
+    if d.get('store') not in db.STORES: abort(400)
+    res = db.activate_account(d.get('email'), d.get('store'), d.get('password'), d.get('name'))
+    if res.get('error'):
+        return jsonify(ok=False, error=res['error']), 400
+    db.write_audit('activation', d.get('store'), 'create', 'account', res.get('id'), None, {'matched': res.get('matched')})
+    return jsonify(ok=True, **res)
+
+# ---------- central account management (account admin — Khoi Nguyen — only) ----------
+def require_acct_admin():
+    au = require_auth()
+    if not db.is_account_admin(au): abort(403)
+    return au
+
+@api.route('/api/accounts', methods=['GET'])
+def accounts_list():
+    require_acct_admin()
+    return jsonify(ok=True, accounts=db.list_accounts(request.args.get('q', '')))
+
+@api.route('/api/account/update', methods=['POST'])
+def account_update():
+    au = require_acct_admin()
+    d = request.get_json(force=True, silent=True) or {}
+    ok = db.update_account(d.get('id'), d.get('patch') or {})
+    db.write_audit(uid(au), '', 'update', 'account', str(d.get('id')), None, {'fields': list((d.get('patch') or {}).keys())})
+    return jsonify(ok=ok)
+
+@api.route('/api/account/delete', methods=['POST'])
+def account_delete():
+    au = require_acct_admin()
+    d = request.get_json(force=True, silent=True) or {}
+    db.delete_account(d.get('id'))
+    db.write_audit(uid(au), '', 'delete', 'account', str(d.get('id')), None, None)
+    return jsonify(ok=True)
+
+@api.route('/api/account/password', methods=['POST'])
+def account_password():
+    au = require_auth()
+    d = request.get_json(force=True, silent=True) or {}
+    ok = db.set_own_password(au, d.get('password'))
+    return (jsonify(ok=True) if ok else (jsonify(ok=False, error='Password must be at least 6 characters'), 400))
+
+@api.route('/api/activation-status/<store_id>', methods=['GET'])
+def activation_status(store_id):
+    au = require_auth(); require_store(au, store_id)
+    if au['role'] not in ('super', 'admin', 'staff'): abort(403)
+    return jsonify(ok=True, status=db.activation_status(store_id))
 
 # ---------- staff accounts (Manager/Super create & view individual employee logins) ----------
 @api.route('/api/staff-account', methods=['POST'])
@@ -112,7 +174,8 @@ _MSG_ALLOWED = {
 @api.route('/api/my-password', methods=['GET'])
 def my_password():
     au = require_auth()
-    return jsonify(ok=True, password=db.get_my_password(au))
+    info = db.get_my_password(au) or {}
+    return jsonify(ok=True, password=info.get('password'), account=info or None)
 @api.route('/api/message', methods=['POST'])
 def message_send():
     au = require_auth(); require_write(au)   # Chú Ba (ba) can't send
@@ -151,6 +214,34 @@ def messages_unread():
     au = require_auth()
     return jsonify(ok=True, unread=db.unread_count(au))
 
+@api.route('/api/cleanup', methods=['POST'])
+def cleanup():
+    au = require_auth(); require_write(au)
+    if au['role'] not in ('super', 'admin'): abort(403)
+    d = request.get_json(force=True, silent=True) or {}
+    before = str(d.get('before') or '')[:10]
+    if not re.match(r'^\d{4}-\d{2}-\d{2}$', before): abort(400)
+    kinds = [k for k in (d.get('kinds') or []) if k in ('photos', 'checklistSubs', 'scheduleHistory', 'binRecords')]
+    if not kinds: abort(400)
+    stores = db.STORES if (au['role'] == 'super' and d.get('store') in (None, '', 'ALL')) else [d.get('store') or au['store_id']]
+    total = {}
+    for s in stores:
+        if s not in db.STORES: continue
+        require_store(au, s)
+        for k, n in db.cleanup_old(s, before, kinds).items():
+            total[k] = total.get(k, 0) + n
+    db.write_audit(uid(au), ','.join(stores), 'cleanup', 'data', before, None, total)
+    return jsonify(ok=True, deleted=total)
+
+@api.route('/api/message/delete', methods=['POST'])
+def message_delete():
+    au = require_auth(); require_write(au)
+    if au['role'] not in ('super', 'admin', 'staff'): abort(403)   # employees cannot delete inbox messages
+    d = request.get_json(force=True, silent=True) or {}
+    ok = db.delete_message(au, d.get('id'))
+    if ok: db.write_audit(uid(au), au.get('store_id') or '', 'delete', 'message', str(d.get('id')), None, None)
+    return jsonify(ok=ok)
+
 @api.route('/api/message/read', methods=['POST'])
 def message_read():
     au = require_auth()
@@ -172,7 +263,7 @@ def announcements_list():
 @api.route('/api/announcement', methods=['POST'])
 def announcement_post():
     au = require_auth(); require_write(au)
-    if au['role'] not in ('super', 'admin'): abort(403)   # Managers + Super post; staff read-only
+    if au['role'] not in ('super', 'admin', 'staff'): abort(403)   # Super + Manager + Dept Lead post; employees read-only
     d = request.get_json(force=True, silent=True) or {}
     store = d.get('store') or au['store_id']
     if store == 'ALL':

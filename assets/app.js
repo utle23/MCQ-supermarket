@@ -125,6 +125,8 @@ function showLogin(notice){
         <label class="login-lbl">Store / Branch</label>
         <select id="login-branch" class="login-input">${branches}</select>
       </div>
+      <label class="login-lbl">ID <span class="login-opt">· 4-digit personal ID (leave empty to use a store password)</span></label>
+      <input id="login-id" class="login-input" inputmode="numeric" maxlength="4" placeholder="e.g. 2345" autocomplete="off">
       <label class="login-lbl">Password</label>
       <div class="login-pw">
         <input id="login-pw" class="login-input" type="password" placeholder="Enter password" autocomplete="off">
@@ -136,6 +138,7 @@ function showLogin(notice){
       <button class="faceid-btn" onclick="faceIdLogin()">
         <span class="fid-ic">🪪</span> Sign in with Face ID
       </button>
+      <button class="activate-btn" onclick="actOpen()"><span class="act-spark">✨</span> Activate your account <span class="act-arrow">→</span></button>
       <div class="login-hint" id="login-hint"></div>
       <div class="login-feats">
         <span>✅ Checklists</span><span>📷 Photo proof</span><span>📊 Analytics</span><span>🪪 Face ID</span>
@@ -158,6 +161,101 @@ function showLogin(notice){
 }
 function loginMode(){ return $('#login-mode .seg-btn.active').dataset.mode; }
 function togglePw(){ const p=$('#login-pw'); p.type=p.type==='password'?'text':'password'; }
+
+/* ============================================================ ACCOUNT ACTIVATION WIZARD */
+const ACT_STORES=['Morley','Mirrabooka','Malaga','Subiaco','Armadale','Warehouse','Demo'];
+let _act={};   // {email, store, match, name}
+function actClose(){ const o=document.getElementById('act-ov'); if(o) o.remove(); }
+function actShell(inner){
+  actClose();
+  const o=document.createElement('div'); o.id='act-ov';
+  o.innerHTML=`<div class="act-card">
+    <button class="act-close" onclick="actClose()">✕</button>
+    <div class="act-brand"><img src="assets/mcq-logo-exact.png" alt=""><span>MCQ Supermarket</span></div>
+    ${inner}</div>`;
+  document.body.appendChild(o);
+}
+function actOpen(){
+  _act={};
+  actShell(`
+    <div class="act-step-dots"><span class="on"></span><span></span><span></span></div>
+    <h2 class="act-h">Activate your account</h2>
+    <p class="act-p">Enter <b>exactly the Gmail you use to log in to the Deputy app</b>, and choose your store. We'll match it with your staff profile.</p>
+    <label class="login-lbl">Your Gmail</label>
+    <input id="act-email" class="login-input" type="email" placeholder="name@gmail.com" autocomplete="email">
+    <label class="login-lbl">Your store</label>
+    <select id="act-store" class="login-input">${ACT_STORES.map(s=>`<option>${s}</option>`).join('')}</select>
+    <div id="act-err" class="login-err"></div>
+    <button class="login-btn act-cta" onclick="actLookup()">Continue →</button>`);
+  setTimeout(()=>document.getElementById('act-email')?.focus(),80);
+}
+async function actLookup(){
+  const email=(document.getElementById('act-email')?.value||'').trim();
+  const store=document.getElementById('act-store')?.value||'Morley';
+  const err=document.getElementById('act-err');
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ if(err) err.textContent='Please enter a valid email address.'; return; }
+  const btn=document.querySelector('.act-cta'); if(btn){ btn.disabled=true; btn.textContent='Checking…'; }
+  let r=null;
+  try{ r=await fetch('/api/activate/lookup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,store})}).then(x=>x.json()); }catch(e){}
+  if(!r||!r.ok){ if(btn){ btn.disabled=false; btn.textContent='Continue →'; } if(err) err.textContent='Cannot reach the server — please try again.'; return; }
+  if(r.already){
+    actShell(`
+      <div class="act-badge act-ok">✓</div>
+      <h2 class="act-h">Already activated</h2>
+      <p class="act-p">This email already has an account.</p>
+      <div class="act-id-box"><span class="act-id-lbl">Your ID</span><span class="act-id">${esc(r.id)}</span></div>
+      <p class="act-p">Sign in on the <b>${esc(r.tab)}</b> tab with your ID and password.<br>Forgot the password? Ask Head Office to reset it.</p>
+      <button class="login-btn act-cta" onclick="actPrefill('${esc(r.id)}','${esc(r.role)}')">Go to sign in →</button>`);
+    return;
+  }
+  _act={email,store,match:!!r.match,name:r.name||''};
+  actShell(`
+    <div class="act-step-dots"><span class="on"></span><span class="on"></span><span></span></div>
+    ${r.match
+      ? `<div class="act-badge act-ok">✓</div><h2 class="act-h">We found you!</h2>
+         <p class="act-p"><b>${esc(r.name)}</b> · MCQ ${esc(store)}<br>Now create your own password to finish.</p>`
+      : `<div class="act-badge act-new">＋</div><h2 class="act-h">New member</h2>
+         <p class="act-p">This Gmail isn't in <b>MCQ ${esc(store)}</b>'s staff list yet — no problem, we'll create a fresh account. You'll be asked to complete your profile after your first sign-in.</p>
+         <label class="login-lbl">Your full name</label>
+         <input id="act-name" class="login-input" placeholder="e.g. Van Anh Le">`}
+    <label class="login-lbl">Create a password</label>
+    <input id="act-pw1" class="login-input" type="password" placeholder="At least 6 characters">
+    <label class="login-lbl">Confirm password</label>
+    <input id="act-pw2" class="login-input" type="password" placeholder="Type it again">
+    <div id="act-err" class="login-err"></div>
+    <button class="login-btn act-cta" onclick="actCreate()">Create my account →</button>`);
+  setTimeout(()=>document.getElementById(r.match?'act-pw1':'act-name')?.focus(),80);
+}
+async function actCreate(){
+  const p1=document.getElementById('act-pw1')?.value||'', p2=document.getElementById('act-pw2')?.value||'';
+  const name=(document.getElementById('act-name')?.value||'').trim();
+  const err=document.getElementById('act-err');
+  if(p1.length<6){ if(err) err.textContent='Password must be at least 6 characters.'; return; }
+  if(p1!==p2){ if(err) err.textContent='The two passwords do not match.'; return; }
+  if(!_act.match && !name){ if(err) err.textContent='Please enter your full name.'; return; }
+  const btn=document.querySelector('.act-cta'); if(btn){ btn.disabled=true; btn.textContent='Creating…'; }
+  let r=null;
+  try{ r=await fetch('/api/activate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:_act.email,store:_act.store,password:p1,name})}).then(x=>x.json()); }catch(e){}
+  if(!r||!r.ok){ if(btn){ btn.disabled=false; btn.textContent='Create my account →'; } if(err) err.textContent=(r&&r.error)||'Could not activate — please try again.'; return; }
+  const roleName={employee:'Staff',staff:'Department Lead',admin:'Manager',super:'Super Admin'}[r.role]||'Staff';
+  actShell(`
+    <div class="act-step-dots"><span class="on"></span><span class="on"></span><span class="on"></span></div>
+    <div class="act-badge act-ok act-pop">🎉</div>
+    <h2 class="act-h">Welcome, ${esc((r.name||'').split(' ')[0]||'aboard')}!</h2>
+    <p class="act-p">Your account is ready. This is your permanent ID — save it:</p>
+    <div class="act-id-box"><span class="act-id-lbl">Your ID</span><span class="act-id">${esc(r.id)}</span></div>
+    <div class="act-access"><span class="act-chip">${esc(roleName)}</span>${r.store?`<span class="act-chip act-chip-store">🏪 ${esc(r.store)}</span>`:''}</div>
+    <p class="act-p">Sign in on the <b>${esc(r.tab)}</b> tab with this ID and your new password.${r.needs_profile?'<br>📋 After signing in, please complete <b>My Profile</b> first.':''}</p>
+    <button class="login-btn act-cta" onclick="actPrefill('${esc(r.id)}','${esc(r.role)}')">Sign in now →</button>`);
+}
+function actPrefill(id,role){
+  actClose();
+  const map={employee:'employee',staff:'staff',admin:'admin',super:'super'};
+  const btn=document.querySelector(`#login-mode .seg-btn[data-mode="${map[role]||'employee'}"]`); if(btn) btn.click();
+  const idEl=document.getElementById('login-id'); if(idEl) idEl.value=id;
+  document.getElementById('login-pw')?.focus();
+}
+window.actOpen=actOpen; window.actClose=actClose; window.actLookup=actLookup; window.actCreate=actCreate; window.actPrefill=actPrefill;
 function loginFail(m){ const e=$('#login-err'); if(e) e.textContent='❌ '+m; const c=$('.login-card'); if(c){ c.classList.add('shake'); setTimeout(()=>c.classList.remove('shake'),450); } }
 function updateLoginHint(){ const el=$('#login-hint'); if(!el) return; const mode=loginMode(), branch=$('#login-branch')?.value;
   const row=$('#login-store-row'); if(row) row.style.display=(mode==='super'||mode==='ba'||mode==='employee')?'none':'block';
@@ -172,8 +270,9 @@ function doLogin(){
   // server-checked login when the PythonAnywhere API backend is active (passwords live on the server)
   if(window.MCQDB && MCQDB._api && MCQDB.login){
     const btn=$('.login-btn'); if(btn){ btn.disabled=true; btn.textContent='Signing in…'; }
-    MCQDB.login(mode, branch, pw).then(res=>{
-      if(res && res.ok){ loginAs(res.role, (res.role==='super'||res.role==='ba')?'All stores':res.store, {staffId:res.staff_id, name:res.staff_name}); }
+    const loginId=($('#login-id')?.value||'').trim();
+    MCQDB.login(mode, branch, pw, loginId).then(res=>{
+      if(res && res.ok){ loginAs(res.role, (res.role==='super'||res.role==='ba')?'All stores':res.store, {staffId:res.staff_id, name:res.staff_name, accountId:res.account_id, needsProfile:res.needs_profile, acctAdmin:res.acct_admin}); }
       else { if(btn){ btn.disabled=false; btn.textContent='Sign In →'; } loginFail(res&&res.error?res.error:'Incorrect password.'); }
     }).catch(()=>{ if(btn){ btn.disabled=false; btn.textContent='Sign In →'; } loginFail('Cannot reach the server.'); });
     return;
@@ -316,7 +415,8 @@ async function loginAs(role, branch, meta){
   meta=meta||{};
   const name = role==='super' ? 'Head Office' : role==='ba' ? 'Chú Ba' : role==='employee' ? (meta.name||'Staff') : role==='admin' ? (branch+' Manager') : (branch+' Dept Lead');
   const initials = role==='super' ? 'HO' : role==='ba' ? 'CB' : role==='employee' ? (String(meta.name||'S').trim().slice(0,2).toUpperCase()) : branch.slice(0,2).toUpperCase();
-  State.account={ name, role, branch, initials, staffId:meta.staffId||null, staffName:meta.name||null };
+  State.account={ name:(meta.name&&role!=='employee'?meta.name:name), role, branch, initials, staffId:meta.staffId||null, staffName:meta.name||null,
+    accountId:meta.accountId||null, needsProfile:!!meta.needsProfile, acctAdmin:!!meta.acctAdmin };
   State.branch=branch; State.role=(role==='staff'||role==='employee')?'store':'ho';
   try{ sessionStorage.setItem('mcq_acct', JSON.stringify(State.account)); }catch(e){}
   const btn=$('.login-btn'); if(btn){ btn.disabled=true; btn.textContent='Opening workspace...'; }
@@ -466,6 +566,7 @@ function buildSidebar(){
     html += navLink('inbox','fa-inbox',isSuper()?'Inbox':'Store Inbox', ub?`<span class="count">${ub}</span>`:'', true); }
   html += navLink('announcements','fa-bullhorn','Announcements','',true);
   html += navLink('feedback','fa-comment-dots',isSuper()?'Feedback Inbox':'Share Your Thought','',true);
+  if(State.account&&State.account.acctAdmin) html += navLink('accounts','fa-user-lock','Account Management','',true);   // Khoi Nguyen only
   DB.navGroups.forEach(g=>{
     if(g.admin && !isAdmin()) return;
     const items = g.items.filter(id=>{
@@ -570,6 +671,7 @@ function render(){
   if(mod==='home') return isAdmin()?renderHome():renderStaffHome();
   if(mod==='inbox' && window.renderInbox) return renderInbox();
   if(mod==='announcements' && window.renderAnnouncements) return renderAnnouncements();
+  if(mod==='accounts'){ if(State.account&&State.account.acctAdmin&&window.renderAccounts) return renderAccounts(); location.hash='#/home'; return; }
   if(DB.customPages[mod]){
     const page=DB.customPages[mod];
     if((page.admin&&!isAdmin())||(page.super&&!isSuper())){ location.hash='#/home'; return; }

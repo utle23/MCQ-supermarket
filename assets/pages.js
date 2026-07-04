@@ -277,7 +277,9 @@ function renderEmployeeHome(){
   if(s.dob){ const d=empBirthdayInfo(s.dob); if(d) chips.push(`<span class="emp-chip">🎂 ${esc(d)}</span>`); }
   if(rewards.length) chips.push(`<span class="emp-chip ok">🏆 ${rewards.length} reward${rewards.length>1?'s':''}</span>`);
   if(raises.length) chips.push(`<span class="emp-chip ok">📈 Pay update</span>`);
+  const needsProfile=State.account&&State.account.needsProfile && !(s.phone&&s.dob);
   $('#content').innerHTML=`
+    ${needsProfile?`<div class="ep-setup-banner" onclick="go('profile')"><span class="epb-ic">📋</span><div><b>Welcome! Please set up your profile first.</b><small>Add your details, birthday and photo so your store records are complete.</small></div><span class="epb-go">Set up →</span></div>`:''}
     <div class="emp-hero">
       <div class="emp-ava">${photo}</div>
       <div class="emp-hi"><div class="eh-name">Hi, ${esc(first)} 👋</div>
@@ -336,10 +338,12 @@ function renderEmployeeProfile(){
       <div><h2 style="margin:0">${esc(s.name||'My profile')}</h2><p class="muted">${esc(s.role||'Staff')} · MCQ ${esc(s.store||State.branch||'')}${s.id?' · '+esc(s.id):''}</p>
         <p class="muted" style="font-size:12px">Tap the photo to upload a new one, then press Save.</p></div>
     </div>
-    <div class="ep-login" id="ep-login"><i class="fas fa-key"></i>&nbsp; Your login password: <b id="ep-pw">••••••</b>
+    <div class="ep-login" id="ep-login"><i class="fas fa-id-badge"></i>&nbsp; ID: <b id="ep-id">${esc(State.account&&State.account.accountId||'—')}</b>
+      &nbsp;·&nbsp; <i class="fas fa-key"></i>&nbsp; Password: <b id="ep-pw">••••••</b>
       <button class="btn xs" onclick="empTogglePw()" id="ep-pw-btn">Show</button>
       <button class="btn xs" onclick="empCopyPw()">Copy</button>
-      <span class="muted" style="font-size:11.5px">— use this number to sign in on the Staff tab</span></div>
+      <button class="btn xs primary" onclick="empChangePw()">Change password</button></div>
+    ${empMyRecordsHtml(s)}
     <div class="grid2" style="margin-top:12px">
       <div class="field"><label>Full name</label><input id="ep-name" value="${esc(s.name||'')}"></div>
       <div class="field"><label>Phone</label><input id="ep-phone" value="${esc(s.phone||'')}" placeholder="0400 000 000"></div>
@@ -360,9 +364,39 @@ function renderEmployeeProfile(){
 }
 function empTogglePw(){ const el=document.getElementById('ep-pw'), btn=document.getElementById('ep-pw-btn'); if(!el) return;
   const showing=el.dataset.shown==='1'; if(showing){ el.textContent='••••••'; el.dataset.shown='0'; if(btn)btn.textContent='Show'; }
-  else { el.textContent=State.__myPw||'(not set — ask your manager)'; el.dataset.shown='1'; if(btn)btn.textContent='Hide'; } }
-function empCopyPw(){ if(!State.__myPw){ toast('No password on file — ask your manager'); return; } try{ navigator.clipboard.writeText(State.__myPw); toast('🔑 Password copied'); }catch(e){ toast(State.__myPw); } }
-window.empTogglePw=empTogglePw; window.empCopyPw=empCopyPw;
+  else { el.textContent=State.__myPw||'(not set — activate your account)'; el.dataset.shown='1'; if(btn)btn.textContent='Hide'; } }
+function empCopyPw(){ if(!State.__myPw){ toast('No password on file'); return; } try{ navigator.clipboard.writeText(State.__myPw); toast('🔑 Password copied'); }catch(e){ toast(State.__myPw); } }
+// change my own password (unified account or legacy numeric login)
+function empChangePw(){
+  mcqModal('🔑 Change my password', `
+    <div class="field"><label>New password</label><input id="cpw-1" type="password" placeholder="At least 6 characters"></div>
+    <div class="field"><label>Confirm new password</label><input id="cpw-2" type="password" placeholder="Type it again"></div>
+    <div style="display:flex;gap:10px;margin-top:10px"><button class="btn primary" onclick="empChangePwGo()">Save new password</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>`);
+}
+function empChangePwGo(){
+  const p1=document.getElementById('cpw-1')?.value||'', p2=document.getElementById('cpw-2')?.value||'';
+  if(p1.length<6){ toast('Password must be at least 6 characters'); return; }
+  if(p1!==p2){ toast('The two passwords do not match'); return; }
+  fetch('/api/account/password',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('mcq_token')||'')},body:JSON.stringify({password:p1})})
+    .then(r=>r.json()).then(r=>{ if(r&&r.ok){ State.__myPw=p1; toast('🔑 Password changed'); mcqModalClose(); } else toast((r&&r.error)||'Could not change password'); })
+    .catch(()=>toast('Could not change password'));
+}
+window.empTogglePw=empTogglePw; window.empCopyPw=empCopyPw; window.empChangePw=empChangePw; window.empChangePwGo=empChangePwGo;
+// "About me" — birthday, rewards & raises recorded by management, shown ONLY to the person themself
+function empMyRecordsHtml(s){
+  const rewards=myRegRecords('reward'), raises=myRegRecords('raise'), bdays=myRegRecords('birthday');
+  const dob=s.dob?`<span class="epr-chip">🎂 Birthday: <b>${esc(s.dob)}</b></span>`:'';
+  const row=(ic,r)=>`<div class="epr-row"><span>${ic}</span><div><b>${esc(r.title||r.award||r.category||r.reason||r.gift||r.type||'Record')}</b>
+      <small>${esc(r.month||r.date||r.effectiveDate||(r.created_at||'').slice(0,10)||'')}${r.amount?(' · '+esc(String(r.amount))):''}${r.status?(' · '+esc(r.status)):''}</small>
+      ${r.notes||r.note?`<small>${esc(r.notes||r.note)}</small>`:''}</div></div>`;
+  if(!dob && !rewards.length && !raises.length && !bdays.length) return '';
+  return `<div class="epr-card"><div class="epr-h">🌟 About me — recognition & milestones <span class="epr-hint">only you can see this</span></div>
+    <div class="epr-chips">${dob}</div>
+    ${rewards.length?`<div class="epr-sec">🏆 My rewards</div>`+rewards.map(r=>row('🏆',r)).join(''):''}
+    ${raises.length?`<div class="epr-sec">💸 My salary reviews</div>`+raises.map(r=>row('💸',r)).join(''):''}
+    ${bdays.length?`<div class="epr-sec">🎁 Birthday giveaways</div>`+bdays.map(r=>row('🎁',r)).join(''):''}
+  </div>`;
+}
 async function empPhotoPick(inp){
   const f=inp.files&&inp.files[0]; if(!f) return;
   let ref; try{ const d=await compressImage(f,900,.85); ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d; }catch(e){ ref=URL.createObjectURL(f); }
@@ -455,7 +489,7 @@ function inboxPaint(msgs){
         <span class="msg-top"><b class="msg-subj">${esc(m.subject||km[1])}</b><span class="msg-kind" style="--c:${km[2]}">${km[1]}</span></span>
         <span class="msg-sub">${esc(who)}${isSuper()&&m.store?(' · '+esc(m.store)):''}</span>
         <span class="msg-snip">${esc(inboxSnippet(m.body_html))}</span></span>
-      <span class="msg-side"><span class="msg-time">${esc(relTime(m.created_at))}</span>${(m.attachments&&m.attachments.length)?'<span class="msg-att" title="Has attachments">📎</span>':''}${m.read?'':'<span class="msg-dot"></span>'}</span></button>`; }).join('')+`</div>`;
+      <span class="msg-side"><span class="msg-time">${esc(relTime(m.created_at))}</span>${(m.attachments&&m.attachments.length)?'<span class="msg-att" title="Has attachments">📎</span>':''}${m.read?'':'<span class="msg-dot"></span>'}${(!isEmployee()&&!isBa())?`<span class="msg-del" title="Delete message" onclick="event.stopPropagation();inboxDelete(${m.id})">🗑</span>`:''}</span></button>`; }).join('')+`</div>`;
 }
 function inboxOpen(threadId,msgId){
   if(msgId&&window.mcqMsgRead) mcqMsgRead(msgId).then(r=>{ window.__inboxUnread=(r&&r.unread)||0; if(window.buildSidebar) buildSidebar(); });
@@ -497,6 +531,12 @@ window.msgForward=msgForward;
 // an image in the body counts as content — don't require typed text when the user only inserted a photo
 function msgHasContent(html){ return !!(String(html||'').replace(/<[^>]+>/g,'').trim() || /<img/i.test(html||'')); }
 window.msgHasContent=msgHasContent;
+// inline photo(s) for inbox mirrors of reports/verifications — only self-contained data URLs travel
+function inlinePhotoHtml(refs){
+  const list=Array.isArray(refs)?refs:(refs?[refs]:[]);
+  return list.map(p=>{ const src=(window.imgSrc?imgSrc(p):p)||''; return /^data:/.test(src)?`<img src="${src}">`:''; }).join('');
+}
+window.inlinePhotoHtml=inlinePhotoHtml;
 /* ---- Gmail-style attachments (30 MB per file) — shared by every composer ---- */
 let _msgAtts=[];
 function msgAttReset(){ _msgAtts=[]; }
@@ -565,6 +605,13 @@ function composeSend(){
   if(target==='all') payload.to_store_all=true; else if(target.indexOf('id:')===0) payload.to_staff_id=target.slice(3);
   mcqMsgSend(payload).then(r=>{ if(r&&r.ok){ toast('✓ Document sent'); mcqModalClose(); renderInbox(); } else toast('Could not send'); });
 }
+function inboxDelete(id){
+  if(!confirm('Delete this message for everyone?')) return;
+  fetch('/api/message/delete',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('mcq_token')||'')},body:JSON.stringify({id})})
+    .then(r=>r.json()).then(r=>{ if(r&&r.ok){ toast('🗑 Message deleted'); window.__inboxCache=(window.__inboxCache||[]).filter(m=>m.id!==id); inboxPaint(); } else toast('Not allowed'); })
+    .catch(()=>toast('Could not delete'));
+}
+window.inboxDelete=inboxDelete;
 function inboxSetStore(v){ window.__inboxStoreF=v||''; inboxPaint(); }
 function inboxSearch(v){ window.__inboxQ=v; inboxPaint(); const el=document.getElementById('inbox-search'); if(el){ el.focus(); const n=el.value.length; try{ el.setSelectionRange(n,n); }catch(e){} } }
 window.inboxSearch=inboxSearch;
@@ -678,7 +725,7 @@ window.ckMount=ckMount; window.ckRead=ckRead; window.ckHtml=ckHtml; window.ckDes
 let _annPhoto=null;
 function renderAnnouncements(){
   setAccent('#7c3aed'); setCrumb('📣','Announcements', seesAllStores()?'All stores':('MCQ '+(State.branch||'')));
-  const canPost=isAdmin()||isSuper();
+  const canPost=!isEmployee()&&!isBa();   // Super + Manager + Dept Lead may post
   $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">📣</div><div><h2>Announcements</h2><p>${canPost?'Post news to your store or company-wide.':'Store & company news.'}</p></div>
     ${canPost?`<div class="ph-actions"><button class="btn primary" onclick="annCompose()"><i class="fas fa-bullhorn"></i>&nbsp; New announcement</button></div>`:''}</div>
     <div id="ann-feed"><div class="empty"><div class="e-ic">⏳</div>Loading…</div></div>`;
@@ -695,7 +742,7 @@ function annPaint(filter){
   const rows=list.filter(a=>!f || a.store===f);
   const cards=rows.length?rows.map(a=>{ const isAll=a.store==='ALL'; const pinned=!!a.pinned;
     const img=a.image_id?`<img class="ann-img" src="${imgSrc(a.image_id)}" onclick="openLightbox('${ckJS(imgSrc(a.image_id))}')">`:'';
-    const canManage=isSuper()||(isAdmin()&&a.store===State.branch);
+    const canManage=isSuper()||((!isEmployee()&&!isBa())&&a.store===State.branch);   // + Dept Lead, own store
     const who=String(a.author||'MCQ'); const ini=who.trim().slice(0,1).toUpperCase();
     return `<div class="ann-card ${isAll?'all':''} ${pinned?'pinned':''}">
       <div class="ann-head">
@@ -1687,8 +1734,8 @@ function issSubmit(){
   const cat=State.iss.cat;
   const names=(DB.issueEmailRoutes[cat]||[]).map(k=>(DB.emailRecipients.find(x=>x.key===k)||{}).name).filter(Boolean);
   if(window.mcqEmail) mcqEmail.notify('issue', `${ref} · ${c.label} · ${store}`, `New report: ${c.label}\nReference: ${ref}\nStore: ${store}\nReported by: ${name}\nPriority: ${prio}\n\n${desc}`, {cat});
-  // → Manager + Dept-Lead inbox (this store) AND Superadmin inbox (all stores)
-  try{ if(window.mcqMsgSend) mcqMsgSend({kind:'issue', store, subject:`${ref} · ${c.label}`, body_html:`<p><b>Reported by:</b> ${esc(name)} · <b>Priority:</b> ${esc(prio)} · <b>Store:</b> ${esc(store)}</p><p>${esc(desc).replace(/\n/g,'<br>')}</p>`}); }catch(e){}
+  // → Manager + Dept-Lead inbox (this store) AND Superadmin inbox (all stores) — photos included
+  try{ if(window.mcqMsgSend) mcqMsgSend({kind:'issue', store, subject:`${ref} · ${c.label}`, body_html:`<p><b>Reported by:</b> ${esc(name)} · <b>Priority:</b> ${esc(prio)} · <b>Store:</b> ${esc(store)}</p><p>${esc(desc).replace(/\n/g,'<br>')}</p>${inlinePhotoHtml(photo)}`}); }catch(e){}
   State.iss={cat:'',photo:null,prio:'Normal',tab:'report'};
   if(window.persist) window.persist();
   toast(`✓ ${ref} → ${DB.modules[modOut].short}${names.length?' · 📧 '+names.length+' notified':''}`); buildSidebar(); renderIssue();
@@ -1812,13 +1859,13 @@ function renderStaff(){
   const q=(State.staffQ||'').trim().toLowerCase();
   const rows=q ? allRows.filter(s=>[s.name,s.role,s.classification,s.dept,s.store].some(v=>String(v||'').toLowerCase().includes(q))) : allRows;
   const active=allRows.filter(s=>s.active).length;
-  const canAcct=!!(window.mcqStaffAccounts && (window.localStorage&&localStorage.getItem('mcq_token'))); // individual logins need the server
+  const canAcct=!!(window.localStorage&&localStorage.getItem('mcq_token')); // activation status needs the server
   const ed=State.staffEdit, roles=DB.staffRoles||['Staff'];
   let editForm='';
   const cdepts=(DB.checklist&&DB.checklist.depts)||[];
   if(ed){ const s = ed==='new'?{id:'',name:'',dept:'',role:'',store:State.branch,phone:'',email:'',gender:'',dob:'',start:new Date().toISOString().slice(0,10),cardId:'',tfn:'',address:'',suburb:'',country:'Australia',basis:'Individual',category:'',estatus:'',active:1} : (DB.staff.find(x=>x.id===ed)||{});
     const storeField=isSuper()
-      ? `<select id="st-store">${DB.stores.map(x=>`<option ${x===s.store?'selected':''}>${esc(x)}</option>`).join('')}</select>`
+      ? `<select id="st-store"><option value="" ${!s.store?'selected':''}>— No store added —</option>${DB.stores.map(x=>`<option ${x===s.store?'selected':''}>${esc(x)}</option>`).join('')}</select>`
       : `<input type="hidden" id="st-store" value="${esc(State.branch)}"><input value="${esc(State.branch)}" disabled>`;
     const sel=(cur,opts)=>opts.map(o=>`<option ${String(o)===String(cur||'')?'selected':''}>${esc(o)}</option>`).join('');
     editForm=`<div class="card" style="margin-bottom:16px;border:2px solid var(--accent-soft)"><div class="card-head"><h3>${ed==='new'?'➕ Add staff member':'✎ Edit '+esc(s.name)}</h3><button class="btn sm" style="margin-left:auto" onclick="staffCancel()">✕ Cancel</button></div>
@@ -1859,30 +1906,29 @@ function renderStaff(){
     ${editForm}
     <div class="card" style="margin-top:16px"><div class="card-head"><h3>Directory · ${rows.length}${q?` of ${allRows.length}`:''}</h3>
         <input class="staff-search" id="staff-search" type="search" placeholder="🔍  Search staff by name…" value="${esc(State.staffQ||'')}" oninput="staffSearch(this.value)" style="flex:1;min-width:180px;max-width:340px;margin:0 12px;border:1px solid var(--line);border-radius:9px;padding:7px 12px;font-size:13px;font-family:inherit">
-        <span class="ch-sub">${exportBtns('staff-table','Staff Directory — '+(isSuper()?'All stores':State.branch))}</span></div><div class="table-wrap"><table class="grid" id="staff-table"><thead><tr><th>Name</th><th>Dept</th><th>Role</th><th>Store</th><th>Phone</th><th>Email</th><th>DOB</th><th>Started</th><th>Type</th><th>Status</th>${canAcct?'<th>Staff login</th>':''}<th></th></tr></thead><tbody>
-      ${rows.length?rows.map(s=>`<tr><td><b>${esc(s.name)}</b></td><td>${s.admin?'<span class="badge ok">ADMIN · all</span>':((Array.isArray(s.roles)&&s.roles.length)?s.roles.map(r=>`<span class="badge mute">${esc(r)}</span>`).join(' '):(s.dept?`<span class="badge mute">${esc(s.dept)}</span>`:'—'))}</td><td>${esc(s.role||s.classification||'')}</td><td>${esc(s.store)}</td><td>${esc(s.phone||'')}</td><td>${esc(s.email||'')}</td><td>${esc(s.dob||'—')}</td><td>${esc(s.start||'')}</td><td>${esc(s.estatus||s.category||'')}</td><td>${s.active?'<span class="badge ok"><span class="bdot"></span>Active</span>':'<span class="badge mute"><span class="bdot"></span>Inactive</span>'}</td>${canAcct?`<td class="acct-cell" data-sid="${esc(s.id)}" data-store="${esc(s.store)}"><span class="muted">…</span></td>`:''}<td><span class="ck-task-admin"><button onclick="staffEditOpen('${esc(s.id)}')" title="Edit">✎</button><button onclick="staffDelete('${esc(s.id)}')" title="Delete">🗑</button></span></td></tr>`).join(''):`<tr><td colspan="${canAcct?12:11}" style="text-align:center;padding:26px;color:var(--muted)">No staff match “${esc(State.staffQ||'')}”.</td></tr>`}
+        <span class="ch-sub">${exportBtns('staff-table','Staff Directory — '+(isSuper()?'All stores':State.branch))}</span></div><div class="table-wrap"><table class="grid" id="staff-table"><thead><tr><th>Name</th><th>Dept</th><th>Role</th><th>Store</th><th>Phone</th><th>Email</th><th>DOB</th><th>Started</th><th>Type</th><th>Status</th>${canAcct?'<th>Account</th>':''}<th></th></tr></thead><tbody>
+      ${rows.length?rows.map(s=>`<tr><td><b>${esc(s.name)}</b></td><td>${s.admin?'<span class="badge ok">ADMIN · all</span>':((Array.isArray(s.roles)&&s.roles.length)?s.roles.map(r=>`<span class="badge mute">${esc(r)}</span>`).join(' '):(s.dept?`<span class="badge mute">${esc(s.dept)}</span>`:'—'))}</td><td>${esc(s.role||s.classification||'')}</td><td>${s.store?esc(s.store):'<span class="badge warn">No store added</span>'}</td><td>${esc(s.phone||'')}</td><td>${esc(s.email||'')}</td><td>${esc(s.dob||'—')}</td><td>${esc(s.start||'')}</td><td>${esc(s.estatus||s.category||'')}</td><td>${s.active?'<span class="badge ok"><span class="bdot"></span>Active</span>':'<span class="badge mute"><span class="bdot"></span>Inactive</span>'}</td>${canAcct?`<td class="acct-cell" data-sid="${esc(s.id)}" data-store="${esc(s.store)}"><span class="muted">…</span></td>`:''}<td><span class="ck-task-admin"><button onclick="staffEditOpen('${esc(s.id)}')" title="Edit">✎</button><button onclick="staffDelete('${esc(s.id)}')" title="Delete">🗑</button></span></td></tr>`).join(''):`<tr><td colspan="${canAcct?12:11}" style="text-align:center;padding:26px;color:var(--muted)">No staff match “${esc(State.staffQ||'')}”.</td></tr>`}
       </tbody></table></div></div>`;
   if(canAcct) staffAcctFill();
 }
-// ---- individual employee logins (numeric, server-side staff_accounts) ----
+// ---- account activation status (unified accounts) ----
 function staffAcctFill(){
-  if(!window.mcqStaffAccounts) return;
-  const stores = isSuper() ? [...new Set((DB.staff||[]).map(s=>s.store))] : [State.branch];
+  if(!(window.localStorage&&localStorage.getItem('mcq_token'))) return;
+  const cells=[...document.querySelectorAll('.acct-cell')]; if(!cells.length) return;
+  const stores=[...new Set(cells.map(td=>td.getAttribute('data-store')).filter(Boolean))];
   const map={};
-  Promise.all(stores.map(st=>mcqStaffAccounts(st).then(r=>{ ((r&&r.accounts)||[]).forEach(a=>{ map[String(a.staff_id)]=a; }); }).catch(()=>{})))
+  Promise.all(stores.map(st=>fetch('/api/activation-status/'+encodeURIComponent(st),{headers:{'Authorization':'Bearer '+localStorage.getItem('mcq_token')}})
+      .then(r=>r.json()).then(r=>{ Object.entries((r&&r.status)||{}).forEach(([sid,v])=>{ map[st+'|'+sid]=v; }); }).catch(()=>{})))
     .then(()=>{
-      document.querySelectorAll('.acct-cell').forEach(td=>{
-        const id=td.getAttribute('data-sid'), store=td.getAttribute('data-store'), a=map[String(id)];
-        td.innerHTML = a
-          ? `<span class="acct-pw" title="Give this number to the employee — they log in with it">🔑&nbsp;<b>${esc(a.password)}</b></span> <button class="btn xs" title="New password" onclick="staffAcctReset('${esc(id)}','${esc(a.store_id||store)}')">↻</button> <button class="btn xs" title="Remove login" onclick="staffAcctRemove('${esc(id)}','${esc(a.store_id||store)}')">✕</button>`
-          : `<button class="btn xs" onclick="staffAcctCreate('${esc(id)}','${esc(store)}')"><i class="fas fa-key"></i>&nbsp;Create login</button>`;
+      cells.forEach(td=>{
+        const v=map[td.getAttribute('data-store')+'|'+td.getAttribute('data-sid')];
+        td.innerHTML = v&&v.activated
+          ? `<span class="badge ok" title="ID ${esc(v.id)}">✓ Activated · ${esc(v.id)}</span>`
+          : `<span class="badge mute">Not activated</span>`;
       });
     });
 }
-function staffAcctCreate(id,store){ const s=(DB.staff||[]).find(x=>String(x.id)===String(id)); if(!s){ return; } mcqStaffAccount(store||s.store,id,s.name,false).then(r=>{ if(r&&r.ok){ toast('🔑 Login created — password '+((r.account||{}).password||'')); staffAcctFill(); } else toast('Could not create login'); }); }
-function staffAcctReset(id,store){ if(!confirm('Generate a NEW password for this staff login? The current one will stop working.')) return; const s=(DB.staff||[]).find(x=>String(x.id)===String(id)); mcqStaffAccount(store||(s&&s.store),id,s&&s.name,true).then(r=>{ if(r&&r.ok){ toast('🔑 New password set'); staffAcctFill(); } else toast('Could not reset'); }); }
-function staffAcctRemove(id,store){ if(!confirm('Remove this staff login? The employee will no longer be able to sign in.')) return; mcqStaffAccountDelete(store,id).then(r=>{ if(r&&r.ok){ toast('Login removed'); staffAcctFill(); } else toast('Could not remove'); }); }
-window.staffAcctFill=staffAcctFill; window.staffAcctCreate=staffAcctCreate; window.staffAcctReset=staffAcctReset; window.staffAcctRemove=staffAcctRemove;
+window.staffAcctFill=staffAcctFill;
 function staffNew(){ State.staffEdit='new'; renderStaff(); window.scrollTo({top:0,behavior:'smooth'}); }
 function staffEditOpen(id){ const s=DB.staff.find(x=>x.id===id); if(!recordInScope(s)){ toast('This staff member belongs to another store'); return; } State.staffEdit=id; renderStaff(); window.scrollTo({top:0,behavior:'smooth'}); }
 function staffCancel(){ State.staffEdit=null; renderStaff(); }
@@ -2070,12 +2116,11 @@ function checklistExportMenu(){
       <button onclick="ckSharePDF('Closing')">🌙 Closing — share PDF</button>
       ${isSuper()?`<button onclick="ckAllStoresPDF()">🏪 All-stores report (PDF)</button>`:''}
     </div></div>
-   <div class="exp-dd"><button class="btn sm exp-trigger" onclick="expToggle(this,event)"><i class="fas fa-file-export"></i>&nbsp; Export <i class="fas fa-caret-down"></i></button>
+   <div class="exp-dd"><button class="btn sm exp-trigger" onclick="expToggle(this,event)"><i class="fas fa-print"></i>&nbsp; Export paper checklist <i class="fas fa-caret-down"></i></button>
     <div class="exp-menu">
-      <button onclick="exportChecklist('print')"><i class="fas fa-print"></i> Print</button>
-      <button onclick="exportChecklist('pdf')"><i class="fas fa-file-pdf"></i> PDF</button>
-      <button onclick="exportChecklist('excel')"><i class="fas fa-file-excel"></i> Excel</button>
-      <button onclick="exportChecklist('word')"><i class="fas fa-file-word"></i> Word</button>
+      <button onclick="ckPaperPDF('Opening')">☀️ Opening — print template</button>
+      <button onclick="ckPaperPDF('Mid-afternoon')">🌤️ Mid-afternoon — print template</button>
+      <button onclick="ckPaperPDF('Closing')">🌙 Closing — print template</button>
     </div></div>`;
 }
 /* Super Admin: one branded PDF covering EVERY store's submitted checklists for a date,
@@ -2913,6 +2958,10 @@ function mgrVerify(id){
   // notify department lead(s) for this store+dept with a branded PDF
   let leadSent=false;
   try{ const leads=leadList(s.store,s.department).filter(l=>l.email); if(leads.length){ mgrSendLeadPDF(s,a,leads); leadSent=true; } }catch(err){}
+  // → ALSO into the Store Inbox (with the manager photos), so the lead sees it in-app too
+  try{ if(hasContent && window.mcqMsgSend) mcqMsgSend({kind:'message', store:s.store,
+    subject:`✅ Verified · ${s.department} ${s.session} · ${s.date||''}`,
+    body_html:`<p>${esc(mgrAssessmentText(a)).replace(/\n/g,'<br>')}</p>${inlinePhotoHtml(a.verifyPhotos)}`}); }catch(e){}
   closeDrawer&&closeDrawer();
   toast(leadSent?('✓ Verified · PDF sent to '+s.department+' lead'):sent==='silent'?('✓ Verified · note sent to '+s.store+' admin'):'✓ Checklist verified');
   renderManager(); }
@@ -3492,8 +3541,9 @@ function leadStaffFor(store,dept){
   const dn=staffNorm(dept); let rows=[];
   if(dn) rows=all.filter(s=> staffIsAdmin(s) || (Array.isArray(s.roles)&&s.roles.some(r=>staffNorm(r)===dn)) || staffNorm(s.dept)===dn);
   if(!rows.length){ const needles=staffDeptNeedles(dept); if(needles.length) rows=all.filter(s=>{ const role=staffNorm(s.role), name=staffNorm(s.name); return needles.some(n=>role.includes(n)||name.includes(n)); }); }
-  if(!rows.length) rows=all;   // fallback: any staff in this store
-  return rows;
+  // dept-matched people first, then EVERY other staff member of the store (all pickable)
+  const rest=all.filter(s=>!rows.includes(s));
+  return rows.concat(rest);
 }
 function leadPick(store,dept,i,sel){ const a=leadList(store,dept); if(!a[i]) return;
   a[i].name=sel.value;
@@ -3678,6 +3728,24 @@ function renderData(){
       <div style="flex:1;min-width:220px"><b>Full backup</b><div style="color:var(--muted);font-size:12.5px">Downloads <b>every record, staff member, checklist submission, schedule, bin record and audit log</b> ${isSuper()?'across <b>all stores</b>':'for <b>'+esc(State.branch)+'</b>'} as a single JSON file you can keep safe or re-import.</div></div>
       <button class="btn primary" onclick="dataBackupAll()">💾 Download all data</button>
     </div></div>
+    <div class="card" style="margin-bottom:14px;border:1.5px solid #fecaca">
+      <div class="card-head"><h3>🧹 Clean up old data</h3><span class="ch-sub">Deletes ONLY non-critical data — records, staff, audit logs & messages are never touched</span></div>
+      <div class="card-pad">
+        <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end">
+          <div class="field" style="min-width:170px"><label>Delete data OLDER than</label><input type="date" id="cl-before"></div>
+          ${isSuper()?`<div class="field" style="min-width:160px"><label>Store</label><select id="cl-store"><option value="ALL">🏬 All stores</option>${DB.stores.map(s=>`<option>${esc(s)}</option>`).join('')}</select></div>`:''}
+        </div>
+        <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:10px">
+          <label class="email-cat"><input type="checkbox" class="cl-kind" value="photos" checked>🖼️ Photos / images</label>
+          <label class="email-cat"><input type="checkbox" class="cl-kind" value="checklistSubs" checked>✅ Checklist submissions</label>
+          <label class="email-cat"><input type="checkbox" class="cl-kind" value="scheduleHistory">🧽 Cleaning &amp; maintenance history</label>
+          <label class="email-cat"><input type="checkbox" class="cl-kind" value="binRecords">🗑 Bin records</label>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap">
+          <button class="btn" style="color:var(--bad);border-color:#f3c9c9;font-weight:800" onclick="dataCleanupRun()"><i class="fas fa-broom"></i>&nbsp; Delete old data…</button>
+          <span class="fhint" style="margin:0">Tip: download a full backup first. Deletion is permanent.</span>
+        </div>
+      </div></div>
     <div class="card store-isolation-card">
       <div class="card-head"><h3>Store data isolation</h3><span class="ch-sub">${esc(scope)}</span></div>
       <div class="card-pad">
@@ -3788,3 +3856,168 @@ function renderFaceId(){
         <div class="card rail-card"><h4>Security</h4><ul><li>Device-bound — enrol on each device used</li><li>Auto-logout after 30 min idle</li><li>Enrolments are saved &amp; synced (never lost)</li></ul></div></aside></div>`;
 }
 function faceRemoveInApp(id){ if(!confirm('Remove this Face ID from this device?')) return; try{ if(window.MCQFace) MCQFace.remove(id); }catch(e){} toast('Face ID removed'); renderFaceId(); }
+
+/* ============================================================ ACCOUNT MANAGEMENT (account admin — Khoi Nguyen only) */
+function renderAccounts(){
+  setAccent('#4f46e5'); setCrumb('🔐','Account Management','Every ID, password & permission — all stores');
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic" style="background:#eef2ff">🔐</div>
+      <div><h2>Account Management</h2><p>Assign each person's access level, store and department. Passwords are visible to you only.</p></div></div>
+    <div class="card"><div class="card-head"><h3>All accounts · <span id="acc-count">…</span></h3>
+      <input class="login-input" id="acc-q" placeholder="🔍 Search name, ID, email, store…" style="flex:1;min-width:200px;max-width:360px;margin:0 12px;border:1px solid var(--line);border-radius:9px;padding:7px 12px;font-size:13px" oninput="accSearch(this.value)">
+      <span class="ch-sub">ID rule: Morley 1··· / Mirrabooka 2··· / Malaga 3··· / Subiaco 4··· / Armadale 5··· / Warehouse 8··· / Head office 7···</span></div>
+      <div class="table-wrap"><table class="grid" id="acc-table"><thead><tr>
+        <th>ID</th><th>Name</th><th>Email</th><th>Access</th><th>Store</th><th>Lead of dept</th><th>Password</th><th>Status</th><th></th>
+      </tr></thead><tbody id="acc-body"><tr><td colspan="9" style="text-align:center;padding:26px;color:var(--muted)">Loading…</td></tr></tbody></table></div></div>`;
+  accLoad();
+}
+let _accQT=null;
+function accSearch(v){ clearTimeout(_accQT); _accQT=setTimeout(()=>accLoad(v),250); }
+function accLoad(q){
+  if(!window.mcqAccounts) return;
+  mcqAccounts(q||document.getElementById('acc-q')?.value||'').then(r=>{
+    const list=(r&&r.accounts)||[]; const el=document.getElementById('acc-body'); if(!el) return;
+    const n=document.getElementById('acc-count'); if(n) n.textContent=list.length+' people';
+    const roleSel=(a)=>['employee','staff','admin','super'].map(x=>`<option value="${x}" ${a.role===x?'selected':''}>${({employee:'Member (Staff)',staff:'Dept Lead',admin:'Manager',super:'Super Admin'})[x]}</option>`).join('');
+    const storeSel=(a)=>`<option value="" ${!a.store_id?'selected':''}>— No store —</option>`+(DB.stores||[]).map(s=>`<option ${a.store_id===s?'selected':''}>${esc(s)}</option>`).join('');
+    const depts=(DB.checklist&&DB.checklist.depts)||[];
+    const deptSel=(a)=>`<option value="">—</option>`+depts.map(d=>`<option ${a.department===d?'selected':''}>${esc(d)}</option>`).join('');
+    el.innerHTML=list.length?list.map(a=>`<tr class="${a.acct_admin?'acc-row-admin':''}">
+      <td><b style="font-family:ui-monospace,Menlo,monospace">${esc(a.id)}</b>${a.acct_admin?' <span class="badge info" title="Account admin">👑</span>':''}</td>
+      <td><b>${esc(a.name||'')}</b></td><td style="font-size:12px">${esc(a.email||'')}</td>
+      <td><select class="acc-inp" onchange="accSet('${esc(a.id)}','role',this.value)">${roleSel(a)}</select></td>
+      <td><select class="acc-inp" onchange="accSet('${esc(a.id)}','store_id',this.value)">${storeSel(a)}</select></td>
+      <td><select class="acc-inp" onchange="accSet('${esc(a.id)}','department',this.value)" ${a.role==='staff'?'':'disabled'}>${deptSel(a)}</select></td>
+      <td><span class="acc-pw" id="acc-pw-${esc(a.id)}" data-pw="${esc(a.password||'')}">••••••</span>
+        <button class="btn xs" onclick="accPwToggle('${esc(a.id)}')">👁</button>
+        <button class="btn xs" onclick="accPwEdit('${esc(a.id)}')" title="Set a new password">✎</button></td>
+      <td>${a.activated?'<span class="badge ok">✓ Activated</span>':'<span class="badge mute">Waiting</span>'}</td>
+      <td>${a.acct_admin?'':`<button class="btn xs" style="color:var(--bad);border-color:#f3c9c9" onclick="accDel('${esc(a.id)}','${ckJS(a.name||'')}')">🗑</button>`}</td>
+    </tr>`).join(''):'<tr><td colspan="9" style="text-align:center;padding:26px;color:var(--muted)">No accounts match.</td></tr>';
+  }).catch(()=>toast('Could not load accounts'));
+}
+function accSet(id,field,val){
+  mcqAccountUpdate(id,{[field]:val}).then(r=>{
+    if(r&&r.ok){ toast('✓ Saved'); if(field==='role') accLoad(); }
+    else toast('Could not save');
+  });
+}
+function accPwToggle(id){ const el=document.getElementById('acc-pw-'+id); if(!el) return;
+  el.textContent = el.textContent==='••••••' ? (el.dataset.pw||'(not set)') : '••••••'; }
+function accPwEdit(id){
+  const nv=prompt('New password for account '+id+' (min 6 characters):'); if(nv==null) return;
+  if(String(nv).length<6){ toast('Password must be at least 6 characters'); return; }
+  mcqAccountUpdate(id,{password:String(nv)}).then(r=>{ if(r&&r.ok){ toast('🔑 Password updated'); accLoad(); } else toast('Could not update'); });
+}
+function accDel(id,name){
+  if(!confirm('Delete account '+id+(name?(' ('+name+')'):'')+'? They will no longer be able to sign in with this ID.')) return;
+  mcqAccountDelete(id).then(r=>{ if(r&&r.ok){ toast('🗑 Account deleted'); accLoad(); } else toast('Could not delete'); });
+}
+window.renderAccounts=renderAccounts; window.accSearch=accSearch; window.accLoad=accLoad;
+window.accSet=accSet; window.accPwToggle=accPwToggle; window.accPwEdit=accPwEdit; window.accDel=accDel;
+
+/* ============================================================ PAPER CHECKLIST TEMPLATE (print-ready PDF) */
+function _ckLogoData(){
+  return new Promise(res=>{
+    try{ const img=new Image(); img.onload=()=>{ try{ const c=document.createElement('canvas'); c.width=img.naturalWidth; c.height=img.naturalHeight;
+        c.getContext('2d').drawImage(img,0,0); res(c.toDataURL('image/png')); }catch(e){ res(null); } };
+      img.onerror=()=>res(null); img.src='assets/mcq-logo-exact.png';
+    }catch(e){ res(null); }
+  });
+}
+async function ckPaperPDF(session){
+  const dept=State.chk&&State.chk.dept; if(!dept||dept==='ALL'){ toast('Pick a department first'); return; }
+  if(!(await ensureJsPDF())){ toast('PDF engine unavailable'); return; }
+  const logo=await _ckLogoData();
+  const { jsPDF }=window.jspdf; const doc=new jsPDF({unit:'pt',format:'a4'});
+  const PW=doc.internal.pageSize.getWidth(), PH=doc.internal.pageSize.getHeight(), M=42, CW=PW-2*M;
+  const GREEN=[14,159,110], INK=[24,32,44], MUTE=[122,134,150], LINE=[214,222,230];
+  const items=(DB.checklist.items||[]).map(ckItem).filter(r=>ckStoreOk(r)&&r.dept===dept&&ckInSession(r,session));
+  if(!items.length){ toast('No '+session+' tasks in '+dept); return; }
+  const groups={}; items.forEach(r=>{ (groups[r.area]=groups[r.area]||[]).push(r); });
+  let page=1;
+  const header=()=>{
+    doc.setFillColor(...GREEN); doc.rect(0,0,PW,6,'F');
+    if(logo){ try{ doc.addImage(logo,'PNG',M,20,46,46); }catch(e){} }
+    doc.setTextColor(...INK); doc.setFont('helvetica','bold'); doc.setFontSize(17);
+    doc.text('STORE OPERATION CHECKLIST', M+(logo?58:0), 40);
+    doc.setTextColor(...GREEN); doc.setFontSize(13);
+    doc.text(String(dept).toUpperCase()+'  ·  '+String(session).toUpperCase(), M+(logo?58:0), 58);
+    doc.setFont('helvetica','normal'); doc.setFontSize(9.5); doc.setTextColor(...MUTE);
+    doc.text('MCQ Supermarket', PW-M, 34, {align:'right'});
+    doc.text('Tick each box when the task is done', PW-M, 48, {align:'right'});
+    // info line
+    doc.setDrawColor(...LINE); doc.setTextColor(...INK); doc.setFontSize(10);
+    let y=84;
+    const blank=(label,x,w)=>{ doc.text(label,x,y); const lx=x+doc.getTextWidth(label)+5; doc.line(lx,y+2,x+w,y+2); };
+    blank('Store:',M,150); blank('Date:',M+170,130); blank('Completed by:',M+320,CW-320);
+    return y+22;
+  };
+  const footer=()=>{ doc.setFontSize(8.5); doc.setTextColor(...MUTE);
+    doc.text('MCQ Supermarket · '+dept+' · '+session+' checklist', M, PH-24);
+    doc.text('Page '+page, PW-M, PH-24, {align:'right'}); };
+  let y=header();
+  const newPage=()=>{ footer(); doc.addPage(); page++; y=header(); };
+  Object.entries(groups).forEach(([area,list])=>{
+    if(y>PH-110) newPage();
+    // section bar
+    doc.setFillColor(...GREEN); doc.roundedRect(M,y,CW,20,4,4,'F');
+    doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(10.5);
+    doc.text(String(area).toUpperCase(), M+10, y+13.5); y+=30;
+    doc.setFont('helvetica','normal'); doc.setTextColor(...INK);
+    list.forEach(r=>{
+      const txt=doc.splitTextToSize(String(r.task), CW-200);
+      const rh=Math.max(26, txt.length*12.5+12);
+      if(y+rh>PH-70) newPage();
+      // checkbox
+      doc.setDrawColor(...GREEN); doc.setLineWidth(1.2); doc.rect(M+2, y+(rh-13)/2-4, 13,13);
+      // task text
+      doc.setFontSize(10.5); doc.setTextColor(...INK);
+      doc.text(txt, M+26, y+((rh-txt.length*12.5)/2)+9);
+      // notes line
+      doc.setDrawColor(...LINE); doc.setLineWidth(.8);
+      doc.line(PW-M-158, y+rh-9, PW-M, y+rh-9);
+      doc.setFontSize(7.5); doc.setTextColor(...MUTE); doc.text('notes', PW-M-158, y+rh-13);
+      // row divider
+      doc.setDrawColor(238,242,246); doc.line(M, y+rh, PW-M, y+rh);
+      y+=rh+4;
+    });
+    y+=8;
+  });
+  // sign-off block
+  if(y>PH-120) newPage();
+  y+=14;
+  doc.setDrawColor(...LINE); doc.setLineWidth(.9);
+  doc.setFontSize(10); doc.setTextColor(...INK);
+  doc.text('Completed at (time):',M,y); doc.line(M+100,y+2,M+210,y+2);
+  doc.text('Checked by (lead/manager):',M+240,y); doc.line(M+380,y+2,PW-M,y+2);
+  y+=28; doc.text('Signature:',M,y); doc.line(M+55,y+2,M+210,y+2);
+  footer();
+  doc.save('MCQ_'+dept.replace(/[^\w]+/g,'')+'_'+session.replace(/[^\w]+/g,'')+'_checklist.pdf');
+  toast('🖨 Paper checklist ready — print it out');
+}
+window.ckPaperPDF=ckPaperPDF;
+
+/* ---- data cleanup (server + local mirror purge so autosave can't resurrect) ---- */
+function dataCleanupRun(){
+  const before=document.getElementById('cl-before')?.value||'';
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(before)){ toast('Pick a date first'); return; }
+  const kinds=[...document.querySelectorAll('.cl-kind:checked')].map(c=>c.value);
+  if(!kinds.length){ toast('Tick what to delete'); return; }
+  const store=isSuper()?(document.getElementById('cl-store')?.value||'ALL'):State.branch;
+  if(!confirm('Permanently delete '+kinds.join(', ')+' older than '+before+' for '+(store==='ALL'?'ALL stores':store)+'?\n\nThis cannot be undone.')) return;
+  if(!confirm('Are you 100% sure? A backup is recommended first.')) return;
+  fetch('/api/cleanup',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('mcq_token')||'')},body:JSON.stringify({before,store,kinds})})
+    .then(r=>r.json()).then(r=>{
+      if(!(r&&r.ok)){ toast('Cleanup failed'); return; }
+      // purge the same data from the LOCAL copy so the next autosave doesn't re-upload it
+      const cut=before, inScope=x=>(store==='ALL'||x===store);
+      const older=(v)=>String(v||'').slice(0,10)<cut;
+      if(kinds.includes('checklistSubs')) DB.checklistSubs=(DB.checklistSubs||[]).filter(s=>!(inScope(s.store)&&older(s.date||s.created||s.ts)));
+      if(kinds.includes('scheduleHistory')) DB.scheduleHistory=(DB.scheduleHistory||[]).filter(s=>!(inScope(s.store)&&older(s.date||s.created||s.ts)));
+      if(kinds.includes('binRecords')&&DB.binAdmin) DB.binAdmin.records=(DB.binAdmin.records||[]).filter(s=>!(inScope(s.store)&&older(s.date||s.created||s.ts)));
+      if(window.persist) window.persist();
+      const n=Object.entries(r.deleted||{}).map(([k,v])=>v+' '+k).join(' · ')||'nothing found';
+      toast('🧹 Deleted: '+n); renderData();
+    }).catch(()=>toast('Cleanup failed'));
+}
+window.dataCleanupRun=dataCleanupRun;
