@@ -9,7 +9,7 @@ Run standalone (local API only):
   cd server && python3 -m pip install -r requirements.txt
   python3 app.py            # http://localhost:8001
 """
-import os, sys, json, time, secrets, base64, re, urllib.request, urllib.error
+import os, sys, json, time, secrets, base64, re, hmac, hashlib, urllib.request, urllib.error
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # so `import db` works when imported as server.app too
 import db
 from flask import Blueprint, Flask, request, jsonify, send_file, abort
@@ -64,6 +64,108 @@ def login():
                    account_id=meta.get('account_id'), needs_profile=bool(meta.get('needs_profile')),
                    acct_admin=db.is_account_admin({'account_id': meta.get('account_id')}) if meta.get('account_id') else False,
                    stores=db.STORES if role in ('super', 'ba') else [store])
+
+# ---------- Deputy attendance (clock-in/out webhooks → lateness, warnings, inbox) ----------
+def _deputy_norm(topic, d):
+    """Normalise a Deputy timesheet payload into our attendance event. Deputy field names vary
+    by install/version, so we accept several aliases and fall back gracefully."""
+    def pick(*keys):
+        for k in keys:
+            if isinstance(d, dict) and d.get(k) not in (None, '', 0): return d.get(k)
+        return None
+    actual_start = db._to_epoch(pick('StartTime', 'Start', 'startTime', 'TimeStart'))
+    actual_end   = db._to_epoch(pick('EndTime', 'End', 'endTime', 'TimeEnd'))
+    sched_start  = db._to_epoch(pick('RosterStartTime', 'ScheduledStart', 'rosterStart', 'StartTimeScheduled'))
+    sched_end    = db._to_epoch(pick('RosterEndTime', 'ScheduledEnd', 'rosterEnd', 'EndTimeScheduled'))
+    # optionally enrich scheduled times from the linked Roster via the Deputy API (if configured)
+    roster_id = pick('RosterId', 'Roster')
+    if (sched_start is None) and roster_id and os.environ.get('DEPUTY_HOST') and os.environ.get('DEPUTY_TOKEN'):
+        try:
+            req = urllib.request.Request(
+                os.environ['DEPUTY_HOST'].rstrip('/') + '/api/v1/resource/Roster/' + str(roster_id),
+                headers={'Authorization': 'OAuth ' + os.environ['DEPUTY_TOKEN'], 'Accept': 'application/json'})
+            ro = json.loads(urllib.request.urlopen(req, timeout=8).read().decode())
+            sched_start = db._to_epoch(ro.get('StartTime')); sched_end = db._to_epoch(ro.get('EndTime'))
+        except Exception:
+            pass
+    event = 'clockout' if actual_end else 'clockin'
+    meta = d.get('_DPMetaData') if isinstance(d, dict) else None
+    name = pick('EmployeeName', 'DisplayName') or (meta.get('EmployeeName') if isinstance(meta, dict) else None)
+    email = pick('EmployeeEmail', 'Email', 'email')
+    emp = pick('Employee', 'EmployeeId')
+    late = over = 0
+    if event == 'clockin' and actual_start and sched_start:
+        late = max(0, round((actual_start - sched_start) / 60))
+    if event == 'clockout' and actual_end and sched_end:
+        over = max(0, round((actual_end - sched_end) / 60))
+    return {'ts_id': pick('Id', 'id'), 'event': event, 'deputy_employee': emp, 'name': name, 'email': email,
+            'actual_start': str(actual_start or ''), 'actual_end': str(actual_end or ''),
+            'scheduled_start': str(sched_start or ''), 'scheduled_end': str(sched_end or ''),
+            'late_min': late, 'over_min': over}
+
+def _fmt_hm(epoch):
+    try: return time.strftime('%d %b %H:%M', time.localtime(int(epoch)))
+    except Exception: return ''
+
+@api.route('/api/deputy/webhook', methods=['POST'])
+def deputy_webhook():
+    raw = request.get_data() or b''
+    secret = os.environ.get('DEPUTY_WEBHOOK_SECRET', '')
+    if secret:   # verify Deputy's signature when the private key is configured
+        sig = request.headers.get('X-Deputy-Secret', '')
+        calc = hmac.new(secret.encode(), raw, hashlib.sha256).hexdigest()
+        if not hmac.compare_digest(calc, sig):
+            abort(401)
+    try: body = json.loads(raw.decode() or '{}')
+    except Exception: return jsonify(ok=False, error='bad json'), 400
+    topic = str(body.get('topic') or '')
+    if 'timesheet' not in topic.lower() and body.get('data') is None:
+        return jsonify(ok=True, ignored=topic)   # ack non-timesheet events
+    data = body.get('data'); items = data if isinstance(data, list) else [data]
+    processed = 0
+    for d in items:
+        if not isinstance(d, dict): continue
+        ev = _deputy_norm(topic, d)
+        m = db._match_staff_for_deputy(ev.get('email'), ev.get('name'), ev.get('deputy_employee'))
+        if not m or not m.get('id'):
+            continue   # employee not matched to any MCQ staff — skip (logged by count)
+        ev['store_id'] = m['store']; ev['staff_id'] = m['id']; ev['staff_name'] = m['name']
+        res = db.record_attendance(ev)
+        processed += 1
+        # notify the employee's inbox
+        try:
+            au = {'role': 'super', 'store_id': None, 'staff_id': None, 'staff_name': '⏱ Attendance'}
+            if ev['event'] == 'clockin':
+                if res['late_min'] > db.LATE_GRACE_MIN:
+                    w = res['warning']
+                    subj = ('🔴 Written warning — repeated lateness' if w == 'written'
+                            else '🟠 Verbal warning — late clock-in')
+                    body_html = ('<p>You clocked in <b>%d minutes late</b>%s.</p>'
+                                 '<p>This is <b>%s warning #%d</b> for lateness.%s</p>'
+                                 % (res['late_min'], (' at ' + _fmt_hm(ev['actual_start']) if ev['actual_start'] else ''),
+                                    w, res['warning_number'],
+                                    (' Reaching %d verbal warnings escalates to a written warning.' % db.VERBAL_TO_WRITTEN if w == 'verbal' else '')))
+                else:
+                    subj = '✅ Clock-in recorded — on time'
+                    body_html = '<p>Thanks — you clocked in on time%s. Have a great shift! 💚</p>' % (' at ' + _fmt_hm(ev['actual_start']) if ev['actual_start'] else '')
+            else:
+                subj = '👋 Clock-out recorded'
+                body_html = ('<p>You clocked out%s.%s</p>'
+                             % ((' at ' + _fmt_hm(ev['actual_end']) if ev['actual_end'] else ''),
+                                (' You stayed <b>%d minutes past</b> your rostered finish.' % res['over_min'] if res['over_min'] > 0 else '')))
+            db.send_message(au, ev['store_id'], 'message', subj, body_html, to_staff_id=ev['staff_id'], to_super=False, to_managers=False)
+            if ev['event'] == 'clockin' and res['warning']:   # managers get a copy of warnings
+                db.send_message(au, ev['store_id'], 'message', '⏱ ' + (m['name'] or '') + ' — ' + res['warning'] + ' warning (late ' + str(res['late_min']) + 'm)',
+                                body_html, to_managers=True, to_super=True)
+        except Exception:
+            pass
+    return jsonify(ok=True, processed=processed, received=len(items))
+
+@api.route('/api/attendance/<store_id>/<staff_id>', methods=['GET'])
+def attendance_view(store_id, staff_id):
+    au = require_auth(); require_store(au, store_id)
+    if au['role'] not in ('super', 'admin', 'staff') and str(au.get('staff_id') or '') != str(staff_id): abort(403)
+    return jsonify(ok=True, stats=db.attendance_stats(store_id, staff_id))
 
 # ---------- Face ID / passkey device credentials ----------
 @api.route('/api/device/enroll', methods=['POST'])

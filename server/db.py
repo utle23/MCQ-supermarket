@@ -105,6 +105,12 @@ CREATE TABLE IF NOT EXISTS accounts (
 CREATE TABLE IF NOT EXISTS device_creds (
   id TEXT PRIMARY KEY, secret_hash TEXT, cred_id TEXT, role TEXT, store_id TEXT,
   staff_id TEXT, staff_name TEXT, account_id TEXT, label TEXT, created_at TEXT, last_used TEXT);
+-- Deputy attendance: one row per clock-in / clock-out webhook event
+CREATE TABLE IF NOT EXISTS attendance (
+  id TEXT PRIMARY KEY, ts_id TEXT, event TEXT, store_id TEXT, staff_id TEXT, staff_name TEXT,
+  deputy_employee TEXT, scheduled_start TEXT, actual_start TEXT, scheduled_end TEXT, actual_end TEXT,
+  late_min INTEGER DEFAULT 0, over_min INTEGER DEFAULT 0, warning TEXT DEFAULT '', created_at TEXT);
+CREATE INDEX IF NOT EXISTS idx_att_staff ON attendance(store_id, staff_id);
 CREATE INDEX IF NOT EXISTS idx_audit_store ON audit_logs(store_id);
 CREATE INDEX IF NOT EXISTS idx_photos_store ON photos(store_id);
 CREATE INDEX IF NOT EXISTS idx_snap_store ON store_state_snapshots(store_id);
@@ -754,6 +760,95 @@ def revoke_device(au, device_id):
         conn.execute('DELETE FROM device_creds WHERE id=?', (row['id'],))
         conn.commit()
         return True
+    finally:
+        conn.close()
+
+# ============================================================ DEPUTY ATTENDANCE
+LATE_GRACE_MIN = 10          # clock-in later than this many minutes past the rostered start = a lateness event
+VERBAL_TO_WRITTEN = 3        # this many verbal warnings escalate the next one to a written warning
+
+def _to_epoch(v):
+    """Deputy sends unix seconds (int) or ISO strings — normalise to epoch seconds."""
+    if v is None or v == '': return None
+    try:
+        if isinstance(v, (int, float)): return int(v)
+        s = str(v).strip()
+        if s.isdigit(): return int(s)
+        import datetime
+        s = s.replace('Z', '+00:00')
+        return int(datetime.datetime.fromisoformat(s).timestamp())
+    except Exception:
+        return None
+
+def _match_staff_for_deputy(email, name, deputy_id):
+    """Find the MCQ staff row for a Deputy employee. Priority: stored deputyId → email → name."""
+    conn = connect()
+    try:
+        rows = conn.execute('SELECT store_id, data_json FROM staff').fetchall()
+        want_e = str(email or '').strip().lower()
+        want_n = str(name or '').strip().lower()
+        want_d = str(deputy_id or '').strip()
+        by_email = by_name = None
+        for r in rows:
+            try: d = json.loads(r['data_json'] or '{}')
+            except Exception: d = {}
+            if want_d and str(d.get('deputyId') or '') == want_d:
+                return {'store': r['store_id'], 'id': d.get('id'), 'name': d.get('name')}
+            e = str(d.get('email') or '').strip().lower()
+            if want_e and e == want_e and not by_email:
+                by_email = {'store': r['store_id'], 'id': d.get('id'), 'name': d.get('name')}
+            n = str(d.get('name') or '').strip().lower()
+            if want_n and n == want_n and not by_name:
+                by_name = {'store': r['store_id'], 'id': d.get('id'), 'name': d.get('name')}
+        return by_email or by_name
+    finally:
+        conn.close()
+
+def record_attendance(ev):
+    """Persist one clock event and, for clock-ins, apply the lateness/warning ladder.
+    `ev` is the normalised dict from the webhook. Returns a summary for the inbox note."""
+    conn = connect()
+    try:
+        late = int(ev.get('late_min') or 0)
+        over = int(ev.get('over_min') or 0)
+        warning = ''
+        prior_verbal = 0
+        if ev.get('event') == 'clockin' and late > LATE_GRACE_MIN and ev.get('staff_id'):
+            prior_verbal = conn.execute(
+                "SELECT COUNT(*) c FROM attendance WHERE store_id=? AND staff_id=? AND warning IN ('verbal','written')",
+                (ev.get('store_id'), str(ev.get('staff_id')))).fetchone()['c']
+            warning = 'written' if (prior_verbal + 1) >= VERBAL_TO_WRITTEN else 'verbal'
+        aid = 'att_' + secrets.token_hex(8)
+        conn.execute('''INSERT INTO attendance(id,ts_id,event,store_id,staff_id,staff_name,deputy_employee,
+            scheduled_start,actual_start,scheduled_end,actual_end,late_min,over_min,warning,created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            (aid, str(ev.get('ts_id') or ''), ev.get('event'), ev.get('store_id'), str(ev.get('staff_id') or ''),
+             ev.get('staff_name'), str(ev.get('deputy_employee') or ''), ev.get('scheduled_start'), ev.get('actual_start'),
+             ev.get('scheduled_end'), ev.get('actual_end'), late, over, warning, now()))
+        conn.commit()
+        return {'late_min': late, 'over_min': over, 'warning': warning,
+                'warning_number': (prior_verbal + 1) if warning else 0}
+    finally:
+        conn.close()
+
+def attendance_stats(store, staff_id):
+    conn = connect()
+    try:
+        rows = conn.execute('SELECT * FROM attendance WHERE store_id=? AND staff_id=? ORDER BY id DESC LIMIT 400',
+                            (store, str(staff_id))).fetchall()
+        events = [{k: r[k] for k in r.keys()} for r in rows]
+        clockins = [e for e in events if e['event'] == 'clockin']
+        late_events = [e for e in clockins if (e['late_min'] or 0) > LATE_GRACE_MIN]
+        return {
+            'events': events[:60],
+            'total_shifts': len(clockins),
+            'late_count': len(late_events),
+            'total_late_min': sum(e['late_min'] or 0 for e in clockins),
+            'verbal_warnings': sum(1 for e in events if e['warning'] == 'verbal'),
+            'written_warnings': sum(1 for e in events if e['warning'] == 'written'),
+            'total_over_min': sum(e['over_min'] or 0 for e in events if e['event'] == 'clockout'),
+            'on_time_rate': (round(100 * (len(clockins) - len(late_events)) / len(clockins)) if clockins else 100),
+        }
     finally:
         conn.close()
 

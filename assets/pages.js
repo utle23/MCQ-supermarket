@@ -1967,7 +1967,10 @@ function renderStaff(){
         <div class="field"><label>Status</label><select id="st-active"><option value="1" ${s.active?'selected':''}>Active</option><option value="0" ${!s.active?'selected':''}>Inactive</option></select></div>
       </div>
       <div style="display:flex;gap:10px;margin-top:14px"><button class="btn primary" onclick="staffSave('${ed}')">💾 Save</button>${ed!=='new'?`<button class="btn" style="color:var(--bad);border-color:#f3c9c9" onclick="staffDelete('${esc(ed)}')"><i class="fas fa-trash"></i>&nbsp; Delete</button>`:''}</div>
-      </div></div>`;
+      </div></div>
+      ${ed!=='new'?`<div class="card" id="att-card" style="margin-bottom:16px"><div class="card-head"><h3>⏱ Attendance & punctuality</h3><span class="ch-sub">From Deputy clock-in / clock-out</span></div>
+        <div class="card-pad" id="att-body"><div class="fhint">Loading attendance…</div></div></div>`:''}`;
+    if(ed!=='new') setTimeout(()=>attLoad(s.store||State.branch, ed),60);
   }
   $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🧑‍🤝‍🧑</div><div><h2>Staff Members</h2><p>Team directory${isSuper()?' · all stores':' · '+esc(State.branch)}.</p></div>
       <div class="ph-actions"><button class="btn primary" onclick="staffNew()"><i class="fas fa-user-plus"></i>&nbsp; Add member</button></div></div>
@@ -2006,6 +2009,32 @@ function staffEditOpen(id){ const s=DB.staff.find(x=>x.id===id); if(!recordInSco
 function staffCancel(){ State.staffEdit=null; renderStaff(); }
 function staffSearch(v){ State.staffQ=v; renderStaff(); const el=document.getElementById('staff-search'); if(el){ el.focus(); const n=el.value.length; try{el.setSelectionRange(n,n);}catch(e){} } }
 window.staffSearch=staffSearch;
+// Deputy attendance stats inside a staff member's record
+function attLoad(store,staffId){
+  const el=document.getElementById('att-body'); if(!el) return;
+  fetch('/api/attendance/'+encodeURIComponent(store)+'/'+encodeURIComponent(staffId),{headers:{'Authorization':'Bearer '+(localStorage.getItem('mcq_token')||'')}})
+    .then(r=>r.json()).then(r=>{
+      if(!(r&&r.ok)){ el.innerHTML='<div class="fhint">No attendance data.</div>'; return; }
+      const s=r.stats, ev=s.events||[];
+      if(!ev.length){ el.innerHTML='<div class="fhint">No clock-in / clock-out records yet. Connect Deputy to start tracking punctuality.</div>'; return; }
+      const kpi=(v,l,tone)=>`<div class="kpi tone-${tone}"><div class="k-val">${v}</div><div class="k-lbl">${l}</div></div>`;
+      const rows=ev.slice(0,20).map(e=>{
+        const late=(e.late_min||0), over=(e.over_min||0);
+        const tag=e.event==='clockin'
+          ? (late>10?`<span class="badge ${e.warning==='written'?'bad':'warn'}">${late}m late${e.warning?' · '+e.warning:''}</span>`:'<span class="badge ok">on time</span>')
+          : (over>0?`<span class="badge warn">${over}m over</span>`:'<span class="badge mute">on schedule</span>');
+        return `<tr><td>${e.event==='clockin'?'🟢 Clock-in':'🔴 Clock-out'}</td><td>${esc((e.created_at||'').slice(0,16))}</td><td>${tag}</td></tr>`;
+      }).join('');
+      el.innerHTML=`<div class="kpi-grid" style="margin-bottom:12px">
+          ${kpi(s.total_shifts,'Shifts','info')}${kpi(s.late_count,'Late (&gt;10m)','warn')}
+          ${kpi(s.on_time_rate+'%','On-time','ok')}${kpi(s.total_over_min+'m','Overtime past finish','mute')}</div>
+        <div style="display:flex;gap:10px;margin-bottom:10px">
+          <span class="badge ${s.verbal_warnings?'warn':'mute'}">🟠 ${s.verbal_warnings} verbal warning${s.verbal_warnings!==1?'s':''}</span>
+          <span class="badge ${s.written_warnings?'bad':'mute'}">🔴 ${s.written_warnings} written warning${s.written_warnings!==1?'s':''}</span></div>
+        <div class="table-wrap"><table class="grid"><thead><tr><th>Event</th><th>When</th><th>Punctuality</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    }).catch(()=>{ el.innerHTML='<div class="fhint">Could not load attendance.</div>'; });
+}
+window.attLoad=attLoad;
 function staffSave(ed){
   const g=id=>(document.getElementById(id)?.value||'');
   const name=g('st-name').trim(); if(!name){ toast('Enter a name'); return; }
@@ -4064,21 +4093,24 @@ async function ckPaperPDF(session){
     doc.setTextColor(255,255,255); doc.setFont('helvetica','bold'); doc.setFontSize(10.5);
     doc.text(String(area).toUpperCase(), M+10, y+13.5); y+=30;
     doc.setFont('helvetica','normal'); doc.setTextColor(...INK);
+    const notesX=PW-M-150;                    // left edge of the notes column (fixed)
+    const taskX=M+28, taskMaxW=notesX-taskX-16;   // task text is hard-bounded, real gap before notes
     list.forEach(r=>{
-      const txt=doc.splitTextToSize(String(r.task), CW-200);
-      const rh=Math.max(26, txt.length*12.5+12);
-      if(y+rh>PH-70) newPage();
+      doc.setFont('helvetica','normal'); doc.setFontSize(10.5);   // measure at the SAME size we draw
+      const txt=doc.splitTextToSize(String(r.task), taskMaxW);
+      const rh=Math.max(30, txt.length*13+15);
+      if(y+rh>PH-72){ newPage(); doc.setFont('helvetica','normal'); doc.setFontSize(10.5); }
       // checkbox
-      doc.setDrawColor(...GREEN); doc.setLineWidth(1.2); doc.rect(M+2, y+(rh-13)/2-4, 13,13);
-      // task text
+      doc.setDrawColor(...GREEN); doc.setLineWidth(1.2); doc.rect(M+2, y+8, 14,14);
+      // task text (vertically centred in the row)
       doc.setFontSize(10.5); doc.setTextColor(...INK);
-      doc.text(txt, M+26, y+((rh-txt.length*12.5)/2)+9);
-      // notes line
+      doc.text(txt, taskX, y+(rh-txt.length*13)/2+11);
+      // notes column — own line + small label, bottom-right, never overlaps the task
       doc.setDrawColor(...LINE); doc.setLineWidth(.8);
-      doc.line(PW-M-158, y+rh-9, PW-M, y+rh-9);
-      doc.setFontSize(7.5); doc.setTextColor(...MUTE); doc.text('notes', PW-M-158, y+rh-13);
+      doc.line(notesX, y+rh-10, PW-M, y+rh-10);
+      doc.setFontSize(7.5); doc.setTextColor(...MUTE); doc.text('notes', notesX, y+rh-14);
       // row divider
-      doc.setDrawColor(238,242,246); doc.line(M, y+rh, PW-M, y+rh);
+      doc.setDrawColor(238,242,246); doc.setLineWidth(.8); doc.line(M, y+rh, PW-M, y+rh);
       y+=rh+4;
     });
     y+=8;
