@@ -280,7 +280,7 @@ def announcement_post():
         if au['role'] != 'super': abort(403)              # only Super posts to ALL stores
     else:
         require_store(au, store)                           # Manager pinned to own store
-    aid = db.post_announcement(au, store, d.get('title'), d.get('body_html'), d.get('image_id'))
+    aid = db.post_announcement(au, store, d.get('title'), d.get('body_html'), d.get('image_id'), d.get('department'))
     db.write_audit(uid(au), store, 'post', 'announcement', str(aid), None, {'title': d.get('title')})
     return jsonify(ok=True, id=aid)
 

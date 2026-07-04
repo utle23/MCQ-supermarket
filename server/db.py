@@ -161,6 +161,8 @@ def init_db():
     except Exception: pass
     try: conn.execute("ALTER TABLE messages ADD COLUMN attachments_json TEXT DEFAULT '[]'")   # Gmail-style attachments
     except Exception: pass
+    try: conn.execute('ALTER TABLE announcements ADD COLUMN department TEXT')   # department-group announcements
+    except Exception: pass
     # seed stores
     for s in STORES:
         conn.execute('INSERT OR IGNORE INTO stores(id,name,active,created_at) VALUES(?,?,1,?)', (s, s, now()))
@@ -818,11 +820,12 @@ def thread_messages(au, thread_id):
         conn.close()
 
 # ---- announcements ----
-def post_announcement(au, store, title, body_html, image_id=None):
+def post_announcement(au, store, title, body_html, image_id=None, department=None):
     conn = connect()
     try:
-        conn.execute('INSERT INTO announcements(store_id,title,body_html,image_id,author,created_at) VALUES(?,?,?,?,?,?)',
-                     (store, title or '', body_html or '', image_id, _role_display(au, None if store == 'ALL' else store), now()))
+        conn.execute('INSERT INTO announcements(store_id,title,body_html,image_id,author,created_at,department) VALUES(?,?,?,?,?,?,?)',
+                     (store, title or '', body_html or '', image_id, _role_display(au, None if store == 'ALL' else store), now(),
+                      (str(department).strip() or None) if department else None))
         aid = conn.execute('SELECT last_insert_rowid() AS id').fetchone()['id']
         conn.commit()
         return aid
@@ -839,7 +842,8 @@ def list_announcements(au):
                                 (au['store_id'],)).fetchall()
         return [{'id': r['id'], 'store': r['store_id'], 'title': r['title'], 'body_html': r['body_html'],
                  'image_id': r['image_id'], 'author': r['author'], 'created_at': r['created_at'],
-                 'pinned': (r['pinned'] if 'pinned' in r.keys() else 0) or 0} for r in rows]
+                 'pinned': (r['pinned'] if 'pinned' in r.keys() else 0) or 0,
+                 'department': (r['department'] if 'department' in r.keys() else None) or ''} for r in rows]
     finally:
         conn.close()
 

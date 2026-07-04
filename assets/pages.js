@@ -124,6 +124,8 @@ function staffDisplayForDept(dept,current){
   const names=staffForDept(dept).slice(0,3).map(s=>s.name);
   return names.length?names.join(', '):(cur||'—');
 }
+function ckCanBuild(){ return isAdmin() || (State.account&&State.account.role==='staff'); }   // Dept Lead can build the checklist too
+window.ckCanBuild=ckCanBuild;
 function ckItem(it,i){ return {i,dept:it[0],area:it[1],task:it[2],when:it[3],photo:photoSpec(it[4]),meta:it[5]||{}}; }
 function ckStoreOk(r,store){
   const allowed=r&&r.meta&&Array.isArray(r.meta.stores)?r.meta.stores:null;
@@ -174,8 +176,8 @@ function renderChecklist(){
   const submitted=!viewing && !isAdmin() && ckSubmittedFor(s.dept,s.session,today) && !reopened;   // show the Done screen for staff after submit
   setCrumb('✅','Store Operation Checklist',`${superScopeLabel()} · ${s.session}${viewing?' · '+s.date:''}`);
   const chips=C.depts.map(d=>{ const m=C.deptMeta[d]||{}; const col=m.color||'#0e9f6e';
-    return `<button class="dept-chip ${d===s.dept?'active':''}" style="--dc:${col}" ${isAdmin()?`ondblclick="ckDeptHEdit('${ckJS(d)}')" title="Double-click to rename / delete"`:''} onclick="ckDept('${ckJS(d)}')">${m.icon?`<i class="fas ${m.icon}"></i> `:''}${esc(d)}</button>`; }).join('')
-    + (isAdmin()?`<button class="dept-chip ghost" onclick="ckAddDept()" title="Add department"><i class="fas fa-plus"></i>&nbsp;Add</button>`:'');
+    return `<button class="dept-chip ${d===s.dept?'active':''}" style="--dc:${col}" ${ckCanBuild()?`ondblclick="ckDeptHEdit('${ckJS(d)}')" title="Double-click to rename / delete"`:''} onclick="ckDept('${ckJS(d)}')">${m.icon?`<i class="fas ${m.icon}"></i> `:''}${esc(d)}</button>`; }).join('')
+    + (ckCanBuild()?`<button class="dept-chip ghost" onclick="ckAddDept()" title="Add department"><i class="fas fa-plus"></i>&nbsp;Add</button>`:'');
   const areaChips=ckAreaChips();
   $('#content').innerHTML=`
    <div class="page-head"><div class="ph-ic">✅</div>
@@ -194,7 +196,7 @@ function renderChecklist(){
    </div>
    <div class="ck-toolbar"><div class="dept-chips">${chips}</div></div>
    ${areaChips}
-   ${viewing?`<div class="ck-build-hint" style="border-color:#bcd; background:#eff6ff; color:#1e40af"><i class="fas fa-clock-rotate-left"></i> Viewing the submitted <b>${esc(s.session)}</b> checklist for <b>${esc(s.date)}</b> (read-only).</div>`:(isAdmin()?`<div class="ck-build-hint"><i class="fas fa-wand-magic-sparkles"></i> <b>Builder mode</b> — double-click a department, section or task to rename / delete · tap <b>+</b> to add</div>`:'')}
+   ${viewing?`<div class="ck-build-hint" style="border-color:#bcd; background:#eff6ff; color:#1e40af"><i class="fas fa-clock-rotate-left"></i> Viewing the submitted <b>${esc(s.session)}</b> checklist for <b>${esc(s.date)}</b> (read-only).</div>`:(ckCanBuild()?`<div class="ck-build-hint"><i class="fas fa-wand-magic-sparkles"></i> <b>Builder mode</b> — double-click a department, section or task to rename / delete · tap <b>+</b> to add</div>`:'')}
    ${(viewing||submitted)?'':`<div class="ck-bulk"><button class="btn sm ghost" onclick="ckAll(true)"><i class="fas fa-check-double"></i>&nbsp; Check all done</button><button class="btn sm ghost" onclick="ckAll(false)"><i class="fas fa-rotate-left"></i>&nbsp; Uncheck all</button></div>`}
    <div id="chk-prog" class="ck-progbar"></div>
    <div id="ck-temp-report"></div>
@@ -735,7 +737,18 @@ function renderAnnouncements(){
     .catch(()=>{ const f=$('#ann-feed'); if(f) f.innerHTML='<div class="empty">Could not load announcements.</div>'; });
 }
 function annPaint(filter){
-  const feed=$('#ann-feed'); if(!feed) return; const list=window.__annCache||[]; const f=filter||'';
+  const feed=$('#ann-feed'); if(!feed) return; let list=window.__annCache||[]; const f=filter||'';
+  // employees only see General posts + their OWN team group(s)
+  if(isEmployee()){ const me=myStaff(); const my=new Set([me.dept,...(Array.isArray(me.roles)?me.roles:[])].filter(Boolean).map(x=>String(x).toLowerCase()));
+    list=list.filter(a=>!a.department || my.has(String(a.department).toLowerCase())); }
+  // team chips (General + each team present in the visible feed)
+  const deptsHere=[...new Set(list.map(a=>a.department).filter(Boolean))];
+  const df=window.__annDeptF||'';
+  const deptBar=deptsHere.length?`<div class="ann-teams"><button class="ann-team ${!df?'active':''}" onclick="annDeptF('')">All</button>
+      <button class="ann-team ${df==='GEN'?'active':''}" onclick="annDeptF('GEN')">📢 General</button>
+      ${deptsHere.map(d=>`<button class="ann-team ${df===d?'active':''}" onclick="annDeptF('${ckJS(d)}')">👥 ${esc(d)}</button>`).join('')}</div>`:'';
+  if(df==='GEN') list=list.filter(a=>!a.department);
+  else if(df) list=list.filter(a=>a.department===df);
   let filterSel='';
   if(seesAllStores()){ const opt=(v,l)=>`<option value="${esc(v)}" ${f===v?'selected':''}>${esc(l)}</option>`;
     filterSel=`<div class="ann-filter"><label>Filter</label><select id="ann-filter" onchange="annPaint(this.value)">${opt('','All posts')}${opt('ALL','📢 Company-wide')}${DB.stores.map(s=>opt(s,s)).join('')}</select></div>`; }
@@ -747,13 +760,15 @@ function annPaint(filter){
     return `<div class="ann-card ${isAll?'all':''} ${pinned?'pinned':''}">
       <div class="ann-head">
         <span class="ann-ava">${esc(ini)}</span>
-        <div class="ann-hmeta"><span class="ann-scope ${isAll?'all':''}">${isAll?'📢 Company-wide':('🏪 '+esc(a.store))}</span><span class="ann-meta">${pinned?'📌 Pinned · ':''}${esc(who)} · ${esc((a.created_at||'').slice(0,16).replace('T',' '))}</span></div>
+        <div class="ann-hmeta"><span class="ann-scope ${isAll?'all':''}">${isAll?'📢 Company-wide':('🏪 '+esc(a.store))}</span>${a.department?`<span class="ann-dept">👥 ${esc(a.department)}</span>`:''}<span class="ann-meta">${pinned?'📌 Pinned · ':''}${esc(who)} · ${esc((a.created_at||'').slice(0,16).replace('T',' '))}</span></div>
         ${canManage?`<span class="ann-actions"><button class="btn xs ${pinned?'ann-pinned':''}" onclick="annPin(${a.id},${pinned?0:1})" title="${pinned?'Unpin':'Pin to top'}">📌</button><button class="btn xs" onclick="annEdit(${a.id})" title="Edit">✎</button><button class="btn xs ann-del" onclick="annDelete(${a.id})" title="Delete">✕</button></span>`:''}
       </div>
       ${a.title?`<h3 class="ann-title">${esc(a.title)}</h3>`:''}${img}<div class="ann-body">${safeHtml(a.body_html)}</div></div>`;
   }).join(''):'<div class="empty"><div class="e-ic">📣</div>No announcements yet.</div>';
-  feed.innerHTML=filterSel+`<div class="ann-list">${cards}</div>`;
+  feed.innerHTML=filterSel+deptBar+`<div class="ann-list">${cards}</div>`;
 }
+function annDeptF(v){ window.__annDeptF=v; annPaint(document.getElementById('ann-filter')?.value||''); }
+window.annDeptF=annDeptF;
 function annCompose(editId){
   _annPhoto=null;
   const ed=editId?(window.__annCache||[]).find(x=>x.id===editId):null;
@@ -761,7 +776,12 @@ function annCompose(editId){
   const scopeSel=isSuper()
     ? `<div class="field"><label>Where</label><select id="ann-store"><option value="ALL">📢 All stores (company-wide)</option>${DB.stores.map(s=>`<option>${esc(s)}</option>`).join('')}</select></div>`
     : `<div class="field"><label>Where</label><input value="MCQ ${esc(State.branch)}" disabled><input type="hidden" id="ann-store" value="${esc(State.branch)}"></div>`;
+  const depts=(DB.checklist&&DB.checklist.depts)||[];
+  const audSel=`<div class="field"><label>Audience</label><select id="ann-aud">
+      <option value="">📢 General — everyone</option>
+      ${depts.map(d=>`<option value="${esc(d)}" ${ed&&ed.department===d?'selected':''}>👥 ${esc(d)} team only</option>`).join('')}</select></div>`;
   mcqModal(ed?'✏️ Edit announcement':'📣 New announcement', `${ed?'':scopeSel}
+    ${audSel}
     <div class="field"><label>Title</label><input id="ann-title" placeholder="Headline" value="${ed?esc(ed.title||''):''}"></div>
     <div class="field"><label>Photo (optional)</label><label class="ann-photo-pick"><input type="file" accept="image/*" onchange="annPhotoPick(this)" style="display:none"><span id="ann-photo-lbl"><i class="fas fa-image"></i>&nbsp; Add a photo</span></label><div id="ann-photo-prev"></div></div>
     <div class="field"><label>Message</label><textarea id="ann-body" rows="7" placeholder="Write your announcement…"></textarea></div>
@@ -798,7 +818,8 @@ function annPost(){
     return;
   }
   toast('📣 Posting…');
-  Promise.resolve(mcqAnnPost({store, title, body_html:body, image_id:photo||null})).then(r=>{
+  const department=document.getElementById('ann-aud')?.value||'';
+  Promise.resolve(mcqAnnPost({store, title, body_html:body, image_id:photo||null, department:department||null})).then(r=>{
     toast(r&&r.ok?'📣 Announcement posted':'Could not post — please try again');
     if(State.route&&State.route.mod==='announcements') renderAnnouncements();
   }).catch(()=>toast('Could not post — please try again'));
@@ -938,18 +959,18 @@ function ckDraw(){
   let html='';
   Object.entries(groups).forEach(([dept,areas])=>{
     const dm=C.deptMeta[dept]||{};
-    if(isAdmin() && State.chk.editDeptH===dept){
+    if(ckCanBuild() && State.chk.editDeptH===dept){
       html+=`<div class="ck-dept"><div class="ck-dept-h ck-head-edit" style="--dc:${dm.color}">
         <input id="ckh-dept" class="ck-head-input" value="${esc(dept)}" onkeydown="if(event.key==='Enter')ckSaveDeptH('${ckJS(dept)}');if(event.key==='Escape')ckCancelHeads()">
         <button class="mini good" onclick="ckSaveDeptH('${ckJS(dept)}')"><i class="fas fa-check"></i></button>
         <button class="mini" onclick="ckCancelHeads()">Cancel</button>
         <button class="mini ck-del" onclick="ckDelDept('${ckJS(dept)}')"><i class="fas fa-trash"></i> Delete dept</button></div>`;
     }else{
-      html+=`<div class="ck-dept"><div class="ck-dept-h" style="--dc:${dm.color}" ${isAdmin()?`ondblclick="ckDeptHEdit('${ckJS(dept)}')" title="Double-click to rename / delete"`:''}>${dm.icon?`<i class="fas ${dm.icon}" style="color:${dm.color};margin-right:7px"></i>`:`<span class="chk-dot" style="background:${dm.color}"></span>`}${esc(dept)}<span class="ck-dept-n">${Object.values(areas).flat().length} tasks</span></div>`;
+      html+=`<div class="ck-dept"><div class="ck-dept-h" style="--dc:${dm.color}" ${ckCanBuild()?`ondblclick="ckDeptHEdit('${ckJS(dept)}')" title="Double-click to rename / delete"`:''}>${dm.icon?`<i class="fas ${dm.icon}" style="color:${dm.color};margin-right:7px"></i>`:`<span class="chk-dot" style="background:${dm.color}"></span>`}${esc(dept)}<span class="ck-dept-n">${Object.values(areas).flat().length} tasks</span></div>`;
     }
     html+=ckRespHTML(dept);
     Object.entries(areas).forEach(([area,items])=>{
-      if(isAdmin() && State.chk.editArea===dept+'::'+area){
+      if(ckCanBuild() && State.chk.editArea===dept+'::'+area){
         html+=`<div class="ck-area-h ck-head-edit">
           <input id="ckh-area" class="ck-head-input sm" value="${esc(area)}" onkeydown="if(event.key==='Enter')ckSaveSection('${ckJS(dept)}','${ckJS(area)}');if(event.key==='Escape')ckCancelHeads()">
           <button class="mini good" onclick="ckSaveSection('${ckJS(dept)}','${ckJS(area)}')"><i class="fas fa-check"></i></button>
@@ -957,10 +978,10 @@ function ckDraw(){
           <button class="mini ck-del" onclick="ckDelSection('${ckJS(dept)}','${ckJS(area)}')"><i class="fas fa-trash"></i> Delete section</button></div>`;
       }else{
         const aOk=items.filter(r=>!ckTaskIssue(r,State.chk.state[r.i])).length, aTot=items.length, aDone=aOk===aTot;
-        html+=`<div class="ck-area-h" ${isAdmin()?`ondblclick="ckSectionEdit('${ckJS(dept)}','${ckJS(area)}')" title="Double-click to rename / delete"`:''}>${esc(area)}<span class="ck-sec-badge ${aDone?'ok':'pending'}">${aDone?'✓ ':''}${aOk}/${aTot}</span></div>`;
+        html+=`<div class="ck-area-h" ${ckCanBuild()?`ondblclick="ckSectionEdit('${ckJS(dept)}','${ckJS(area)}')" title="Double-click to rename / delete"`:''}>${esc(area)}<span class="ck-sec-badge ${aDone?'ok':'pending'}">${aDone?'✓ ':''}${aOk}/${aTot}</span></div>`;
       }
       items.forEach(r=>{ const st=State.chk.state[r.i]||{}; const done=st.done;
-        if(isAdmin() && State.chk.editing===r.i){
+        if(ckCanBuild() && State.chk.editing===r.i){
           const pm = r.photo ? (r.photo.req ? {mode:'R',min:r.photo.min,max:r.photo.max} : {mode:'O',min:0,max:(r.photo.max||5)}) : {mode:'0',min:1,max:5};
           html+=`<div class="ck-task editing" id="ck-row-${r.i}"><div class="ck-edit">
             <input id="cke-task" class="ck-edit-name" value="${esc(r.task)}" placeholder="Task description">
@@ -969,6 +990,7 @@ function ckDraw(){
               <select id="cke-photo"><option value="0" ${pm.mode==='0'?'selected':''}>No photo</option><option value="O" ${pm.mode==='O'?'selected':''}>📷 Photo optional</option><option value="R" ${pm.mode==='R'?'selected':''}>📷 Photo required</option></select>
               <label class="cke-num">min <input id="cke-pmin" type="number" min="0" max="10" value="${pm.min}"></label>
               <label class="cke-num">max <input id="cke-pmax" type="number" min="1" max="10" value="${pm.max}"></label>
+              <select id="cke-note"><option value="1" ${!(r.meta&&r.meta.noNote)?'selected':''}>⚠️ Note required if unticked</option><option value="0" ${(r.meta&&r.meta.noNote)?'selected':''}>Note optional if unticked</option></select>
               <button class="btn sm primary" onclick="ckSaveTask(${r.i})">💾 Save</button>
               <button class="btn sm" onclick="ckCancelEdit()">Cancel</button>
               <button class="btn sm ck-del" onclick="ckDelTask(${r.i})"><i class="fas fa-trash"></i></button>
@@ -987,7 +1009,7 @@ function ckDraw(){
             photoHtml=`<div class="ck-photos" id="ck-photo-${r.i}"><div class="ck-photos-h">${photoChip(r.photo)} <span class="ck-pc ${have>=need?'ok':''}">${have}/${need}</span></div><div class="ck-slots">${slots}</div></div>`;
           }
         }
-        html+=`<div class="ck-task ${done?'done':''}" id="ck-row-${r.i}" ${isAdmin()?`ondblclick="ckEditTask(${r.i})" title="Double-click to edit / delete"`:''}>
+        html+=`<div class="ck-task ${done?'done':''}" id="ck-row-${r.i}" ${ckCanBuild()?`ondblclick="ckEditTask(${r.i})" title="Double-click to edit / delete"`:''}>
           <button class="ck-check" onclick="ckTick(${r.i})">${done?'✓':''}</button>
           <div class="ck-main">
             <div class="ck-text"><div class="ck-name">${esc(r.task)}</div>
@@ -995,11 +1017,11 @@ function ckDraw(){
               <input id="ck-note-${r.i}" class="ck-note" placeholder="Note / reason…" value="${esc(st.note||'')}" oninput="ckNote(${r.i},this.value)"></div>
             ${photoHtml}</div></div>`;
       });
-      if(isAdmin()) html+=`<button class="ck-add-ghost" onclick="ckAddTask('${ckJS(dept)}','${ckJS(area)}')"><i class="fas fa-plus"></i> Add task</button>`;
+      if(ckCanBuild()) html+=`<button class="ck-add-ghost" onclick="ckAddTask('${ckJS(dept)}','${ckJS(area)}')"><i class="fas fa-plus"></i> Add task</button>`;
     });
     html+=`</div>`;
   });
-  $('#chk-body').innerHTML=html||(isAdmin()
+  $('#chk-body').innerHTML=html||(ckCanBuild()
     ? `<div class="empty"><div class="e-ic">📝</div>No ${esc(State.chk.session)} tasks in ${esc(State.chk.dept)} yet.
         <div style="margin-top:12px;display:flex;gap:10px;justify-content:center;flex-wrap:wrap">
           <button class="btn primary" onclick="ckAddTask('${ckJS(State.chk.dept)}','${ckJS(ckCurrentArea())}')"><i class="fas fa-plus"></i>&nbsp; Add task</button>
@@ -1061,6 +1083,7 @@ function ckTaskIssue(r,st){
     return null;   // satisfied
   }
   if(String(st.note||'').trim()) return null;   // not done but a reason was written → OK
+  if(r.meta&&r.meta.noNote) return null;         // this task is configured as "note optional if unticked"
   return 'not done — tick it, or write a reason in the note';
 }
 // evaluate ALL sections in the current department+session (not just the visible area)
@@ -1162,6 +1185,9 @@ function ckSaveTask(i){
   if(mode==='R'){ pmin=Math.max(1,pmin); pmax=Math.max(pmax,pmin); it[4]='R'+pmin+'-'+pmax; }
   else if(mode==='O'){ it[4]= pmax>0 ? ('O'+pmax) : 'O'; }
   else it[4]=0;
+  const m=(it[5]&&typeof it[5]==='object')?it[5]:{};
+  if((document.getElementById('cke-note')?.value||'1')==='0') m.noNote=true; else delete m.noNote;
+  it[5]=m;
   State.chk.editing=null; ckPersistTemplate(); renderChecklist(); toast('✓ Task saved');
 }
 // map the active session to the task's "when" code so a task added while viewing
