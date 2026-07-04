@@ -289,7 +289,7 @@ def announcement_update():
     au = require_auth(); require_write(au)
     if au['role'] not in ('super', 'admin', 'staff'): abort(403)
     d = request.get_json(force=True, silent=True) or {}
-    ok = db.update_announcement(au, d.get('id'), d.get('title'), d.get('body_html'), d.get('image_id'), d.get('attachments'))
+    ok = db.update_announcement(au, d.get('id'), d.get('title'), d.get('body_html'), d.get('image_id'), d.get('attachments'), d.get('department'), d.get('store'))
     if ok: db.write_audit(uid(au), au.get('store_id') or '', 'update', 'announcement', str(d.get('id')), None, {'title': d.get('title')})
     return jsonify(ok=ok)
 

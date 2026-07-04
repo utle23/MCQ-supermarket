@@ -796,14 +796,15 @@ function annCompose(editId){
   window.__annEditId=ed?editId:null;
   msgAttReset();
   if(ed&&Array.isArray(ed.attachments)&&ed.attachments.length) _msgAtts=ed.attachments.map(a=>({id:a.id,name:a.name,size:a.size,mime:a.mime,state:'ok'}));
+  const curStore=ed?ed.store:'';
   const scopeSel=isSuper()
-    ? `<div class="field"><label>Where</label><select id="ann-store"><option value="ALL">📢 All stores (company-wide)</option>${DB.stores.map(s=>`<option>${esc(s)}</option>`).join('')}</select></div>`
+    ? `<div class="field"><label>Where</label><select id="ann-store"><option value="ALL" ${curStore==='ALL'?'selected':''}>📢 All stores (company-wide)</option>${DB.stores.map(s=>`<option ${curStore===s?'selected':''}>${esc(s)}</option>`).join('')}</select></div>`
     : `<div class="field"><label>Where</label><input value="MCQ ${esc(State.branch)}" disabled><input type="hidden" id="ann-store" value="${esc(State.branch)}"></div>`;
   const depts=(DB.checklist&&DB.checklist.depts)||[];
   const audSel=`<div class="field"><label>Audience</label><select id="ann-aud">
       <option value="">📢 General — everyone</option>
       ${depts.map(d=>`<option value="${esc(d)}" ${ed&&ed.department===d?'selected':''}>👥 ${esc(d)} team only</option>`).join('')}</select></div>`;
-  mcqModal(ed?'✏️ Edit announcement':'📣 New announcement', `${ed?'':scopeSel}
+  mcqModal(ed?'✏️ Edit announcement':'📣 New announcement', `${scopeSel}
     ${audSel}
     <div class="field"><label>Title</label><input id="ann-title" placeholder="Headline" value="${ed?esc(ed.title||''):''}"></div>
     <div class="field"><label>Photo (optional)</label><label class="ann-photo-pick"><input type="file" accept="image/*" onchange="annPhotoPick(this)" style="display:none"><span id="ann-photo-lbl"><i class="fas fa-image"></i>&nbsp; Add a photo</span></label><div id="ann-photo-prev"></div></div>
@@ -834,18 +835,18 @@ function annPost(){
   if(!title && !hasText && !hasImg && !msgAttPayload().length){ toast('Add a title, a message, a photo or a file'); return; }
   if(msgAttPending()){ toast('Please wait — attachment still uploading…'); return; }
   const annAtts=msgAttPayload();
+  const department=document.getElementById('ann-aud')?.value||'';   // read BEFORE the modal closes
   const photo=_annPhoto; _annPhoto=null;
   const editId=window.__annEditId; window.__annEditId=null;
   mcqModalClose();                     // close instantly — don't make the user wait for the server
   if(editId){
     toast('✏️ Saving…');
-    fetch('/api/announcement/update',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('mcq_token')||'')},body:JSON.stringify({id:editId,title,body_html:body,image_id:photo||undefined,attachments:annAtts})})
+    fetch('/api/announcement/update',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('mcq_token')||'')},body:JSON.stringify({id:editId,title,body_html:body,image_id:photo||undefined,attachments:annAtts,department:department||'',store})})
       .then(r=>r.json()).then(r=>{ toast(r&&r.ok?'✏️ Announcement updated':'Could not update'); if(State.route&&State.route.mod==='announcements') renderAnnouncements(); })
       .catch(()=>toast('Could not update'));
     return;
   }
   toast('📣 Posting…');
-  const department=document.getElementById('ann-aud')?.value||'';
   Promise.resolve(mcqAnnPost({store, title, body_html:body, image_id:photo||null, department:department||null, attachments:annAtts})).then(r=>{
     toast(r&&r.ok?'📣 Announcement posted':'Could not post — please try again');
     if(State.route&&State.route.mod==='announcements') renderAnnouncements();

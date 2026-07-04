@@ -900,14 +900,20 @@ def set_announcement_pin(au, aid, pinned):
     finally:
         conn.close()
 
-def update_announcement(au, aid, title, body_html, image_id=None, attachments=None):
-    """Edit an announcement — Super anywhere, Manager/Dept Lead within their own store."""
+def update_announcement(au, aid, title, body_html, image_id=None, attachments=None, department=None, store=None):
+    """Edit an announcement — Super anywhere, Manager/Dept Lead within their own store.
+    The audience can change too: department (team) always, store scope by Super only."""
     conn = connect()
     try:
         row = conn.execute('SELECT store_id,image_id FROM announcements WHERE id=?', (aid,)).fetchone()
         if not row or not _ann_can_manage(au, row['store_id']): return False
         conn.execute('UPDATE announcements SET title=?, body_html=?, image_id=? WHERE id=?',
                      (title or '', body_html or '', (image_id if image_id is not None else row['image_id']), aid))
+        if department is not None:
+            conn.execute('UPDATE announcements SET department=? WHERE id=?',
+                         ((str(department).strip() or None), aid))
+        if store and au.get('role') == 'super' and (store == 'ALL' or store in STORES) and store != row['store_id']:
+            conn.execute('UPDATE announcements SET store_id=? WHERE id=?', (store, aid))
         if attachments is not None:
             conn.execute('UPDATE announcements SET attachments_json=? WHERE id=?', (json.dumps(sanitize_attachments(attachments)), aid))
         conn.commit()
