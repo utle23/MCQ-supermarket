@@ -60,7 +60,11 @@
   window.mcqRefreshUnread=function(){
     if(!(window.localStorage&&localStorage.getItem('mcq_token'))) return Promise.resolve(0);
     return _authFetch('/api/messages/unread').then(function(r){ var n=(r&&r.unread)||0; var changed=(n!==window.__inboxUnread); window.__inboxUnread=n;
-      if(changed){ try{ if(window.buildSidebar)buildSidebar(); if(window.refreshInboxBadge)refreshInboxBadge(); }catch(e){} } return n; }).catch(function(){ return window.__inboxUnread; }); };
+      if(changed){ try{ if(window.buildSidebar)buildSidebar(); if(window.refreshInboxBadge)refreshInboxBadge(); }catch(e){}
+        // new mail while the Inbox page is open → refresh the list in place (no manual reload)
+        try{ if(window.State&&State.route&&State.route.mod==='inbox' && window.mcqMsgList && window.inboxPaint && !document.getElementById('mcq-modal')){
+          mcqMsgList().then(function(rr){ inboxPaint((rr&&rr.messages)||[]); }); } }catch(e){}
+      } return n; }).catch(function(){ return window.__inboxUnread; }); };
   // ---- AI Assistant (parse only; execution stays on the normal store-scoped endpoints) ----
   window.mcqAiCommand=function(text,roster,stores,rules){ return _authFetch('/api/ai-command',{method:'POST',body:JSON.stringify({text:text,roster:roster||[],stores:stores||[],rules:rules||[]})}); };
   // ---- announcements ----

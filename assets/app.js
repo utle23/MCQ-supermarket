@@ -344,13 +344,18 @@ function startUnreadPoll(){
   if(!window.mcqRefreshUnread) return;
   try{ mcqRefreshUnread(); }catch(e){}
   if(_unreadTimer) return;
+  // 12s while the tab is VISIBLE (fast message delivery), zero traffic while hidden —
+  // net server load is lower than the old always-on 30s poll, yet delivery feels 2-3x faster.
   _unreadTimer=setInterval(()=>{
     if(!State.account) return;
+    if(document.hidden) return;                       // backgrounded tab / phone in pocket: no polling
     const busy=document.getElementById('mcq-modal') || $('.drawer.open');
     const ae=document.activeElement, typing=ae&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName||'');
     if(busy||typing) return;
     try{ mcqRefreshUnread(); }catch(e){}
-  }, 30000);
+  }, 12000);
+  // coming back to the tab → check mail immediately (feels instant after unlocking the phone)
+  document.addEventListener('visibilitychange',()=>{ if(!document.hidden && State.account){ try{ mcqRefreshUnread(); }catch(e){} } });
 }
 let _liveTimer=null;
 const LIVE_ROUTES=['home','manager','analytics','history','photos','feedback','baview'];
