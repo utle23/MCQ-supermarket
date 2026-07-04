@@ -576,6 +576,7 @@ def activation_status(store):
 NAMED_SUPERS = [   # ready-made Super Admin accounts (7xxx = head office)
     ('7001', 'Diana Lam', 0), ('7002', 'Cong', 0), ('7003', 'Le Tan Khoi Nguyen', 1),
     ('7004', 'Tony Lam', 0), ('7005', 'Nhi Le', 0), ('7006', 'Kelvin', 0),
+    ('7007', 'Linh Office', 0),
 ]
 
 def seed_named_supers():
