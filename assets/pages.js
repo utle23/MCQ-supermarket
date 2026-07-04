@@ -357,7 +357,7 @@ function renderEmployeeProfile(){
       <div class="field"><label>Street address</label><input id="ep-address" value="${esc(s.address||'')}"></div>
       <div class="field"><label>Suburb / City</label><input id="ep-suburb" value="${esc(s.suburb||'')}"></div>
       <div class="field"><label>Country</label><input id="ep-country" value="${esc(s.country||'')}"></div>
-      <div class="field"><label>Store</label><input value="${esc(s.store||'')}" disabled></div>
+      <div class="field"><label>Store <span class="req">*</span></label><select id="ep-store">${(!s.store?'<option value="" selected>— Choose your store —</option>':'')+(DB.stores||[]).map(x=>`<option ${x===s.store?'selected':''}>${esc(x)}</option>`).join('')}</select></div>
       <div class="field"><label>Started</label><input value="${esc(s.start||'')}" disabled></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:14px"><button class="btn primary" onclick="empProfileSave()">💾 Save my profile</button></div>
@@ -412,10 +412,18 @@ async function empProfileSave(){
   const patch={ name:g('ep-name').trim()||s.name, phone:g('ep-phone'), email:g('ep-email'), gender:g('ep-gender'),
     dob:g('ep-dob'), cardId:g('ep-cardid'), tfn:g('ep-tfn'), address:g('ep-address'), suburb:g('ep-suburb'), country:g('ep-country') };
   if(State.empPhoto) patch.photo=State.empPhoto;
-  const r=await (window.mcqStaffProfile?mcqStaffProfile(s.store,s.id,patch):Promise.resolve({ok:false}));
+  const newStore=g('ep-store');
+  if(newStore && newStore!==s.store) patch.store=newStore;   // moving store re-homes the staff row + account
+  const r=await (window.mcqStaffProfile?mcqStaffProfile(s.store||State.branch,s.id,patch):Promise.resolve({ok:false}));
   if(r&&r.ok){
     Object.assign(s,patch); State.empPhoto=null;
     if(patch.name){ State.account.name=patch.name; State.account.staffName=patch.name; }
+    if(patch.store && patch.store!==State.branch){
+      State.branch=patch.store; State.account.branch=patch.store;
+      try{ sessionStorage.setItem('mcq_acct', JSON.stringify(State.account)); }catch(e){}
+      toast('✓ Store updated — reloading your workspace…');
+      setTimeout(()=>location.reload(),900); return;
+    }
     toast('✓ Profile saved'); if(window.buildTopbar) buildTopbar(); if(window.buildSidebar) buildSidebar(); renderEmployeeProfile();
   } else toast('Could not save — check your connection.');
 }
@@ -687,7 +695,7 @@ function mcqCkUploadAdapter(editor){
   repo.createUploadAdapter=loader=>({
     upload(){ return loader.file.then(f=>{
       const raw=()=>new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res({default:r.result}); r.onerror=rej; r.readAsDataURL(f); });
-      return (window.compressImage?compressImage(f,1280,.78).then(d=>({default:d})).catch(raw):raw());
+      return (window.compressImage?compressImage(f,1600,.85).then(d=>({default:d})).catch(raw):raw());
     }); },
     abort(){}
   });
@@ -763,7 +771,7 @@ function annPaint(filter){
         <div class="ann-hmeta"><span class="ann-scope ${isAll?'all':''}">${isAll?'📢 Company-wide':('🏪 '+esc(a.store))}</span>${a.department?`<span class="ann-dept">👥 ${esc(a.department)}</span>`:''}<span class="ann-meta">${pinned?'📌 Pinned · ':''}${esc(who)} · ${esc((a.created_at||'').slice(0,16).replace('T',' '))}</span></div>
         ${canManage?`<span class="ann-actions"><button class="btn xs ${pinned?'ann-pinned':''}" onclick="annPin(${a.id},${pinned?0:1})" title="${pinned?'Unpin':'Pin to top'}">📌</button><button class="btn xs" onclick="annEdit(${a.id})" title="Edit">✎</button><button class="btn xs ann-del" onclick="annDelete(${a.id})" title="Delete">✕</button></span>`:''}
       </div>
-      ${a.title?`<h3 class="ann-title">${esc(a.title)}</h3>`:''}${img}<div class="ann-body">${safeHtml(a.body_html)}</div></div>`;
+      ${a.title?`<h3 class="ann-title">${esc(a.title)}</h3>`:''}${img}<div class="ann-body">${safeHtml(a.body_html)}</div>${attCards(a.attachments)}</div>`;
   }).join(''):'<div class="empty"><div class="e-ic">📣</div>No announcements yet.</div>';
   feed.innerHTML=filterSel+deptBar+`<div class="ann-list">${cards}</div>`;
 }
@@ -773,6 +781,8 @@ function annCompose(editId){
   _annPhoto=null;
   const ed=editId?(window.__annCache||[]).find(x=>x.id===editId):null;
   window.__annEditId=ed?editId:null;
+  msgAttReset();
+  if(ed&&Array.isArray(ed.attachments)&&ed.attachments.length) _msgAtts=ed.attachments.map(a=>({id:a.id,name:a.name,size:a.size,mime:a.mime,state:'ok'}));
   const scopeSel=isSuper()
     ? `<div class="field"><label>Where</label><select id="ann-store"><option value="ALL">📢 All stores (company-wide)</option>${DB.stores.map(s=>`<option>${esc(s)}</option>`).join('')}</select></div>`
     : `<div class="field"><label>Where</label><input value="MCQ ${esc(State.branch)}" disabled><input type="hidden" id="ann-store" value="${esc(State.branch)}"></div>`;
@@ -785,8 +795,10 @@ function annCompose(editId){
     <div class="field"><label>Title</label><input id="ann-title" placeholder="Headline" value="${ed?esc(ed.title||''):''}"></div>
     <div class="field"><label>Photo (optional)</label><label class="ann-photo-pick"><input type="file" accept="image/*" onchange="annPhotoPick(this)" style="display:none"><span id="ann-photo-lbl"><i class="fas fa-image"></i>&nbsp; Add a photo</span></label><div id="ann-photo-prev"></div></div>
     <div class="field"><label>Message</label><textarea id="ann-body" rows="7" placeholder="Write your announcement…"></textarea></div>
+    ${msgAttHtml()}
     <div style="display:flex;gap:10px;margin-top:10px"><button class="btn primary" onclick="annPost()"><i class="fas fa-bullhorn"></i>&nbsp; ${ed?'Save changes':'Post'}</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>`, {wide:true});
   if(window.ckMount) ckMount('ann-body');
+  setTimeout(msgAttPaint,80);
   if(ed) setTimeout(()=>{ if(window.ckSet) ckSet('ann-body', ed.body_html||''); },600);
 }
 function annEdit(id){ annCompose(id); }
@@ -795,7 +807,7 @@ async function annPhotoPick(inp){
   const file=inp.files&&inp.files[0]; if(!file) return;
   // upload to the server photo store and keep only a tiny id (like checklist/report photos) —
   // this keeps the announcement post small so it saves reliably and the feed loads fast.
-  let ref; try{ const d=await compressImage(file,1280,.78); ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d; }catch(e){ try{ ref=URL.createObjectURL(file); }catch(_){ ref=null; } }
+  let ref; try{ const d=await compressImage(file,1920,.88); ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d; }catch(e){ try{ ref=URL.createObjectURL(file); }catch(_){ ref=null; } }
   _annPhoto=ref;   // a server photo id (small) — resolved by imgSrc() for every reader
   const p=document.getElementById('ann-photo-prev'); if(p) p.innerHTML=ref?`<img src="${imgSrc(ref)}" class="ann-prev-img">`:'';
   const l=document.getElementById('ann-photo-lbl'); if(l) l.innerHTML='<i class="fas fa-check"></i>&nbsp; Photo added — tap to change';
@@ -806,20 +818,22 @@ function annPost(){
   const body=(window.ckHtml?ckHtml('ann-body'):(document.getElementById('ann-body')?.value||''));
   const hasText=!!String(body).replace(/<[^>]+>/g,'').trim();
   const hasImg=/<img/i.test(body)||!!_annPhoto;   // an image (in the editor OR the upload) is valid content — no title/heading required
-  if(!title && !hasText && !hasImg){ toast('Add a title, a message, or a photo'); return; }
+  if(!title && !hasText && !hasImg && !msgAttPayload().length){ toast('Add a title, a message, a photo or a file'); return; }
+  if(msgAttPending()){ toast('Please wait — attachment still uploading…'); return; }
+  const annAtts=msgAttPayload();
   const photo=_annPhoto; _annPhoto=null;
   const editId=window.__annEditId; window.__annEditId=null;
   mcqModalClose();                     // close instantly — don't make the user wait for the server
   if(editId){
     toast('✏️ Saving…');
-    fetch('/api/announcement/update',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('mcq_token')||'')},body:JSON.stringify({id:editId,title,body_html:body,image_id:photo||undefined})})
+    fetch('/api/announcement/update',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('mcq_token')||'')},body:JSON.stringify({id:editId,title,body_html:body,image_id:photo||undefined,attachments:annAtts})})
       .then(r=>r.json()).then(r=>{ toast(r&&r.ok?'✏️ Announcement updated':'Could not update'); if(State.route&&State.route.mod==='announcements') renderAnnouncements(); })
       .catch(()=>toast('Could not update'));
     return;
   }
   toast('📣 Posting…');
   const department=document.getElementById('ann-aud')?.value||'';
-  Promise.resolve(mcqAnnPost({store, title, body_html:body, image_id:photo||null, department:department||null})).then(r=>{
+  Promise.resolve(mcqAnnPost({store, title, body_html:body, image_id:photo||null, department:department||null, attachments:annAtts})).then(r=>{
     toast(r&&r.ok?'📣 Announcement posted':'Could not post — please try again');
     if(State.route&&State.route.mod==='announcements') renderAnnouncements();
   }).catch(()=>toast('Could not post — please try again'));

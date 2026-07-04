@@ -163,6 +163,8 @@ def init_db():
     except Exception: pass
     try: conn.execute('ALTER TABLE announcements ADD COLUMN department TEXT')   # department-group announcements
     except Exception: pass
+    try: conn.execute("ALTER TABLE announcements ADD COLUMN attachments_json TEXT DEFAULT '[]'")   # announcement files
+    except Exception: pass
     # seed stores
     for s in STORES:
         conn.execute('INSERT OR IGNORE INTO stores(id,name,active,created_at) VALUES(?,?,1,?)', (s, s, now()))
@@ -293,21 +295,31 @@ def create_staff_account(store, staff_id, name, reset=False):
 
 def update_staff_profile(store, staff_id, patch):
     """Merge a patch into ONE staff row (used by employee self-edit — avoids posting the
-    whole store blob, keeping concurrency safe)."""
+    whole store blob, keeping concurrency safe). Supports MOVING to another store:
+    the staff row is re-homed and the person's account + live tokens follow."""
     conn = connect()
     try:
-        row = conn.execute('SELECT data_json FROM staff WHERE store_id=? AND id=?', (store, str(staff_id))).fetchone()
+        sid = str(staff_id)
+        row = conn.execute('SELECT data_json FROM staff WHERE store_id=? AND id=?', (store, sid)).fetchone()
         cur = {}
         if row and row['data_json']:
             try: cur = json.loads(row['data_json'])
             except Exception: cur = {}
         if isinstance(patch, dict):
             for k in patch: cur[k] = patch[k]
-        cur['store'] = store; cur['id'] = str(staff_id)
-        conn.execute('INSERT OR REPLACE INTO staff(id,store_id,data_json) VALUES(?,?,?)', (str(staff_id), store, json.dumps(cur)))
+        new_store = str((patch or {}).get('store') or '') if isinstance(patch, dict) else ''
+        target = new_store if (new_store and new_store in STORES and new_store != store) else store
+        cur['store'] = target; cur['id'] = sid
+        conn.execute('INSERT OR REPLACE INTO staff(id,store_id,data_json) VALUES(?,?,?)', (sid, target, json.dumps(cur)))
+        if target != store:
+            conn.execute('DELETE FROM staff WHERE store_id=? AND id=?', (store, sid))
+            conn.execute('UPDATE accounts SET store_id=?, updated_at=? WHERE staff_id=?', (target, now(), sid))
+            conn.execute('UPDATE tokens SET store_id=? WHERE staff_id=?', (target, sid))          # session follows
+            conn.execute('UPDATE staff_accounts SET store_id=? WHERE store_id=? AND staff_id=?', (target, store, sid))
         # keep the account's cached name in sync when the employee renames themselves
         if isinstance(patch, dict) and patch.get('name'):
-            conn.execute('UPDATE staff_accounts SET staff_name=? WHERE store_id=? AND staff_id=?', (patch['name'], store, str(staff_id)))
+            conn.execute('UPDATE staff_accounts SET staff_name=? WHERE store_id=? AND staff_id=?', (patch['name'], target, sid))
+            conn.execute('UPDATE accounts SET name=? WHERE staff_id=?', (patch['name'], sid))
         conn.commit()
         return cur
     finally:
@@ -615,6 +627,10 @@ def can_download_file(au, file_id):
                 if row['store_id'] == store and (row['to_managers'] == 1 or row['from_role'] in ('admin', 'staff')): return True
             elif r == 'employee':
                 if row['to_staff_id'] == sid or row['from_staff_id'] == sid or (row['store_id'] == store and row['to_store_all'] == 1): return True
+        # attached to an announcement? readable by that announcement's audience
+        for row in conn.execute('SELECT store_id FROM announcements WHERE attachments_json LIKE ? LIMIT 5',
+                                ('%"' + str(file_id) + '"%',)).fetchall():
+            if row['store_id'] == 'ALL' or can_access(au, row['store_id']): return True
         # not attached to any message yet → only the uploader's store (compose-time preview)
         f = conn.execute('SELECT store_id FROM files WHERE id=?', (str(file_id),)).fetchone()
         return bool(f and can_access(au, f['store_id']))
@@ -678,9 +694,8 @@ def thread_store(thread_id):
     finally:
         conn.close()
 
-def send_message(au, store, kind, subject, body_html, to_staff_id=None, to_store_all=False,
-                 thread_id=None, to_super=None, to_managers=None, attachments=None):
-    # attachments: sanitized [{id,name,size,mime}] — ids must exist in the files table
+def sanitize_attachments(attachments):
+    """[{id,...}] -> verified [{id,name,mime,size}] — ids must exist in the files table."""
     atts = []
     if isinstance(attachments, list):
         conn0 = connect()
@@ -691,6 +706,11 @@ def send_message(au, store, kind, subject, body_html, to_staff_id=None, to_store
                 if row: atts.append({'id': row['id'], 'name': row['name'], 'mime': row['mime'], 'size': row['size']})
         finally:
             conn0.close()
+    return atts
+
+def send_message(au, store, kind, subject, body_html, to_staff_id=None, to_store_all=False,
+                 thread_id=None, to_super=None, to_managers=None, attachments=None):
+    atts = sanitize_attachments(attachments)
     conn = connect()
     try:
         ts, tm, ta = _route_for(kind)
@@ -820,12 +840,13 @@ def thread_messages(au, thread_id):
         conn.close()
 
 # ---- announcements ----
-def post_announcement(au, store, title, body_html, image_id=None, department=None):
+def post_announcement(au, store, title, body_html, image_id=None, department=None, attachments=None):
+    atts = sanitize_attachments(attachments)
     conn = connect()
     try:
-        conn.execute('INSERT INTO announcements(store_id,title,body_html,image_id,author,created_at,department) VALUES(?,?,?,?,?,?,?)',
+        conn.execute('INSERT INTO announcements(store_id,title,body_html,image_id,author,created_at,department,attachments_json) VALUES(?,?,?,?,?,?,?,?)',
                      (store, title or '', body_html or '', image_id, _role_display(au, None if store == 'ALL' else store), now(),
-                      (str(department).strip() or None) if department else None))
+                      (str(department).strip() or None) if department else None, json.dumps(atts)))
         aid = conn.execute('SELECT last_insert_rowid() AS id').fetchone()['id']
         conn.commit()
         return aid
@@ -843,7 +864,8 @@ def list_announcements(au):
         return [{'id': r['id'], 'store': r['store_id'], 'title': r['title'], 'body_html': r['body_html'],
                  'image_id': r['image_id'], 'author': r['author'], 'created_at': r['created_at'],
                  'pinned': (r['pinned'] if 'pinned' in r.keys() else 0) or 0,
-                 'department': (r['department'] if 'department' in r.keys() else None) or ''} for r in rows]
+                 'department': (r['department'] if 'department' in r.keys() else None) or '',
+                 'attachments': (json.loads(r['attachments_json']) if ('attachments_json' in r.keys() and r['attachments_json']) else [])} for r in rows]
     finally:
         conn.close()
 
@@ -862,7 +884,7 @@ def set_announcement_pin(au, aid, pinned):
     finally:
         conn.close()
 
-def update_announcement(au, aid, title, body_html, image_id=None):
+def update_announcement(au, aid, title, body_html, image_id=None, attachments=None):
     """Edit an announcement — Super anywhere, Manager/Dept Lead within their own store."""
     conn = connect()
     try:
@@ -870,6 +892,8 @@ def update_announcement(au, aid, title, body_html, image_id=None):
         if not row or not _ann_can_manage(au, row['store_id']): return False
         conn.execute('UPDATE announcements SET title=?, body_html=?, image_id=? WHERE id=?',
                      (title or '', body_html or '', (image_id if image_id is not None else row['image_id']), aid))
+        if attachments is not None:
+            conn.execute('UPDATE announcements SET attachments_json=? WHERE id=?', (json.dumps(sanitize_attachments(attachments)), aid))
         conn.commit()
         return True
     finally:

@@ -280,7 +280,7 @@ def announcement_post():
         if au['role'] != 'super': abort(403)              # only Super posts to ALL stores
     else:
         require_store(au, store)                           # Manager pinned to own store
-    aid = db.post_announcement(au, store, d.get('title'), d.get('body_html'), d.get('image_id'), d.get('department'))
+    aid = db.post_announcement(au, store, d.get('title'), d.get('body_html'), d.get('image_id'), d.get('department'), d.get('attachments'))
     db.write_audit(uid(au), store, 'post', 'announcement', str(aid), None, {'title': d.get('title')})
     return jsonify(ok=True, id=aid)
 
@@ -289,7 +289,7 @@ def announcement_update():
     au = require_auth(); require_write(au)
     if au['role'] not in ('super', 'admin', 'staff'): abort(403)
     d = request.get_json(force=True, silent=True) or {}
-    ok = db.update_announcement(au, d.get('id'), d.get('title'), d.get('body_html'), d.get('image_id'))
+    ok = db.update_announcement(au, d.get('id'), d.get('title'), d.get('body_html'), d.get('image_id'), d.get('attachments'))
     if ok: db.write_audit(uid(au), au.get('store_id') or '', 'update', 'announcement', str(d.get('id')), None, {'title': d.get('title')})
     return jsonify(ok=ok)
 
