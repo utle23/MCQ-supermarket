@@ -366,9 +366,16 @@ def send_message(au, store, kind, subject, body_html, to_staff_id=None, to_store
             if root is not None:
                 ts = 1 if (root['to_super'] or root['from_role'] in ('super', 'ba')) else 0
                 tm = 1 if (root['to_managers'] or root['from_role'] in ('admin', 'staff')) else 0
-                # keep the employee participant in the loop when management replies
-                if not to_staff_id and au.get('role') != 'employee':
-                    to_staff_id = root['to_staff_id'] or root['from_staff_id']
+                if not to_staff_id:
+                    me = str(au.get('staff_id') or '')
+                    if au.get('role') != 'employee':
+                        # keep the employee participant in the loop when management replies
+                        to_staff_id = root['to_staff_id'] or root['from_staff_id']
+                    else:
+                        # employee replying: address the OTHER employee in a person-to-person thread
+                        for cand in (root['from_staff_id'], root['to_staff_id']):
+                            if cand and str(cand) != me:
+                                to_staff_id = cand; break
         conn.execute('''INSERT INTO messages(store_id,from_role,from_name,from_staff_id,to_staff_id,
             to_super,to_managers,to_store_all,kind,subject,body_html,thread_id,read_by_json,created_at)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
@@ -400,8 +407,10 @@ def _inbox_query(au):
     if r in ('admin', 'staff'):
         return ('SELECT * FROM messages WHERE store_id=? AND to_managers=1 ORDER BY id DESC LIMIT ?', (au['store_id'], 500))
     if r == 'employee':
-        return ('SELECT * FROM messages WHERE store_id=? AND (to_staff_id=? OR to_store_all=1) ORDER BY id DESC LIMIT ?',
-                (au['store_id'], str(au.get('staff_id')), 500))
+        # personal mail matches by staff id GLOBALLY (ids are store-prefixed/unique) so a reply
+        # from another store's management still reaches the sender; broadcasts stay store-scoped
+        return ('SELECT * FROM messages WHERE (to_staff_id=? OR (store_id=? AND to_store_all=1)) ORDER BY id DESC LIMIT ?',
+                (str(au.get('staff_id')), au['store_id'], 500))
     return (None, None)
 
 def _list_body(html):
@@ -462,7 +471,7 @@ def thread_messages(au, thread_id):
         def visible(row):
             if r in ('super', 'ba'): return row['to_super'] == 1 or row['from_role'] in ('super', 'ba')
             if r in ('admin', 'staff'): return row['store_id'] == store and (row['to_managers'] == 1 or row['from_role'] in ('admin', 'staff'))
-            if r == 'employee': return row['store_id'] == store and (row['to_staff_id'] == sid or row['to_store_all'] == 1 or row['from_staff_id'] == sid)
+            if r == 'employee': return row['to_staff_id'] == sid or row['from_staff_id'] == sid or (row['store_id'] == store and row['to_store_all'] == 1)
             return False
         return [_msg_dict(x, key) for x in rows if visible(x)]
     finally:

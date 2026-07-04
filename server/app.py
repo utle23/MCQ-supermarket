@@ -118,14 +118,22 @@ def message_send():
     au = require_auth(); require_write(au)   # Chú Ba (ba) can't send
     d = request.get_json(force=True, silent=True) or {}
     role = au['role']; kind = d.get('kind') or 'document'
-    # store is pinned to the caller's own store; only Super may target another store
+    # store is pinned to the caller's own store; only Super may target another store —
+    # except a 'message' (question), which may be aimed at another store's management mailbox
     store = d.get('store') if role == 'super' else au['store_id']
     if not store: store = au['store_id']
-    # a reply belongs to its THREAD — resolve the store from the thread's first message, so
-    # Super (whose own store is 'ALL') can reply without the client having to pass a store
-    if kind == 'reply' and d.get('thread_id') and (not store or store == 'ALL'):
-        store = db.thread_store(d.get('thread_id')) or store
-    require_store(au, store)
+    if kind == 'reply' and d.get('thread_id') and db.thread_store(d.get('thread_id')):
+        # a reply belongs to its THREAD's store (Super has no store of its own, and a sender
+        # replying in a cross-store thread must land in that thread, not their home store).
+        # Access rule: you may only reply to a thread you can actually see.
+        if not db.thread_messages(au, d.get('thread_id')): abort(403)
+        store = db.thread_store(d.get('thread_id'))
+    elif kind == 'message' and role != 'super' and d.get('store') and d.get('store') != store:
+        # deliberate cross-store question — mailbox delivery only, never a broadcast
+        if d.get('store') not in db.STORES: abort(404)
+        store = d.get('store'); d['to_store_all'] = False
+    else:
+        require_store(au, store)
     if kind not in _MSG_ALLOWED.get(role, set()): abort(403)
     res = db.send_message(au, store, kind, d.get('subject'), d.get('body_html'),
                           to_staff_id=d.get('to_staff_id'), to_store_all=bool(d.get('to_store_all')),

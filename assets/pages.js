@@ -511,22 +511,45 @@ function inboxSearch(v){ window.__inboxQ=v; inboxPaint(); const el=document.getE
 window.inboxSearch=inboxSearch;
 window.renderInbox=renderInbox; window.inboxOpen=inboxOpen; window.inboxReply=inboxReply; window.inboxSetStore=inboxSetStore;
 window.composeOpen=composeOpen; window.composeStoreChange=composeStoreChange; window.composeSend=composeSend;
-// staff → their store's Manager + Super (a message, not a reply)
+// staff compose — pick WHO receives it: a store's management, Head Office (Super), or one person
 function staffCompose(){
+  const my=State.branch, me=String((State.account&&State.account.staffId)||'');
+  const people=(DB.staff||[]).filter(s=>s.store===my && s.active!==0 && String(s.id)!==me);
   mcqModal('✉️ Message management', `
-    <div class="ai-asst-note" style="margin-bottom:8px">Goes to your store’s Manager and Super Admin. They can reply here in your inbox.</div>
+    <div class="ai-asst-note" style="margin-bottom:8px">Choose who receives your message — they can reply here in your inbox.</div>
+    <div class="grid2">
+      <div class="field"><label>Send to</label><select id="scm-level" onchange="staffComposeLevel()">
+        <option value="mgmt">🏬 Store management (Manager &amp; Dept Lead)</option>
+        <option value="super">👑 Head Office (Super Admin)</option>
+        ${people.length?`<option value="person">👤 A specific person (my store)</option>`:''}</select></div>
+      <div class="field" id="scm-store-row"><label>Store</label><select id="scm-store">${(DB.stores||[my]).map(s=>`<option ${s===my?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
+      <div class="field" id="scm-person-row" style="display:none"><label>Person</label><select id="scm-person">${people.map(s=>`<option value="${esc(s.id)}">${esc(s.name)}${s.role?(' · '+esc(s.role)):''}</option>`).join('')}</select></div>
+    </div>
     <div class="field"><label>Subject</label><input id="scm-subj" placeholder="e.g. Shift swap request"></div>
     <div class="field"><label>Message</label><textarea id="scm-body" rows="7" placeholder="Write your message…"></textarea></div>
     <div style="display:flex;gap:10px;margin-top:10px"><button class="btn primary" onclick="staffComposeSend()"><i class="fas fa-paper-plane"></i>&nbsp; Send</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>`, {wide:true});
   if(window.ckMount) ckMount('scm-body');
 }
+function staffComposeLevel(){
+  const lvl=document.getElementById('scm-level')?.value||'mgmt';
+  const st=document.getElementById('scm-store-row'), pr=document.getElementById('scm-person-row');
+  if(st) st.style.display=(lvl==='mgmt')?'':'none';        // store choice only matters for management mail
+  if(pr) pr.style.display=(lvl==='person')?'':'none';
+}
 function staffComposeSend(){
   const subj=(document.getElementById('scm-subj')?.value||'').trim();
   const body=(window.ckHtml?ckHtml('scm-body'):(document.getElementById('scm-body')?.value||''));
   if(!msgHasContent(body)){ toast('Write a message first'); return; }
-  if(window.mcqMsgSend) mcqMsgSend({kind:'message', subject:subj||'Message', body_html:body}).then(r=>{ toast(r&&r.ok?'✉️ Sent to management':'Could not send'); });
+  const lvl=document.getElementById('scm-level')?.value||'mgmt';
+  const payload={kind:'message', subject:subj||'Message', body_html:body};
+  let sentTo='management';
+  if(lvl==='super'){ payload.to_super=true; payload.to_managers=false; sentTo='Head Office'; }
+  else if(lvl==='person'){ const p=document.getElementById('scm-person'); payload.to_staff_id=p?.value||''; payload.to_super=false; payload.to_managers=false; sentTo=p?.selectedOptions[0]?.textContent||'the person'; if(!payload.to_staff_id){ toast('Pick a person'); return; } }
+  else { const st=document.getElementById('scm-store')?.value||State.branch; payload.store=st; payload.to_managers=true; payload.to_super=false; sentTo=st+' management'; }
+  if(window.mcqMsgSend) mcqMsgSend(payload).then(r=>{ toast(r&&r.ok?('✉️ Sent to '+sentTo):'Could not send'); });
   mcqModalClose();
 }
+window.staffComposeLevel=staffComposeLevel;
 window.staffCompose=staffCompose; window.staffComposeSend=staffComposeSend;
 
 /* ============================================================ CKEditor 5 (lazy CDN, graceful fallback)
