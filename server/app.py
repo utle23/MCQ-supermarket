@@ -121,6 +121,10 @@ def message_send():
     # store is pinned to the caller's own store; only Super may target another store
     store = d.get('store') if role == 'super' else au['store_id']
     if not store: store = au['store_id']
+    # a reply belongs to its THREAD — resolve the store from the thread's first message, so
+    # Super (whose own store is 'ALL') can reply without the client having to pass a store
+    if kind == 'reply' and d.get('thread_id') and (not store or store == 'ALL'):
+        store = db.thread_store(d.get('thread_id')) or store
     require_store(au, store)
     if kind not in _MSG_ALLOWED.get(role, set()): abort(403)
     res = db.send_message(au, store, kind, d.get('subject'), d.get('body_html'),

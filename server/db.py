@@ -324,7 +324,7 @@ def _route_for(kind):
     if k == 'feedback':  return (1, 0, 0)   # confidential to the owner/super only
     if k == 'issue':     return (1, 1, 0)   # super + this store's Manager/Dept-Lead
     if k == 'violation': return (1, 0, 0)   # super sees every violation; employee gets it via to_staff_id
-    if k == 'reply':     return (1, 1, 0)   # replies visible to super + store managers
+    if k == 'reply':     return (1, 1, 0)   # fallback only — send_message re-routes replies to the THREAD's own audience
     if k == 'message':   return (1, 1, 0)   # staff → their store's Manager/Dept-Lead + Super
     return (0, 0, 0)                        # document/other → explicit targeting only
 
@@ -339,6 +339,16 @@ def get_my_password(au):
     finally:
         conn.close()
 
+def thread_store(thread_id):
+    """The store a thread lives in (from its first message) — used to route replies."""
+    conn = connect()
+    try:
+        row = conn.execute('SELECT store_id FROM messages WHERE thread_id=? ORDER BY id ASC LIMIT 1',
+                           (thread_id,)).fetchone()
+        return row['store_id'] if row else None
+    finally:
+        conn.close()
+
 def send_message(au, store, kind, subject, body_html, to_staff_id=None, to_store_all=False,
                  thread_id=None, to_super=None, to_managers=None):
     conn = connect()
@@ -347,6 +357,18 @@ def send_message(au, store, kind, subject, body_html, to_staff_id=None, to_store
         if to_super is not None: ts = 1 if to_super else 0
         if to_managers is not None: tm = 1 if to_managers else 0
         if to_store_all: ta = 1
+        # PRIVACY: a reply stays within the thread's ORIGINAL audience. If Super messaged a staff
+        # member privately, the staff reply must go back to Super only — never into the store
+        # managers' inbox (and a confidential-feedback thread must never leak to managers).
+        if kind == 'reply' and thread_id:
+            root = conn.execute('SELECT * FROM messages WHERE thread_id=? ORDER BY id ASC LIMIT 1',
+                                (thread_id,)).fetchone()
+            if root is not None:
+                ts = 1 if (root['to_super'] or root['from_role'] in ('super', 'ba')) else 0
+                tm = 1 if (root['to_managers'] or root['from_role'] in ('admin', 'staff')) else 0
+                # keep the employee participant in the loop when management replies
+                if not to_staff_id and au.get('role') != 'employee':
+                    to_staff_id = root['to_staff_id'] or root['from_staff_id']
         conn.execute('''INSERT INTO messages(store_id,from_role,from_name,from_staff_id,to_staff_id,
             to_super,to_managers,to_store_all,kind,subject,body_html,thread_id,read_by_json,created_at)
             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',

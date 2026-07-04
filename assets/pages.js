@@ -543,7 +543,22 @@ let _ckLoadP=null;
 const CKE_VER='43.3.1';
 const CKE_JS='assets/vendor/ckeditor5/ckeditor5.umd.js?v='+CKE_VER;
 const CKE_CSS='assets/vendor/ckeditor5/ckeditor5.css?v='+CKE_VER;
-const CKE_WANT=['Essentials','Paragraph','Heading','Bold','Italic','Underline','Strikethrough','Code','Subscript','Superscript','Link','AutoLink','List','TodoList','ListProperties','BlockQuote','Alignment','Font','FontFamily','FontSize','FontColor','FontBackgroundColor','Highlight','RemoveFormat','HorizontalLine','SpecialCharacters','SpecialCharactersEssentials','Indent','IndentBlock','Table','TableToolbar','TableProperties','TableCellProperties','TableColumnResize','TableCaption','Image','ImageToolbar','ImageCaption','ImageStyle','ImageResize','ImageInsert','ImageUpload','Base64UploadAdapter','LinkImage','MediaEmbed','PasteFromOffice','Autoformat','FindAndReplace','SourceEditing','CodeBlock','WordCount','PageBreak'];
+const CKE_WANT=['Essentials','Paragraph','Heading','Bold','Italic','Underline','Strikethrough','Code','Subscript','Superscript','Link','AutoLink','List','TodoList','ListProperties','BlockQuote','Alignment','Font','FontFamily','FontSize','FontColor','FontBackgroundColor','Highlight','RemoveFormat','HorizontalLine','SpecialCharacters','SpecialCharactersEssentials','Indent','IndentBlock','Table','TableToolbar','TableProperties','TableCellProperties','TableColumnResize','TableCaption','Image','ImageToolbar','ImageCaption','ImageStyle','ImageResize','ImageInsert','ImageUpload','LinkImage','MediaEmbed','PasteFromOffice','Autoformat','FindAndReplace','SourceEditing','CodeBlock','WordCount','PageBreak'];
+// Editor image handling: Base64UploadAdapter is deliberately NOT used — it embeds photos at FULL
+// size (a phone photo = 3-8MB of base64), which made posting announcements/messages with a picture
+// very slow and bloated every reader's feed. This adapter compresses to <=1280px JPEG first
+// (same pipeline as checklist/report photos), so an inserted photo is ~10-30x smaller.
+function mcqCkUploadAdapter(editor){
+  const repo=editor.plugins&&editor.plugins.has&&editor.plugins.has('FileRepository')?editor.plugins.get('FileRepository'):null;
+  if(!repo) return;
+  repo.createUploadAdapter=loader=>({
+    upload(){ return loader.file.then(f=>{
+      const raw=()=>new Promise((res,rej)=>{ const r=new FileReader(); r.onload=()=>res({default:r.result}); r.onerror=rej; r.readAsDataURL(f); });
+      return (window.compressImage?compressImage(f,1280,.78).then(d=>({default:d})).catch(raw):raw());
+    }); },
+    abort(){}
+  });
+}
 const CKE_TOOLBAR=['heading','|','fontfamily','fontsize','fontColor','fontBackgroundColor','highlight','|','bold','italic','underline','strikethrough','subscript','superscript','code','removeFormat','|','link','blockQuote','codeBlock','|','bulletedList','numberedList','todoList','|','alignment','outdent','indent','|','insertImage','insertTable','mediaEmbed','horizontalLine','specialCharacters','pageBreak','|','findAndReplace','sourceEditing','|','undo','redo'];
 function ensureCKE(){
   if(window.CKEDITOR && window.CKEDITOR.ClassicEditor) return Promise.resolve(window.CKEDITOR);
@@ -558,7 +573,7 @@ function ckMount(elId){
     const node=document.getElementById(elId);
     if(!CK||!CK.ClassicEditor||!node) return;   // no CDN / offline → keep the plain textarea
     const plugins=CKE_WANT.map(n=>CK[n]).filter(Boolean);   // only load plugins actually present (version-proof)
-    CK.ClassicEditor.create(node,{ licenseKey:'GPL', plugins, toolbar:{items:CKE_TOOLBAR, shouldNotGroupWhenFull:true},
+    CK.ClassicEditor.create(node,{ licenseKey:'GPL', plugins, extraPlugins:[mcqCkUploadAdapter], toolbar:{items:CKE_TOOLBAR, shouldNotGroupWhenFull:true},
       image:{toolbar:['imageTextAlternative','toggleImageCaption','imageStyle:inline','imageStyle:block','resizeImage']},
       table:{contentToolbar:['tableColumn','tableRow','mergeTableCells','tableProperties','tableCellProperties']},
       link:{addTargetToExternalLinks:true, defaultProtocol:'https://'}
