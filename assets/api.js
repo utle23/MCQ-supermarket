@@ -129,6 +129,15 @@
       .catch(function(){ return {ok:false, error:'Cannot reach server'}; });
   };
   FB.logout = function(){ setToken(''); };
+  // ---- Face ID / passkey device credentials (biometric unlocks a server-verified sign-in) ----
+  window.mcqDeviceEnroll=function(credId,label){ return _authFetch('/api/device/enroll',{method:'POST',body:JSON.stringify({cred_id:credId,label:label})}); };
+  window.mcqDeviceRevoke=function(deviceId){ return _authFetch('/api/device/revoke',{method:'POST',body:JSON.stringify({device_id:deviceId})}); };
+  window.mcqDeviceLogin=function(deviceId,secret){
+    return fetch(api('/api/device/login'),{method:'POST',headers:headers(true),body:JSON.stringify({device_id:deviceId,secret:secret})})
+      .then(function(r){ return r.json().catch(function(){return {ok:false};}); })
+      .then(function(d){ if(d&&d.ok&&d.token){ setToken(d.token); FB._role=d.role; FB._stores=d.stores||[]; } return d||{ok:false}; })
+      .catch(function(){ return {ok:false, error:'Cannot reach server'}; });
+  };
 
   // ---- per-store state ----
   function getState(store){ return fetch(api('/api/state/'+encodeURIComponent(store)), {headers:headers()})

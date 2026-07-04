@@ -495,16 +495,26 @@ async function faceIdLogin(){
   const modal=$('#fid-modal'), sub=$('#fid-sub'), title=$('.fid-title');
   if(!window.MCQFace){ loginFail('Face ID module not loaded'); return; }
   modal.classList.add('open'); if(title) title.textContent='Face ID / Touch ID';
-  const mode=loginMode(), branch=$('#login-branch')?.value||'';
-  const scope = mode==='super' ? '' : branch;     // staff/admin → only THIS store's Face IDs; super works anywhere
-  if(!MCQFace.listFor(scope).length){ if(sub) sub.textContent=scope?('No Face ID set up for '+scope+' on this device'):'No Face ID set up on this device yet'; setTimeout(closeFid,2100);
-    toast(scope?('Set up Face ID for '+scope+' first: enter its password, then “Set up Face ID”.'):'Set up Face ID first: pick your branch, enter its password, then “Set up Face ID”.'); return; }
-  if(sub) sub.textContent=scope?('Sign in to '+scope+' — follow the Face ID / Touch ID prompt…'):'Follow the Face ID / Touch ID prompt on your device…';
+  const v2=MCQFace.listV2?MCQFace.listV2():[];
+  if(!v2.length){
+    const hasLegacy=MCQFace.legacy&&MCQFace.legacy().length;
+    if(sub) sub.textContent=hasLegacy
+      ? 'Security upgrade needed — sign in once with your ID/password, then re-enrol in Account → Face ID.'
+      : 'No Face ID on this device yet — sign in, then enrol in Account → Face ID.';
+    setTimeout(closeFid,3000); return;
+  }
+  if(sub) sub.textContent='Follow the Face ID / Touch ID prompt on your device…';
   try{
-    const m=await MCQFace.login(scope);
-    if(sub) sub.innerHTML='✅ Verified — '+esc(m.label||m.branch);
-    setTimeout(()=>{ closeFid(); loginAs(m.role, m.branch); }, 650);
-  }catch(e){ if(sub) sub.textContent='❌ '+((e&&e.message)||'Face ID failed'); setTimeout(closeFid,2200); }
+    const res=await MCQFace.login();   // biometric → device secret → REAL server session
+    if(sub) sub.innerHTML='✅ Welcome, '+esc(res.staff_name||res._label||'')+' — signing in…';
+    setTimeout(()=>{ closeFid();
+      loginAs(res.role, (res.role==='super'||res.role==='ba')?'All stores':res.store,
+        {staffId:res.staff_id, name:res.staff_name, accountId:res.account_id, needsProfile:res.needs_profile, acctAdmin:res.acct_admin});
+    }, 600);
+  }catch(e){
+    if(sub) sub.textContent='❌ '+((e&&e.message)||'Face ID failed');
+    setTimeout(closeFid,2400);
+  }
 }
 function closeFid(){ const m=$('#fid-modal'); if(m) m.classList.remove('open');
   if(State._fidStream){ State._fidStream.getTracks().forEach(t=>t.stop()); State._fidStream=null; } }

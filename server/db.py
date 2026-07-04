@@ -99,6 +99,12 @@ CREATE TABLE IF NOT EXISTS accounts (
   store_id TEXT, staff_id TEXT, name TEXT, email TEXT, department TEXT,
   activated INTEGER DEFAULT 0, acct_admin INTEGER DEFAULT 0, needs_profile INTEGER DEFAULT 0,
   created_at TEXT, updated_at TEXT);
+-- Face ID / passkey device credentials: the device biometric (WebAuthn) unlocks a
+-- device-bound secret which is exchanged for a REAL server session. Hashed at rest,
+-- bound to the enrolling identity, revocable per device. Never synced between devices.
+CREATE TABLE IF NOT EXISTS device_creds (
+  id TEXT PRIMARY KEY, secret_hash TEXT, cred_id TEXT, role TEXT, store_id TEXT,
+  staff_id TEXT, staff_name TEXT, account_id TEXT, label TEXT, created_at TEXT, last_used TEXT);
 CREATE INDEX IF NOT EXISTS idx_audit_store ON audit_logs(store_id);
 CREATE INDEX IF NOT EXISTS idx_photos_store ON photos(store_id);
 CREATE INDEX IF NOT EXISTS idx_snap_store ON store_state_snapshots(store_id);
@@ -695,6 +701,57 @@ def delete_message(au, msg_id):
         if not (r == 'super' or (r in ('admin', 'staff') and row['store_id'] == au.get('store_id'))):
             return False
         conn.execute('DELETE FROM messages WHERE id=?', (msg_id,))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+def enroll_device(au, cred_id, label):
+    """Bind a Face-ID/passkey device credential to the CURRENT authenticated identity."""
+    did = 'd_' + secrets.token_hex(8)
+    secret = secrets.token_hex(24)
+    conn = connect()
+    try:
+        conn.execute("""INSERT INTO device_creds(id,secret_hash,cred_id,role,store_id,staff_id,staff_name,account_id,label,created_at,last_used)
+                        VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                     (did, hash_pw(secret), str(cred_id)[:400], au.get('role'), au.get('store_id'),
+                      au.get('staff_id'), au.get('staff_name'), au.get('account_id'),
+                      str(label or '')[:80], now(), now()))
+        conn.commit()
+        return {'device_id': did, 'secret': secret}
+    finally:
+        conn.close()
+
+def device_login(device_id, secret):
+    """Exchange a device credential for a login identity (the biometric gated the secret)."""
+    conn = connect()
+    try:
+        row = conn.execute('SELECT * FROM device_creds WHERE id=?', (str(device_id or ''),)).fetchone()
+        if not row or row['secret_hash'] != hash_pw(str(secret or '')): return None
+        conn.execute('UPDATE device_creds SET last_used=? WHERE id=?', (now(), row['id']))
+        conn.commit()
+        meta = {'staff_id': row['staff_id'], 'staff_name': row['staff_name'], 'account_id': row['account_id']}
+        if row['account_id']:
+            a = conn.execute('SELECT * FROM accounts WHERE id=?', (row['account_id'],)).fetchone()
+            if a: meta['needs_profile'] = bool(a['needs_profile'])
+        role = row['role']
+        store = 'ALL' if role in ('super', 'ba') else row['store_id']
+        if role not in ('super', 'ba') and store not in STORES: return None
+        return (role, store, meta)
+    finally:
+        conn.close()
+
+def revoke_device(au, device_id):
+    """Remove a device credential — the owner (same identity) or the account admin."""
+    conn = connect()
+    try:
+        row = conn.execute('SELECT * FROM device_creds WHERE id=?', (str(device_id or ''),)).fetchone()
+        if not row: return False
+        own = ((row['account_id'] and row['account_id'] == au.get('account_id')) or
+               (row['staff_id'] and str(row['staff_id']) == str(au.get('staff_id'))) or
+               (row['role'] == au.get('role') and (row['store_id'] or '') == (au.get('store_id') or '')))
+        if not (own or is_account_admin(au)): return False
+        conn.execute('DELETE FROM device_creds WHERE id=?', (row['id'],))
         conn.commit()
         return True
     finally:

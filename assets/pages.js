@@ -3921,26 +3921,29 @@ function renderRules(){
 
 /* ============================================================ FACE ID */
 function renderFaceId(){
-  setAccent('#15803d'); setCrumb('🪪','Face ID',isSuper()?'Manage Face ID on this device':'Face ID for '+State.branch);
-  try{ if(window.MCQFace&&MCQFace.syncFromDB) MCQFace.syncFromDB(); }catch(e){}
-  const scope=isSuper()?'':State.branch;
-  const list=(window.MCQFace&&MCQFace.listFor)?MCQFace.listFor(scope):[];
-  const scopeLabel=isSuper()?'all stores (this device)':State.branch;
-  const rows=list.map(c=>`<tr><td><b>${esc(c.label||c.branch)}</b><div class="cell-sub">${esc(c.role||'')}${c.branch?' · '+esc(c.branch):''}</div></td>
+  setAccent('#15803d'); setCrumb('🪪','Face ID','Server-verified biometric sign-in for this device');
+  const v2=(window.MCQFace&&MCQFace.listV2)?MCQFace.listV2():[];
+  const old=(window.MCQFace&&MCQFace.legacy)?MCQFace.legacy():[];
+  const roleName=r=>({employee:'Staff',staff:'Dept Lead',admin:'Manager',super:'Super Admin',ba:'Chú Ba'})[r]||r||'';
+  const rows=v2.map(c=>`<tr><td><b>${esc(c.label||c.who||'')}</b><div class="cell-sub">Signs in as ${esc(c.who||'')} · ${esc(roleName(c.role))}${c.store?' · '+esc(c.store):''}</div></td>
       <td><div class="cell-sub">Enrolled ${esc(c.created||'—')}</div></td>
       <td><span class="badge ok"><span class="bdot"></span>Active</span></td>
+      <td><button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="faceRemoveInApp('${ckJS(c.id)}')">Remove</button></td></tr>`).join('')
+    + old.map(c=>`<tr><td><b>${esc(c.label||c.branch||'')}</b><div class="cell-sub">${esc(c.role||'')}${c.branch?' · '+esc(c.branch):''}</div></td>
+      <td><div class="cell-sub">Enrolled ${esc(c.created||'—')}</div></td>
+      <td><span class="badge warn">⚠ Legacy — re-enrol</span></td>
       <td><button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="faceRemoveInApp('${ckJS(c.id)}')">Remove</button></td></tr>`).join('');
-  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🪪</div><div><h2>Face ID &amp; Passkeys</h2><p>Sign in to <b>${esc(scopeLabel)}</b> with Face ID / Touch ID on this device.</p></div></div>
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🪪</div><div><h2>Face ID &amp; Passkeys</h2><p>Your device biometric unlocks a <b>server-verified</b> sign-in — as <b>you</b>, on this device only.</p></div></div>
     <div class="form-shell"><div class="card card-pad" style="text-align:center">
         <div class="fid-hero">🪪</div><h3 style="margin:6px 0">Enrol this device</h3>
-        <p style="color:var(--muted);font-size:13px;max-width:420px;margin:0 auto 16px">Uses your device’s secure biometric (WebAuthn). Your face never leaves the device — only a secure key is stored, mapped to <b>${esc(scopeLabel)}</b>.</p>
+        <p style="color:var(--muted);font-size:13px;max-width:440px;margin:0 auto 16px">Face ID / Touch ID / Windows Hello (WebAuthn). Your face never leaves the device — passing the biometric unlocks a revocable device credential that signs in as <b>${esc((State.account&&(State.account.staffName||State.account.name))||'you')}</b>.</p>
         <button class="btn primary" onclick="faceEnrollInApp()">＋ Enrol Face ID on this device</button>
         <button class="btn" style="margin-left:8px" onclick="faceIdLogin()">🪪 Test Face ID</button>
-        <p class="login-hint" style="margin-top:12px">For real passkeys, open the app on <b>https</b> or <b>localhost</b>.</p>
+        <p class="login-hint" style="margin-top:12px">Works on <b>https</b> or <b>localhost</b>. Enrol on each device you use.</p>
       </div>
-      <aside class="form-rail"><div class="card rail-card"><h4>Face IDs for ${esc(scopeLabel)}</h4>
+      <aside class="form-rail"><div class="card rail-card"><h4>Face IDs on this device</h4>
         <div class="table-wrap"><table class="grid"><tbody>${rows||'<tr><td colspan="4"><div class="empty compact"><div class="e-ic">🪪</div>No Face ID enrolled on this device yet.</div></td></tr>'}</tbody></table></div></div>
-        <div class="card rail-card"><h4>Security</h4><ul><li>Device-bound — enrol on each device used</li><li>Auto-logout after 30 min idle</li><li>Enrolments are saved &amp; synced (never lost)</li></ul></div></aside></div>`;
+        <div class="card rail-card"><h4>Security</h4><ul><li>Signs in with a real server session (same as a password login)</li><li>Device-bound — never synced between devices</li><li>Revocable — remove it and that device stops working instantly</li><li>Secret stored hashed on the server; failed attempts are slowed down</li></ul></div></aside></div>`;
 }
 function faceRemoveInApp(id){ if(!confirm('Remove this Face ID from this device?')) return; try{ if(window.MCQFace) MCQFace.remove(id); }catch(e){} toast('Face ID removed'); renderFaceId(); }
 

@@ -65,6 +65,39 @@ def login():
                    acct_admin=db.is_account_admin({'account_id': meta.get('account_id')}) if meta.get('account_id') else False,
                    stores=db.STORES if role in ('super', 'ba') else [store])
 
+# ---------- Face ID / passkey device credentials ----------
+@api.route('/api/device/enroll', methods=['POST'])
+def device_enroll():
+    au = require_auth(); require_write(au)
+    d = request.get_json(force=True, silent=True) or {}
+    if not d.get('cred_id'): abort(400)
+    res = db.enroll_device(au, d.get('cred_id'), d.get('label'))
+    db.write_audit(uid(au), au.get('store_id') or '', 'enroll', 'device', res['device_id'], None, {'label': d.get('label')})
+    return jsonify(ok=True, **res)
+
+@api.route('/api/device/login', methods=['POST'])
+def device_login():
+    d = request.get_json(force=True, silent=True) or {}
+    res = db.device_login(d.get('device_id'), d.get('secret'))
+    if not res:
+        time.sleep(0.8)   # slow down guessing
+        return jsonify(ok=False, error='Face ID sign-in failed — please re-enrol on this device'), 401
+    role, store, meta = res
+    tok = db.issue_token(role, store, meta.get('staff_id'), meta.get('staff_name'), meta.get('account_id'))
+    return jsonify(ok=True, token=tok, role=role, store=store,
+                   staff_id=meta.get('staff_id'), staff_name=meta.get('staff_name'),
+                   account_id=meta.get('account_id'), needs_profile=bool(meta.get('needs_profile')),
+                   acct_admin=db.is_account_admin({'account_id': meta.get('account_id')}) if meta.get('account_id') else False,
+                   stores=db.STORES if role in ('super', 'ba') else [store])
+
+@api.route('/api/device/revoke', methods=['POST'])
+def device_revoke():
+    au = require_auth()
+    d = request.get_json(force=True, silent=True) or {}
+    ok = db.revoke_device(au, d.get('device_id'))
+    if ok: db.write_audit(uid(au), au.get('store_id') or '', 'revoke', 'device', str(d.get('device_id')), None, None)
+    return jsonify(ok=ok)
+
 # ---------- account activation (Gmail must match the store's staff directory) ----------
 @api.route('/api/activate/lookup', methods=['POST'])
 def activate_lookup():
