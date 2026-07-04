@@ -455,16 +455,32 @@ def is_account_admin(au):
     return bool(a and a['acct_admin'])
 
 def list_accounts(q=''):
+    """EVERY person: existing accounts PLUS every staff member (all stores) who has no
+    account yet — so the account admin can assign permissions to the whole company."""
     conn = connect()
     try:
         rows = conn.execute('SELECT * FROM accounts ORDER BY store_id, name').fetchall()
-        out = []
-        ql = str(q or '').strip().lower()
+        out, have_staff, have_email = [], set(), set()
         for r in rows:
             d = {k: r[k] for k in r.keys()}
-            if ql and ql not in ' '.join(str(d.get(k) or '').lower() for k in ('id', 'name', 'email', 'store_id', 'role', 'department')):
-                continue
+            if d.get('staff_id'): have_staff.add(str(d['staff_id']))
+            if d.get('email'): have_email.add(str(d['email']).strip().lower())
             out.append(d)
+        for r in conn.execute('SELECT id,store_id,data_json FROM staff ORDER BY store_id').fetchall():
+            if str(r['id']) in have_staff: continue
+            try: d = json.loads(r['data_json'] or '{}')
+            except Exception: d = {}
+            if d.get('active') == 0: continue
+            email = str(d.get('email') or '').strip()
+            if email and email.lower() in have_email: continue
+            out.append({'id': '', 'password': '', 'role': 'employee', 'store_id': r['store_id'],
+                        'staff_id': r['id'], 'name': d.get('name') or r['id'], 'email': email,
+                        'department': d.get('dept') or '', 'activated': 0, 'acct_admin': 0,
+                        'no_account': True})
+        ql = str(q or '').strip().lower()
+        if ql:
+            out = [d for d in out if ql in ' '.join(str(d.get(k) or '').lower()
+                   for k in ('id', 'name', 'email', 'store_id', 'role', 'department'))]
         return out
     finally:
         conn.close()

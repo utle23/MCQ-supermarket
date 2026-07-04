@@ -350,6 +350,8 @@ function renderEmployeeProfile(){
       <div class="field"><label>Full name</label><input id="ep-name" value="${esc(s.name||'')}"></div>
       <div class="field"><label>Phone</label><input id="ep-phone" value="${esc(s.phone||'')}" placeholder="0400 000 000"></div>
       <div class="field"><label>Email</label><input id="ep-email" value="${esc(s.email||'')}"></div>
+      <div class="field"><label>Department (team)</label><select id="ep-dept"><option value="">— None —</option>${((DB.checklist&&DB.checklist.depts)||[]).map(d=>`<option ${d===s.dept?'selected':''}>${esc(d)}</option>`).join('')}</select></div>
+      <div class="field"><label>Role / Position</label><input id="ep-role" value="${esc(s.role||s.classification||'')}" placeholder="e.g. CASHIER"></div>
       <div class="field"><label>Gender</label><select id="ep-gender"><option value=""></option>${sel(s.gender,['Male','Female','Other'])}</select></div>
       <div class="field"><label>Date of birth</label><input type="date" id="ep-dob" value="${esc(s.dob||'')}"></div>
       <div class="field"><label>Card ID</label><input id="ep-cardid" value="${esc(s.cardId||'')}"></div>
@@ -408,8 +410,10 @@ async function empPhotoPick(inp){
 }
 async function empProfileSave(){
   const g=id=>(document.getElementById(id)?.value||'');
-  const s=myStaff(); if(!s.id){ toast('Your profile is not linked to a staff record — ask your manager.'); return; }
+  const s=myStaff(); if(!s.id && State.account&&State.account.staffId) s.id=State.account.staffId;   // fresh account: row not synced yet — the server upserts it
+  if(!s.id){ toast('Your profile is not linked to a staff record — ask your manager.'); return; }
   const patch={ name:g('ep-name').trim()||s.name, phone:g('ep-phone'), email:g('ep-email'), gender:g('ep-gender'),
+    dept:g('ep-dept'), role:g('ep-role'), classification:g('ep-role'),
     dob:g('ep-dob'), cardId:g('ep-cardid'), tfn:g('ep-tfn'), address:g('ep-address'), suburb:g('ep-suburb'), country:g('ep-country') };
   if(State.empPhoto) patch.photo=State.empPhoto;
   const newStore=g('ep-store');
@@ -417,6 +421,10 @@ async function empProfileSave(){
   const r=await (window.mcqStaffProfile?mcqStaffProfile(s.store||State.branch,s.id,patch):Promise.resolve({ok:false}));
   if(r&&r.ok){
     Object.assign(s,patch); State.empPhoto=null;
+    // ensure the saved row lives in the local staff directory too (fresh accounts may not have
+    // one yet) — team announcement groups & personal records read from DB.staff
+    try{ DB.staff=DB.staff||[]; let row=DB.staff.find(x=>String(x.id)===String(s.id));
+      if(row) Object.assign(row,patch); else if(r.staff) DB.staff.push(Object.assign({},r.staff)); }catch(e){}
     if(patch.name){ State.account.name=patch.name; State.account.staffName=patch.name; }
     if(patch.store && patch.store!==State.branch){
       State.branch=patch.store; State.account.branch=patch.store;
@@ -749,12 +757,17 @@ function annPaint(filter){
   // employees only see General posts + their OWN team group(s)
   if(isEmployee()){ const me=myStaff(); const my=new Set([me.dept,...(Array.isArray(me.roles)?me.roles:[])].filter(Boolean).map(x=>String(x).toLowerCase()));
     list=list.filter(a=>!a.department || my.has(String(a.department).toLowerCase())); }
-  // team chips (General + each team present in the visible feed)
-  const deptsHere=[...new Set(list.map(a=>a.department).filter(Boolean))];
+  // group buttons on TOP (always visible): staff see THEIR team(s); lead/manager/super see every team
+  let myGroups;
+  if(isEmployee()){ const me=myStaff(); myGroups=[...new Set([me.dept,...(Array.isArray(me.roles)?me.roles:[])].filter(Boolean))]; }
+  else myGroups=((DB.checklist&&DB.checklist.depts)||[]).slice();
+  const extra=[...new Set(list.map(a=>a.department).filter(d=>d&&!myGroups.includes(d)))];
+  const groups=myGroups.concat(isEmployee()?[]:extra);
   const df=window.__annDeptF||'';
-  const deptBar=deptsHere.length?`<div class="ann-teams"><button class="ann-team ${!df?'active':''}" onclick="annDeptF('')">All</button>
+  const cnt=d=>list.filter(a=>a.department===d).length;
+  const deptBar=`<div class="ann-teams"><button class="ann-team ${!df?'active':''}" onclick="annDeptF('')">All</button>
       <button class="ann-team ${df==='GEN'?'active':''}" onclick="annDeptF('GEN')">📢 General</button>
-      ${deptsHere.map(d=>`<button class="ann-team ${df===d?'active':''}" onclick="annDeptF('${ckJS(d)}')">👥 ${esc(d)}</button>`).join('')}</div>`:'';
+      ${groups.map(d=>`<button class="ann-team ${df===d?'active':''}" onclick="annDeptF('${ckJS(d)}')">👥 ${esc(d)}${cnt(d)?` <b class="ann-team-n">${cnt(d)}</b>`:''}</button>`).join('')}</div>`;
   if(df==='GEN') list=list.filter(a=>!a.department);
   else if(df) list=list.filter(a=>a.department===df);
   let filterSel='';
@@ -773,7 +786,7 @@ function annPaint(filter){
       </div>
       ${a.title?`<h3 class="ann-title">${esc(a.title)}</h3>`:''}${img}<div class="ann-body">${safeHtml(a.body_html)}</div>${attCards(a.attachments)}</div>`;
   }).join(''):'<div class="empty"><div class="e-ic">📣</div>No announcements yet.</div>';
-  feed.innerHTML=filterSel+deptBar+`<div class="ann-list">${cards}</div>`;
+  feed.innerHTML=deptBar+filterSel+`<div class="ann-list">${cards}</div>`;
 }
 function annDeptF(v){ window.__annDeptF=v; annPaint(document.getElementById('ann-filter')?.value||''); }
 window.annDeptF=annDeptF;
@@ -3955,7 +3968,16 @@ function accLoad(q){
     const storeSel=(a)=>`<option value="" ${!a.store_id?'selected':''}>— No store —</option>`+(DB.stores||[]).map(s=>`<option ${a.store_id===s?'selected':''}>${esc(s)}</option>`).join('');
     const depts=(DB.checklist&&DB.checklist.depts)||[];
     const deptSel=(a)=>`<option value="">—</option>`+depts.map(d=>`<option ${a.department===d?'selected':''}>${esc(d)}</option>`).join('');
-    el.innerHTML=list.length?list.map(a=>`<tr class="${a.acct_admin?'acc-row-admin':''}">
+    el.innerHTML=list.length?list.map(a=>a.no_account?`<tr class="acc-row-new">
+      <td><span class="muted">—</span></td>
+      <td><b>${esc(a.name||'')}</b> <span class="badge mute" style="font-size:9.5px">staff</span></td>
+      <td style="font-size:12px">${a.email?esc(a.email):'<span class="badge warn">⚠ no email in profile</span>'}</td>
+      <td>${a.email?`<select class="acc-inp" onchange="accAssign('${ckJS(a.email)}','${ckJS(a.name||'')}','${ckJS(a.store_id||'')}','${ckJS(a.department||'')}',this)">
+        <option value="">— assign access —</option><option value="employee">Member (Staff)</option><option value="staff">Dept Lead</option><option value="admin">Manager</option><option value="super">Super Admin</option></select>`:'<span class="muted" style="font-size:11px">add their email first</span>'}</td>
+      <td>${esc(a.store_id||'—')}</td><td>${esc(a.department||'—')}</td>
+      <td><span class="muted">—</span></td>
+      <td><span class="badge mute">No account yet</span></td><td></td>
+    </tr>`:`<tr class="${a.acct_admin?'acc-row-admin':''}">
       <td><b style="font-family:ui-monospace,Menlo,monospace">${esc(a.id)}</b>${a.acct_admin?' <span class="badge info" title="Account admin">👑</span>':''}</td>
       <td><b>${esc(a.name||'')}</b></td><td style="font-size:12px">${esc(a.email||'')}</td>
       <td><select class="acc-inp" onchange="accSet('${esc(a.id)}','role',this.value)">${roleSel(a)}</select></td>
@@ -4121,4 +4143,12 @@ function accAddGo(){
   .then(r=>{ if(r&&r.ok){ toast('✓ Account '+r.id+' created — they activate with this email'); mcqModalClose(); accLoad(); } else toast((r&&r.error)||'Could not create'); })
   .catch(()=>toast('Could not create'));
 }
+// assign access to a staff member who has no account yet — creates the pending account by email
+function accAssign(email,name,store,dept,sel){
+  const role=sel.value; if(!role) return;
+  mcqAccountCreate({email,name,role,store,department:role==='staff'?dept:''})
+    .then(r=>{ if(r&&r.ok){ toast('✓ '+name+' assigned '+role+' — they activate with '+email); accLoad(); } else { toast((r&&r.error)||'Could not assign'); sel.value=''; } })
+    .catch(()=>{ toast('Could not assign'); sel.value=''; });
+}
+window.accAssign=accAssign;
 window.accAdd=accAdd; window.accAddGo=accAddGo;

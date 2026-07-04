@@ -1520,3 +1520,9 @@ html,body{max-width:100%}
 .ann-team:hover{border-color:#0e9f6e;color:#0e9f6e}
 .ann-team.active{background:linear-gradient(135deg,#0e9f6e,#0891b2);border-color:transparent;color:#fff;box-shadow:0 4px 12px rgba(14,159,110,.3)}
 .ann-dept{display:inline-block;margin-left:8px;background:#fff7ed;border:1px solid #fed7aa;color:#c2410c;font-weight:800;font-size:11px;padding:2px 10px;border-radius:999px}
+/* group buttons: compact, top row */
+.ann-teams{margin:0 auto 12px;padding-bottom:2px}
+.ann-team{padding:5px 12px;font-size:11.5px}
+.ann-team-n{background:rgba(255,255,255,.32);border-radius:99px;padding:0 6px;font-size:10px;margin-left:3px}
+.ann-team:not(.active) .ann-team-n{background:#eef2f7;color:#475569}
+.acc-row-new{background:#fbfdff}
