@@ -1527,50 +1527,53 @@ html,body{max-width:100%}
 .ann-team:not(.active) .ann-team-n{background:#eef2f7;color:#475569}
 .acc-row-new{background:#fbfdff}
 
-/* ============================================================ GLASS LOGIN (frosted-glass redesign) */
+/* ============================================================ GLASS LOGIN — fresh bright green */
 .login-root{background:
-  radial-gradient(1100px 700px at 12% -8%, rgba(94,255,196,.5), transparent 55%),
-  radial-gradient(900px 640px at 108% 18%, rgba(103,232,255,.46), transparent 55%),
-  radial-gradient(820px 620px at 50% 118%, rgba(167,139,250,.4), transparent 58%),
-  linear-gradient(155deg,#0d8560 0%,#10a37b 30%,#0ea3b5 62%,#3b5bc4 100%)}
-.login-bg .orb{opacity:.62;filter:blur(80px)}
+  radial-gradient(1000px 640px at 10% -6%, rgba(52,211,153,.38), transparent 55%),
+  radial-gradient(880px 600px at 106% 14%, rgba(45,212,191,.34), transparent 55%),
+  radial-gradient(760px 560px at 48% 116%, rgba(163,230,53,.26), transparent 60%),
+  linear-gradient(150deg,#f2fff8 0%,#e0fbee 35%,#d8f7ef 65%,#e6f6ff 100%)}
+.login-bg .orb{opacity:.4;filter:blur(90px);mix-blend-mode:normal}
+.login-bg .o1{background:#34d399}
+.login-bg .o2{background:#2dd4bf}
+.login-bg .o3{background:#a3e635;opacity:.3}
+.login-bg .o4{background:#6ee7b7;opacity:.32}
 .login-bg::after{content:'';position:absolute;inset:0;
-  background-image:linear-gradient(rgba(255,255,255,.07) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.07) 1px,transparent 1px);
-  background-size:44px 44px;mask-image:radial-gradient(ellipse at center,black 30%,transparent 75%)}
-.login-card{background:linear-gradient(160deg,rgba(255,255,255,.30),rgba(255,255,255,.14) 58%,rgba(255,255,255,.20));
-  -webkit-backdrop-filter:blur(30px) saturate(170%);backdrop-filter:blur(30px) saturate(170%);
-  border:1px solid rgba(255,255,255,.42);border-top-color:rgba(255,255,255,.62);
-  box-shadow:0 30px 80px rgba(4,60,44,.38), inset 0 1px 0 rgba(255,255,255,.5), inset 0 -1px 0 rgba(255,255,255,.12)}
-.login-root .login-h{color:#fff;text-shadow:0 2px 14px rgba(0,0,0,.25)}
-.login-root .login-p{color:rgba(255,255,255,.8)}
-.login-root .login-brand .lb-sub{color:rgba(255,255,255,.6)}
-.login-root .login-lbl{color:rgba(255,255,255,.85)}
-.login-root .login-opt{color:rgba(255,255,255,.42)}
-.login-root .login-input,.login-card .login-input{background:rgba(255,255,255,.20);border:1.4px solid rgba(255,255,255,.36);color:#fff;
-  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
-.login-root .login-input::placeholder{color:rgba(255,255,255,.55)}
-.login-root .login-input:focus{border-color:#34d399;box-shadow:0 0 0 3.5px rgba(52,211,153,.22);background:rgba(255,255,255,.16)}
-.login-root select.login-input option{color:#0f172a}
-.login-root #login-mode .seg-btn{background:rgba(255,255,255,.18);border:1.4px solid rgba(255,255,255,.32);color:rgba(255,255,255,.92)}
-.login-root #login-mode .seg-btn:hover{background:rgba(255,255,255,.20);border-color:rgba(110,231,183,.6);color:#fff;box-shadow:0 10px 26px rgba(0,0,0,.3)}
-.login-root #login-mode .seg-btn.active{background:linear-gradient(135deg,#0e9f6e,#0891b2);border-color:transparent;color:#fff;box-shadow:0 12px 30px rgba(14,159,110,.45)}
-.login-root .login-pw .pw-eye{opacity:.75;filter:grayscale(.2) brightness(1.6)}
-.login-root .login-err{color:#fda4af}
-.login-root .login-note{background:rgba(251,191,36,.14);border-color:rgba(251,191,36,.35);color:#fde68a}
-.login-root .login-or{color:rgba(255,255,255,.45)}
-.login-root .login-or::before,.login-root .login-or::after{background:rgba(255,255,255,.18)}
-.login-root .faceid-btn{background:rgba(255,255,255,.18);border:1.4px solid rgba(255,255,255,.34);color:#fff;
-  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
-.login-root .faceid-btn:hover{background:rgba(255,255,255,.2);border-color:#6ee7b7}
-.login-root .activate-btn{background:linear-gradient(rgba(255,255,255,.08),rgba(255,255,255,.08)) padding-box,linear-gradient(135deg,#34d399,#22d3ee,#818cf8) border-box;
-  -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
-.login-root .login-hint{color:rgba(255,255,255,.55)}
-.login-root .login-feats{color:rgba(255,255,255,.6)}
-.login-root .login-feats span{background:rgba(255,255,255,.10);border:1px solid rgba(255,255,255,.16);border-radius:999px;padding:5px 11px}
-.login-root .fid-row{background:rgba(255,255,255,.10);border-color:rgba(255,255,255,.18);color:rgba(255,255,255,.85)}
-.login-root .fid-list-h{color:rgba(255,255,255,.5)}
-.login-root .faceid-enroll{border-color:rgba(255,255,255,.25);color:rgba(255,255,255,.6)}
-.login-root .faceid-enroll:hover{border-color:#6ee7b7;color:#6ee7b7}
+  background-image:linear-gradient(rgba(16,185,129,.09) 1px,transparent 1px),linear-gradient(90deg,rgba(16,185,129,.09) 1px,transparent 1px);
+  background-size:44px 44px;mask-image:radial-gradient(ellipse at center,black 30%,transparent 78%)}
+.login-card{background:linear-gradient(160deg,rgba(255,255,255,.78),rgba(255,255,255,.55) 58%,rgba(255,255,255,.68));
+  -webkit-backdrop-filter:blur(26px) saturate(160%);backdrop-filter:blur(26px) saturate(160%);
+  border:1px solid rgba(255,255,255,.95);border-top-color:#ffffff;
+  box-shadow:0 26px 70px rgba(13,148,106,.22), 0 2px 8px rgba(13,148,106,.08), inset 0 1px 0 #fff}
+.login-root .login-h{color:#053b28;text-shadow:none}
+.login-root .login-p{color:#41725f}
+.login-root .login-brand .lb-sub{color:#3e8067;font-weight:800}
+.login-root .login-lbl{color:#2f6b53}
+.login-root .login-opt{color:#7fa694}
+.login-root .login-input,.login-card .login-input{background:rgba(255,255,255,.92);border:1.5px solid #cdeadd;color:#0f172a}
+.login-root .login-input::placeholder{color:#93b8a8}
+.login-root .login-input:focus{border-color:#10b981;box-shadow:0 0 0 3.5px rgba(16,185,129,.16);background:#fff}
+.login-root #login-mode .seg-btn{background:rgba(255,255,255,.8);border:1.5px solid #d7eee2;color:#48705f}
+.login-root #login-mode .seg-btn:hover{background:#fff;border-color:#6ee7b7;color:#0e9f6e;box-shadow:0 10px 24px rgba(16,185,129,.18)}
+.login-root #login-mode .seg-btn.active{background:linear-gradient(135deg,#10b981,#0d9488);border-color:transparent;color:#fff;box-shadow:0 12px 28px rgba(16,185,129,.4)}
+.login-root .login-pw .pw-eye{opacity:.6;filter:none}
+.login-root .login-err{color:#dc2626}
+.login-root .login-note{background:#fffbeb;border-color:#fde68a;color:#92600c}
+.login-root .login-or{color:#8fb3a3}
+.login-root .login-or::before,.login-root .login-or::after{background:#d9ede3}
+.login-root .faceid-btn{background:rgba(255,255,255,.85);border:1.5px solid #d7eee2;color:#215843}
+.login-root .faceid-btn:hover{background:#fff;border-color:#34d399;box-shadow:0 8px 22px rgba(16,185,129,.16)}
+.login-root .login-btn{background:linear-gradient(135deg,#10b981,#059669 55%,#0d9488);box-shadow:0 14px 30px rgba(16,185,129,.38)}
+.login-root .activate-btn{color:#0b7a56;
+  background:linear-gradient(#ffffff,#ffffff) padding-box,linear-gradient(135deg,#34d399,#22d3ee,#a3e635) border-box}
+.login-root .activate-btn:hover{box-shadow:0 12px 28px rgba(16,185,129,.25)}
+.login-root .login-hint{color:#5d8a75}
+.login-root .login-feats{color:#4b7261}
+.login-root .login-feats span{background:rgba(255,255,255,.85);border:1px solid #d7eee2;border-radius:999px;padding:5px 11px}
+.login-root .fid-row{background:rgba(255,255,255,.85);border-color:#d7eee2;color:#215843}
+.login-root .fid-list-h{color:#7fa694}
+.login-root .faceid-enroll{border-color:#cfe9dc;color:#6f9b87}
+.login-root .faceid-enroll:hover{border-color:#34d399;color:#0e9f6e}
 
 /* ============================================================ LUXE TEAM TAGS (announcement groups) */
 .ann-team{position:relative;border:1.5px solid transparent;color:#334155;font-weight:800;
