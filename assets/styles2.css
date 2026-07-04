@@ -1529,29 +1529,29 @@ html,body{max-width:100%}
 
 /* ============================================================ GLASS LOGIN (frosted-glass redesign) */
 .login-root{background:
-  radial-gradient(1100px 700px at 12% -8%, rgba(34,227,154,.32), transparent 55%),
-  radial-gradient(900px 640px at 108% 18%, rgba(38,198,232,.30), transparent 55%),
-  radial-gradient(820px 620px at 50% 118%, rgba(124,58,237,.28), transparent 58%),
-  linear-gradient(155deg,#031A12 0%,#07281F 34%,#062B33 66%,#0B1B3A 100%)}
-.login-bg .orb{opacity:.5;filter:blur(84px)}
+  radial-gradient(1100px 700px at 12% -8%, rgba(94,255,196,.5), transparent 55%),
+  radial-gradient(900px 640px at 108% 18%, rgba(103,232,255,.46), transparent 55%),
+  radial-gradient(820px 620px at 50% 118%, rgba(167,139,250,.4), transparent 58%),
+  linear-gradient(155deg,#0d8560 0%,#10a37b 30%,#0ea3b5 62%,#3b5bc4 100%)}
+.login-bg .orb{opacity:.62;filter:blur(80px)}
 .login-bg::after{content:'';position:absolute;inset:0;
-  background-image:linear-gradient(rgba(255,255,255,.045) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.045) 1px,transparent 1px);
+  background-image:linear-gradient(rgba(255,255,255,.07) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.07) 1px,transparent 1px);
   background-size:44px 44px;mask-image:radial-gradient(ellipse at center,black 30%,transparent 75%)}
-.login-card{background:linear-gradient(160deg,rgba(255,255,255,.17),rgba(255,255,255,.07) 58%,rgba(255,255,255,.11));
-  -webkit-backdrop-filter:blur(30px) saturate(160%);backdrop-filter:blur(30px) saturate(160%);
-  border:1px solid rgba(255,255,255,.28);border-top-color:rgba(255,255,255,.45);
-  box-shadow:0 34px 90px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.35), inset 0 -1px 0 rgba(255,255,255,.08)}
+.login-card{background:linear-gradient(160deg,rgba(255,255,255,.30),rgba(255,255,255,.14) 58%,rgba(255,255,255,.20));
+  -webkit-backdrop-filter:blur(30px) saturate(170%);backdrop-filter:blur(30px) saturate(170%);
+  border:1px solid rgba(255,255,255,.42);border-top-color:rgba(255,255,255,.62);
+  box-shadow:0 30px 80px rgba(4,60,44,.38), inset 0 1px 0 rgba(255,255,255,.5), inset 0 -1px 0 rgba(255,255,255,.12)}
 .login-root .login-h{color:#fff;text-shadow:0 2px 14px rgba(0,0,0,.25)}
-.login-root .login-p{color:rgba(255,255,255,.66)}
+.login-root .login-p{color:rgba(255,255,255,.8)}
 .login-root .login-brand .lb-sub{color:rgba(255,255,255,.6)}
-.login-root .login-lbl{color:rgba(255,255,255,.72)}
+.login-root .login-lbl{color:rgba(255,255,255,.85)}
 .login-root .login-opt{color:rgba(255,255,255,.42)}
-.login-root .login-input,.login-card .login-input{background:rgba(255,255,255,.11);border:1.4px solid rgba(255,255,255,.24);color:#fff;
+.login-root .login-input,.login-card .login-input{background:rgba(255,255,255,.20);border:1.4px solid rgba(255,255,255,.36);color:#fff;
   -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
-.login-root .login-input::placeholder{color:rgba(255,255,255,.38)}
+.login-root .login-input::placeholder{color:rgba(255,255,255,.55)}
 .login-root .login-input:focus{border-color:#34d399;box-shadow:0 0 0 3.5px rgba(52,211,153,.22);background:rgba(255,255,255,.16)}
 .login-root select.login-input option{color:#0f172a}
-.login-root #login-mode .seg-btn{background:rgba(255,255,255,.10);border:1.4px solid rgba(255,255,255,.20);color:rgba(255,255,255,.78)}
+.login-root #login-mode .seg-btn{background:rgba(255,255,255,.18);border:1.4px solid rgba(255,255,255,.32);color:rgba(255,255,255,.92)}
 .login-root #login-mode .seg-btn:hover{background:rgba(255,255,255,.20);border-color:rgba(110,231,183,.6);color:#fff;box-shadow:0 10px 26px rgba(0,0,0,.3)}
 .login-root #login-mode .seg-btn.active{background:linear-gradient(135deg,#0e9f6e,#0891b2);border-color:transparent;color:#fff;box-shadow:0 12px 30px rgba(14,159,110,.45)}
 .login-root .login-pw .pw-eye{opacity:.75;filter:grayscale(.2) brightness(1.6)}
@@ -1559,7 +1559,7 @@ html,body{max-width:100%}
 .login-root .login-note{background:rgba(251,191,36,.14);border-color:rgba(251,191,36,.35);color:#fde68a}
 .login-root .login-or{color:rgba(255,255,255,.45)}
 .login-root .login-or::before,.login-root .login-or::after{background:rgba(255,255,255,.18)}
-.login-root .faceid-btn{background:rgba(255,255,255,.10);border:1.4px solid rgba(255,255,255,.22);color:#fff;
+.login-root .faceid-btn{background:rgba(255,255,255,.18);border:1.4px solid rgba(255,255,255,.34);color:#fff;
   -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px)}
 .login-root .faceid-btn:hover{background:rgba(255,255,255,.2);border-color:#6ee7b7}
 .login-root .activate-btn{background:linear-gradient(rgba(255,255,255,.08),rgba(255,255,255,.08)) padding-box,linear-gradient(135deg,#34d399,#22d3ee,#818cf8) border-box;
