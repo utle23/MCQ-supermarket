@@ -748,24 +748,29 @@ function annPaint(filter){
       <div class="ann-head">
         <span class="ann-ava">${esc(ini)}</span>
         <div class="ann-hmeta"><span class="ann-scope ${isAll?'all':''}">${isAll?'📢 Company-wide':('🏪 '+esc(a.store))}</span><span class="ann-meta">${pinned?'📌 Pinned · ':''}${esc(who)} · ${esc((a.created_at||'').slice(0,16).replace('T',' '))}</span></div>
-        ${canManage?`<span class="ann-actions"><button class="btn xs ${pinned?'ann-pinned':''}" onclick="annPin(${a.id},${pinned?0:1})" title="${pinned?'Unpin':'Pin to top'}">📌</button><button class="btn xs ann-del" onclick="annDelete(${a.id})" title="Delete">✕</button></span>`:''}
+        ${canManage?`<span class="ann-actions"><button class="btn xs ${pinned?'ann-pinned':''}" onclick="annPin(${a.id},${pinned?0:1})" title="${pinned?'Unpin':'Pin to top'}">📌</button><button class="btn xs" onclick="annEdit(${a.id})" title="Edit">✎</button><button class="btn xs ann-del" onclick="annDelete(${a.id})" title="Delete">✕</button></span>`:''}
       </div>
       ${a.title?`<h3 class="ann-title">${esc(a.title)}</h3>`:''}${img}<div class="ann-body">${safeHtml(a.body_html)}</div></div>`;
   }).join(''):'<div class="empty"><div class="e-ic">📣</div>No announcements yet.</div>';
   feed.innerHTML=filterSel+`<div class="ann-list">${cards}</div>`;
 }
-function annCompose(){
+function annCompose(editId){
   _annPhoto=null;
+  const ed=editId?(window.__annCache||[]).find(x=>x.id===editId):null;
+  window.__annEditId=ed?editId:null;
   const scopeSel=isSuper()
     ? `<div class="field"><label>Where</label><select id="ann-store"><option value="ALL">📢 All stores (company-wide)</option>${DB.stores.map(s=>`<option>${esc(s)}</option>`).join('')}</select></div>`
     : `<div class="field"><label>Where</label><input value="MCQ ${esc(State.branch)}" disabled><input type="hidden" id="ann-store" value="${esc(State.branch)}"></div>`;
-  mcqModal('📣 New announcement', `${scopeSel}
-    <div class="field"><label>Title</label><input id="ann-title" placeholder="Headline"></div>
+  mcqModal(ed?'✏️ Edit announcement':'📣 New announcement', `${ed?'':scopeSel}
+    <div class="field"><label>Title</label><input id="ann-title" placeholder="Headline" value="${ed?esc(ed.title||''):''}"></div>
     <div class="field"><label>Photo (optional)</label><label class="ann-photo-pick"><input type="file" accept="image/*" onchange="annPhotoPick(this)" style="display:none"><span id="ann-photo-lbl"><i class="fas fa-image"></i>&nbsp; Add a photo</span></label><div id="ann-photo-prev"></div></div>
     <div class="field"><label>Message</label><textarea id="ann-body" rows="7" placeholder="Write your announcement…"></textarea></div>
-    <div style="display:flex;gap:10px;margin-top:10px"><button class="btn primary" onclick="annPost()"><i class="fas fa-bullhorn"></i>&nbsp; Post</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>`, {wide:true});
+    <div style="display:flex;gap:10px;margin-top:10px"><button class="btn primary" onclick="annPost()"><i class="fas fa-bullhorn"></i>&nbsp; ${ed?'Save changes':'Post'}</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>`, {wide:true});
   if(window.ckMount) ckMount('ann-body');
+  if(ed) setTimeout(()=>{ if(window.ckSet) ckSet('ann-body', ed.body_html||''); },600);
 }
+function annEdit(id){ annCompose(id); }
+window.annEdit=annEdit;
 async function annPhotoPick(inp){
   const file=inp.files&&inp.files[0]; if(!file) return;
   // upload to the server photo store and keep only a tiny id (like checklist/report photos) —
@@ -783,7 +788,15 @@ function annPost(){
   const hasImg=/<img/i.test(body)||!!_annPhoto;   // an image (in the editor OR the upload) is valid content — no title/heading required
   if(!title && !hasText && !hasImg){ toast('Add a title, a message, or a photo'); return; }
   const photo=_annPhoto; _annPhoto=null;
+  const editId=window.__annEditId; window.__annEditId=null;
   mcqModalClose();                     // close instantly — don't make the user wait for the server
+  if(editId){
+    toast('✏️ Saving…');
+    fetch('/api/announcement/update',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('mcq_token')||'')},body:JSON.stringify({id:editId,title,body_html:body,image_id:photo||undefined})})
+      .then(r=>r.json()).then(r=>{ toast(r&&r.ok?'✏️ Announcement updated':'Could not update'); if(State.route&&State.route.mod==='announcements') renderAnnouncements(); })
+      .catch(()=>toast('Could not update'));
+    return;
+  }
   toast('📣 Posting…');
   Promise.resolve(mcqAnnPost({store, title, body_html:body, image_id:photo||null})).then(r=>{
     toast(r&&r.ok?'📣 Announcement posted':'Could not post — please try again');
@@ -1002,13 +1015,18 @@ function ckRespHTML(dept){
   const rec=(State.chk.resp[dept]=State.chk.resp[dept]||{p1:'',p2:'',submittedBy:''});
   const listId=ckRespId(dept,'staff-list');
   const field=(key,label,required)=>`<label class="ck-resp-field"><span>${esc(label)}${required?' <b>*</b>':''}</span><input id="${ckRespId(dept,key)}" list="${listId}" value="${esc(rec[key]||'')}" placeholder="Select ${esc(dept)} staff" oninput="ckResp('${ckJS(dept)}','${key}',this.value)"></label>`;
+  // "Submitted by" is automatic now — every person signs in with their own account,
+  // so the submission is stamped with the logged-in identity.
+  rec.submittedBy=myIdentityName();
   return `<div class="ck-resp-card" id="${ckRespId(dept,'card')}">
-    ${staffDataList(listId,dept,[rec.p1,rec.p2,rec.submittedBy])}
+    ${staffDataList(listId,dept,[rec.p1,rec.p2])}
     ${field('p1','Responsible Person 1',true)}
     ${field('p2','Responsible Person 2',false)}
-    ${field('submittedBy','Submitted by',true)}
+    <label class="ck-resp-field ck-resp-auto"><span>Submitted by</span><span class="ck-resp-me">👤 ${esc(rec.submittedBy)}</span></label>
   </div>`;
 }
+function myIdentityName(){ const a=State.account||{}; return a.staffName||a.name||(State.branch?State.branch+' team':'Team'); }
+window.myIdentityName=myIdentityName;
 function ckResp(dept,field,value){
   State.chk.resp=State.chk.resp||{};
   State.chk.resp[dept]=State.chk.resp[dept]||{p1:'',p2:'',submittedBy:''};
@@ -1057,7 +1075,7 @@ function ckGate(){
     sections.push({area, total:items.length, ok, complete:ok===items.length, issues});
   });
   const resp=(State.chk.resp||{})[State.chk.dept]||{};
-  const respOk=!!(String(resp.p1||'').trim() && String(resp.submittedBy||'').trim());
+  const respOk=!!String(resp.p1||'').trim();   // Submitted-by is automatic (logged-in account)
   const incompleteSections=sections.filter(s=>!s.complete).map(s=>s.area);
   return {sections, incompleteSections, respOk, firstPending, complete: incompleteSections.length===0 && respOk};
 }
@@ -1311,7 +1329,7 @@ function ckSaveTempReading(i,value,result,manual){
 }
 function ckTempConfirmer(){
   const resp=(State.chk&&State.chk.resp&&State.chk.resp[State.chk.dept])||{};
-  return resp.submittedBy||resp.p1||State.user?.name||State.role||'Manager';
+  return myIdentityName()||resp.submittedBy||resp.p1||'Manager';
 }
 function ckManualTemp(i){
   const st=State.chk.state[i]=State.chk.state[i]||{};
@@ -1502,7 +1520,7 @@ function ckDoSubmit(){
   const ymd=new Date().toISOString().slice(0,10);
   const sub={ id:makeRecordId('CKS',State.branch),
     store:State.branch, dept:State.chk.dept, session:State.chk.session, date:ymd, dayName:new Date().toLocaleDateString(undefined,{weekday:'long'}),
-    by:resp.submittedBy||'', responsible:resp.p1||'', created:new Date().toISOString().slice(0,16).replace('T',' '),
+    by:myIdentityName(), responsible:resp.p1||'', created:new Date().toISOString().slice(0,16).replace('T',' '),
     progress: totalN?Math.round(doneN/totalN*100):0, done:doneN, total:totalN, status:'Submitted', tempAlerts:out, items };
   DB.checklistSubs=DB.checklistSubs||[]; DB.checklistSubs.unshift(sub);
   auditLog('create','checklistSubmission',sub.id,sub.store,null,sub,`${sub.dept} ${sub.session}`);
@@ -1533,7 +1551,7 @@ function ckSubmitSuccess(sub,out){
 }
 function ckMarkRespMissing(depts){
   depts.forEach(dept=>{
-    ['p1','submittedBy'].forEach(field=>{
+    ['p1'].forEach(field=>{
       const el=document.getElementById(ckRespId(dept,field));
       if(el&&!el.value.trim()) el.classList.add('invalid','shake');
     });
@@ -3393,10 +3411,25 @@ window.mcqEmail={
     if(window.MCQ_EMAIL_RELAY) return c.channel!=='gmail' && c.channel!=='mailto';
     return c.channel==='brevo' && !!c.apiKey && !!c.fromEmail; },
   notify(eventType,subject,body,meta){ const to=this.recipients(eventType,meta); if(!to.length) return; const cfg=this.cfg();
+    this.mirrorInbox(to,subject,body);   // every alert ALSO lands in the matching staff member's app Inbox
     if(this.canBrevo()) return this._brevo(to,subject,body,cfg);
     if(cfg.channel==='gmail'){ this._gmail(to,subject,body); toast(`📧 Gmail compose opened · ${to.length} recipient(s)`); return; }
     if(cfg.channel==='mailto'){ window.location.href=this._mailto(to,subject,body); return; }
     toast(`📧 ${to.length} recipient(s) would be notified (demo) — enable real sending in Email settings`); },
+  // recipients whose email matches a staff member get the SAME alert in their app Inbox
+  mirrorInbox(to,subject,body){
+    try{
+      if(!window.mcqMsgSend) return;
+      const seen={};
+      (to||[]).forEach(r=>{
+        const e=String(r.email||'').trim().toLowerCase(); if(!e||seen[e]) return; seen[e]=1;
+        const st=(DB.staff||[]).find(s=>String(s.email||'').trim().toLowerCase()===e);
+        if(!st||!st.id) return;
+        mcqMsgSend({kind:'message', store:st.store||State.branch, to_staff_id:st.id, to_super:false, to_managers:false,
+          subject:'🔔 '+String(subject||'Notification'), body_html:'<p>'+esc(String(body||'')).replace(/\n/g,'<br>')+'</p>'}).catch?.(()=>{});
+      });
+    }catch(e){}
+  },
   alert(subject,body,extraEmails){
     const cfg=this.cfg(), to=[], seen={};
     (extraEmails||[]).forEach(e=>{ e=String(e||'').trim(); if(e&&!seen[e.toLowerCase()]){ seen[e.toLowerCase()]=1; to.push({email:e,name:e}); } });
@@ -3861,7 +3894,8 @@ function faceRemoveInApp(id){ if(!confirm('Remove this Face ID from this device?
 function renderAccounts(){
   setAccent('#4f46e5'); setCrumb('🔐','Account Management','Every ID, password & permission — all stores');
   $('#content').innerHTML=`<div class="page-head"><div class="ph-ic" style="background:#eef2ff">🔐</div>
-      <div><h2>Account Management</h2><p>Assign each person's access level, store and department. Passwords are visible to you only.</p></div></div>
+      <div><h2>Account Management</h2><p>Assign each person's access level, store and department. Passwords are visible to you only.</p></div>
+      <div class="ph-actions"><button class="btn primary" onclick="accAdd()"><i class="fas fa-user-plus"></i>&nbsp; Add person (by email)</button></div></div>
     <div class="card"><div class="card-head"><h3>All accounts · <span id="acc-count">…</span></h3>
       <input class="login-input" id="acc-q" placeholder="🔍 Search name, ID, email, store…" style="flex:1;min-width:200px;max-width:360px;margin:0 12px;border:1px solid var(--line);border-radius:9px;padding:7px 12px;font-size:13px" oninput="accSearch(this.value)">
       <span class="ch-sub">ID rule: Morley 1··· / Mirrabooka 2··· / Malaga 3··· / Subiaco 4··· / Armadale 5··· / Warehouse 8··· / Head office 7···</span></div>
@@ -4021,3 +4055,30 @@ function dataCleanupRun(){
     }).catch(()=>toast('Cleanup failed'));
 }
 window.dataCleanupRun=dataCleanupRun;
+
+/* add a person by EMAIL + assigned permission — they activate later with that email */
+function accAdd(){
+  const depts=(DB.checklist&&DB.checklist.depts)||[];
+  mcqModal('👤 Add person by email', `
+    <div class="ai-asst-note" style="margin-bottom:8px">The <b>email is the key</b> — when this person activates with exactly this Gmail, they get this access automatically.</div>
+    <div class="field"><label>Email (Deputy Gmail) <span class="req">*</span></label><input id="aa-email" type="email" placeholder="name@gmail.com"></div>
+    <div class="grid2">
+      <div class="field"><label>Full name</label><input id="aa-name" placeholder="e.g. Van Anh Le"></div>
+      <div class="field"><label>Access level</label><select id="aa-role" onchange="document.getElementById('aa-dept-row').style.display=this.value==='staff'?'':'none'">
+        <option value="employee">Member (Staff)</option><option value="staff">Dept Lead</option><option value="admin">Manager</option><option value="super">Super Admin</option></select></div>
+      <div class="field"><label>Store</label><select id="aa-store"><option value="">— No store —</option>${(DB.stores||[]).map(s=>`<option>${esc(s)}</option>`).join('')}</select></div>
+      <div class="field" id="aa-dept-row" style="display:none"><label>Lead of department</label><select id="aa-dept"><option value="">—</option>${depts.map(d=>`<option>${esc(d)}</option>`).join('')}</select></div>
+    </div>
+    <div style="display:flex;gap:10px;margin-top:10px"><button class="btn primary" onclick="accAddGo()">＋ Create account</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>`,{wide:true});
+}
+function accAddGo(){
+  const email=(document.getElementById('aa-email')?.value||'').trim();
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ toast('Enter a valid email'); return; }
+  mcqAccountCreate({email, name:(document.getElementById('aa-name')?.value||'').trim(),
+    role:document.getElementById('aa-role')?.value||'employee',
+    store:document.getElementById('aa-store')?.value||'',
+    department:document.getElementById('aa-dept')?.value||''})
+  .then(r=>{ if(r&&r.ok){ toast('✓ Account '+r.id+' created — they activate with this email'); mcqModalClose(); accLoad(); } else toast((r&&r.error)||'Could not create'); })
+  .catch(()=>toast('Could not create'));
+}
+window.accAdd=accAdd; window.accAddGo=accAddGo;

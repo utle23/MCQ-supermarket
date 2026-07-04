@@ -93,6 +93,16 @@ def accounts_list():
     require_acct_admin()
     return jsonify(ok=True, accounts=db.list_accounts(request.args.get('q', '')))
 
+@api.route('/api/account/create', methods=['POST'])
+def account_create():
+    au = require_acct_admin()
+    d = request.get_json(force=True, silent=True) or {}
+    res = db.add_account(d.get('email'), d.get('name'), d.get('role'), d.get('store'), d.get('department'))
+    if res.get('error'):
+        return jsonify(ok=False, error=res['error']), 400
+    db.write_audit(uid(au), d.get('store') or '', 'create', 'account', res.get('id'), None, {'email': d.get('email'), 'role': d.get('role')})
+    return jsonify(ok=True, **res)
+
 @api.route('/api/account/update', methods=['POST'])
 def account_update():
     au = require_acct_admin()
@@ -273,6 +283,15 @@ def announcement_post():
     aid = db.post_announcement(au, store, d.get('title'), d.get('body_html'), d.get('image_id'))
     db.write_audit(uid(au), store, 'post', 'announcement', str(aid), None, {'title': d.get('title')})
     return jsonify(ok=True, id=aid)
+
+@api.route('/api/announcement/update', methods=['POST'])
+def announcement_update():
+    au = require_auth(); require_write(au)
+    if au['role'] not in ('super', 'admin', 'staff'): abort(403)
+    d = request.get_json(force=True, silent=True) or {}
+    ok = db.update_announcement(au, d.get('id'), d.get('title'), d.get('body_html'), d.get('image_id'))
+    if ok: db.write_audit(uid(au), au.get('store_id') or '', 'update', 'announcement', str(d.get('id')), None, {'title': d.get('title')})
+    return jsonify(ok=ok)
 
 @api.route('/api/announcement/delete', methods=['POST'])
 def announcement_delete():

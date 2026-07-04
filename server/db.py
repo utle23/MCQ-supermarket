@@ -455,6 +455,28 @@ def list_accounts(q=''):
     finally:
         conn.close()
 
+def add_account(email, name, role, store, department=''):
+    """Account admin pre-creates an account by EMAIL + assigned permission. The person then
+    activates with that email: they claim this account (role/store kept) and set their password."""
+    email = str(email or '').strip()
+    if not email or '@' not in email: return {'error': 'Enter a valid email address'}
+    if role not in ('employee', 'staff', 'admin', 'super'): role = 'employee'
+    conn = connect()
+    try:
+        if conn.execute('SELECT 1 FROM accounts WHERE lower(email)=lower(?)', (email,)).fetchone():
+            return {'error': 'An account with this email already exists'}
+        hit = _store_staff_by_email(conn, store, email) if (store and store in STORES) else None
+        aid = _gen_account_id(conn, store if role != 'super' else '')
+        conn.execute('''INSERT INTO accounts(id,password,role,store_id,staff_id,name,email,department,activated,created_at,updated_at)
+                        VALUES(?,?,?,?,?,?,?,?,0,?,?)''',
+                     (aid, '', role, store or '', (hit or {}).get('staff_id'),
+                      (name or (hit or {}).get('name') or email.split('@')[0].replace('.', ' ').title()),
+                      email, department or '', now(), now()))
+        conn.commit()
+        return {'id': aid, 'matched': bool(hit)}
+    finally:
+        conn.close()
+
 def update_account(aid, patch):
     """Account admin edits: role / store / department / password / name."""
     allowed = {'role', 'store_id', 'department', 'password', 'name'}
@@ -831,6 +853,19 @@ def set_announcement_pin(au, aid, pinned):
         row = conn.execute('SELECT store_id FROM announcements WHERE id=?', (aid,)).fetchone()
         if not row or not _ann_can_manage(au, row['store_id']): return False
         conn.execute('UPDATE announcements SET pinned=? WHERE id=?', (1 if pinned else 0, aid))
+        conn.commit()
+        return True
+    finally:
+        conn.close()
+
+def update_announcement(au, aid, title, body_html, image_id=None):
+    """Edit an announcement — Super anywhere, Manager/Dept Lead within their own store."""
+    conn = connect()
+    try:
+        row = conn.execute('SELECT store_id,image_id FROM announcements WHERE id=?', (aid,)).fetchone()
+        if not row or not _ann_can_manage(au, row['store_id']): return False
+        conn.execute('UPDATE announcements SET title=?, body_html=?, image_id=? WHERE id=?',
+                     (title or '', body_html or '', (image_id if image_id is not None else row['image_id']), aid))
         conn.commit()
         return True
     finally:

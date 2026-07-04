@@ -69,6 +69,7 @@
   window.mcqAiCommand=function(text,roster,stores,rules){ return _authFetch('/api/ai-command',{method:'POST',body:JSON.stringify({text:text,roster:roster||[],stores:stores||[],rules:rules||[]})}); };
   // ---- central account management (account admin only) ----
   window.mcqAccounts=function(q){ return _authFetch('/api/accounts'+(q?('?q='+encodeURIComponent(q)):'')); };
+  window.mcqAccountCreate=function(payload){ return _authFetch('/api/account/create',{method:'POST',body:JSON.stringify(payload||{})}); };
   window.mcqAccountUpdate=function(id,patch){ return _authFetch('/api/account/update',{method:'POST',body:JSON.stringify({id:id,patch:patch||{}})}); };
   window.mcqAccountDelete=function(id){ return _authFetch('/api/account/delete',{method:'POST',body:JSON.stringify({id:id})}); };
   // ---- message attachments (Gmail-style; 30MB/file, uploaded as real file parts) ----
