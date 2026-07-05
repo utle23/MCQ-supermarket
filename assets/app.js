@@ -203,9 +203,11 @@ async function actLookup(){
     <div class="act-badge act-ok">👋</div><h2 class="act-h">We found you, ${esc((r.name||'').split(' ')[0].toLowerCase().replace(/^./,c=>c.toUpperCase())||'friend')}!</h2>
     <p class="act-p"><b>${esc(r.name)}</b>${r.store?` · 🏪 MCQ ${esc(r.store)}`:''}</p>
     <div class="act-access">
-      <span class="act-chip">${esc(({employee:'Staff',staff:'Department Lead',admin:'Manager',super:'Super Admin'})[r.role]||'Staff')}</span>
-      ${r.role==='staff'&&r.department?`<span class="act-chip" style="background:#7c3aed">👥 Lead of ${esc(r.department)}</span>`:''}
-      ${r.store?`<span class="act-chip act-chip-store">🏪 ${esc(r.store)}</span>`:''}
+      ${r.role==='admin'
+        ? `<span class="act-chip" style="background:#b45309">🛡️ Store Manager of ${esc(r.store||'your store')}</span>`
+        : `<span class="act-chip">${esc(({employee:'Staff',staff:'Department Lead',super:'Super Admin'})[r.role]||'Staff')}</span>
+           ${r.role==='staff'&&r.department?`<span class="act-chip" style="background:#7c3aed">👥 Lead of ${esc(r.department)}</span>`:''}
+           ${r.store?`<span class="act-chip act-chip-store">🏪 ${esc(r.store)}</span>`:''}`}
     </div>
     ${r.id?`<div class="act-id-box"><span class="act-id-lbl">Your ID</span><span class="act-id">${esc(r.id)}</span></div>
     <p class="act-p" style="margin-top:-6px">This is your permanent sign-in ID. Now create your password to finish:</p>`:'<p class="act-p">Now create your own password to finish.</p>'}
@@ -233,7 +235,9 @@ async function actCreate(){
     <h2 class="act-h">Welcome, ${esc((r.name||'').split(' ')[0]||'aboard')}!</h2>
     <p class="act-p">Your account is ready. This is your permanent ID — save it:</p>
     <div class="act-id-box"><span class="act-id-lbl">Your ID</span><span class="act-id">${esc(r.id)}</span></div>
-    <div class="act-access"><span class="act-chip">${esc(roleName)}</span>${r.store?`<span class="act-chip act-chip-store">🏪 ${esc(r.store)}</span>`:''}</div>
+    <div class="act-access">${r.role==='admin'
+      ? `<span class="act-chip" style="background:#b45309">🛡️ Store Manager of ${esc(r.store||'your store')}</span>`
+      : `<span class="act-chip">${esc(roleName)}</span>${r.store?`<span class="act-chip act-chip-store">🏪 ${esc(r.store)}</span>`:''}`}</div>
     ${r.emailed
       ? `<div class="act-mail-note">📧 Your <b>ID</b> &amp; <b>password</b> have been sent to <b>${esc(_act.email||'your email')}</b> — check your inbox.</div>`
       : `<div class="act-mail-note warn">⚠️ We couldn't email your details — please save your ID &amp; password somewhere safe now.</div>`}
