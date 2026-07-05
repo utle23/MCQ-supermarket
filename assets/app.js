@@ -743,19 +743,11 @@ function buildTopbar(){
   const u=me();
   const scopeLabel=isSuper()?'All stores':State.branch;
   const roleLabel=isSuper()?'Super':State.account&&State.account.role==='ba'?'Chú Ba':State.account&&State.account.role==='admin'?'Manager':State.account&&State.account.role==='employee'?'Staff':'Dept Lead';
-  // Super: the store filter gets its own prominent bar under the topbar (see #store-scope-bar).
-  // Everyone else: a small badge in the topbar showing their fixed store.
+  // the global "Viewing store" bar was removed (redundant — pages have their own
+  // store/department selectors); Super simply sees everything by default
   const scopeBar=$('#store-scope-bar');
-  if(scopeBar){
-    scopeBar.innerHTML = isSuper()
-      ? `<div class="ssb-inner"><span class="ssb-label"><i class="fas fa-store"></i> Viewing store</span>
-          <select id="tb-store" class="ssb-select" onchange="superSetStore(this.value)" title="Filter every page by store">
-            <option value="ALL" ${(!State.superStore||State.superStore==='ALL')?'selected':''}>🏬 All stores</option>
-            ${DB.stores.map(s=>`<option value="${esc(s)}" ${State.superStore===s?'selected':''}>${esc(s)}</option>`).join('')}</select>
-          <span class="ssb-hint">${(!State.superStore||State.superStore==='ALL')?'Showing every store — pick one to focus':'Every page is scoped to this store'}</span></div>`
-      : '';
-  }
-  const superStoreSel = isSuper() ? '' : `<span class="tb-badge"><i class="fas fa-store"></i> ${esc(scopeLabel)}</span>`;
+  if(scopeBar) scopeBar.innerHTML='';
+  const superStoreSel = `<span class="tb-badge"><i class="fas fa-store"></i> ${esc(scopeLabel)}</span>`;
   $('#topbar-right').innerHTML = `
     ${superStoreSel}
     <span class="tb-badge"><i class="fas fa-clock"></i> idle <b id="idle-ind">30m</b></span>
