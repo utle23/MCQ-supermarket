@@ -352,9 +352,9 @@ def staff_profile():
     store = d.get('store'); require_store(au, store)
     sid = str(d.get('staff_id') or '')
     if not sid: abort(400)
-    # an employee may only edit their OWN row; Manager/Super may edit anyone in their store
-    if au['role'] == 'employee' and str(au.get('staff_id') or '') != sid: abort(403)
-    if au['role'] not in ('employee', 'admin', 'super'): abort(403)
+    # employees & dept leads may only edit their OWN row; Manager/Super may edit anyone in their store
+    if au['role'] in ('employee', 'staff') and str(au.get('staff_id') or '') != sid: abort(403)
+    if au['role'] not in ('employee', 'staff', 'admin', 'super'): abort(403)
     patch = d.get('patch') or {}
     cur = db.update_staff_profile(store, sid, patch)
     db.write_audit(uid(au), store, 'profile', 'staff', sid, None, {'fields': list(patch.keys()) if isinstance(patch, dict) else []})

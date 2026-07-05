@@ -2804,7 +2804,7 @@ function renderBinAdmin(){
 
 /* ============================================================ CHECKLIST HISTORY */
 function histState(){
-  State.hist=State.hist||{tab:'checklist',store:isSuper()?'All stores':State.branch,dept:'All departments',q:'',date:''};
+  State.hist=State.hist||{tab:'checklist',store:isSuper()?'All stores':State.branch,dept:'All departments',q:'',date:ckTodayStr()};   // default: TODAY — pick a past date or press ✕ All dates
   if(State.hist.date===undefined) State.hist.date='';
   if(!isSuper()) State.hist.store=State.branch;
   return State.hist;
@@ -2950,7 +2950,7 @@ function mgrSubs(){
   return mcqDemoMode() ? real.concat(mgrSynthSubs()) : real;
 }
 /* ---------- daily operations pulse + "needs attention" (real data only) ---------- */
-function ckTodayStr(){ return new Date().toISOString().slice(0,10); }
+function ckTodayStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }   // LOCAL date (toISOString is UTC — wrong for Perth between midnight and 8am)
 function ckDeadlinePassed(session){
   const t=ckDeadline(session); if(!t) return false;
   const m=/(\d{1,2}):(\d{2})\s*(AM|PM)?/i.exec(t); if(!m) return false;

@@ -744,7 +744,7 @@ DB.navGroups = [
   { id:'mgmt',   label:'Management', icon:'fa-user-shield',     items:['manager','storeconfig','analytics','photos','whatsapp','email','data'], admin:true },
   { id:'reports',label:'Reports & Rules', icon:'fa-flag',       items:['rules'] },
   { id:'lab',    label:'AI Lab', icon:'fa-robot',                items:['aiuse'], admin:true },
-  { id:'account',label:'Account', icon:'fa-user-lock',          items:['faceid'] },
+  { id:'account',label:'Account', icon:'fa-user-lock',          items:['profile','faceid'] },
 ];
 
 /* ============================================================
@@ -834,6 +834,7 @@ DB.customPages = {
   email:    { label:'Email Notifications',  icon:'✉️', render:'renderEmail', admin:true },
   data:     { label:'Data Management', icon:'🗄️', render:'renderData', admin:true },
   rules:    { label:'Supermarket Rules', icon:'📖', render:'renderRules' },
+  profile:  { label:'My Profile', icon:'👤', render:'renderEmployeeProfile' },
   faceid:   { label:'Face ID', icon:'🪪', render:'renderFaceId' },
   feedback: { label:'Share Your Thought', icon:'💬', render:'renderFeedback' },
 };

@@ -695,6 +695,8 @@ function buildSidebar(){
       if(!m) return false;
       if(m.admin && !isAdmin()) return false;
       if(m.super && !isSuper()) return false;
+      // master-password sessions (99999) have no personal profile to edit
+      if(id==='profile' && !(State.account&&(State.account.accountId||State.account.staffId))) return false;
       return true;
     });
     if(!items.length) return;
