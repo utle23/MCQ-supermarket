@@ -77,8 +77,8 @@ DB.checklist = {
     freezer:{label:'Freezer', min:-25, max:-15, text:'-25 C to -15 C'},
   },
   tempAlertEmails: ['manager@mcqinternational.com','safety@mcqinternational.com'],
-  deadlines: { Opening:'10:30 AM', 'Mid-afternoon':'3:30 PM', Closing:'6:30 PM' },
-  templateVersion: 4,
+  deadlines: { Opening:'10:30 AM', 'Mid-afternoon':'3:30 PM', Closing:'9:30 PM' },
+  templateVersion: 5,   // v5: Closing deadline 9:30 PM; removed the 2 duplicate MANAGER Closing tasks
   items: [
     // ---- MANAGER ----
     ['MANAGER','Opening','ALL STAFF HAVING PROPER UNIFORM AND NAME BADGE','O',0],
@@ -87,8 +87,6 @@ DB.checklist = {
     ['MANAGER','Opening','BIN AREA EMPTY / TIDY','O','R1-5'],
     ['MANAGER','Opening','ALL DESIGNATED STAFF HAVING WALKIE-TALKIE DEVICE AND FILLING LOG BOOK PROPERLY','O','R1-2'],
     ['MANAGER','Opening','FIRST-AID KIT STOCKED AND ACCESSIBLE','O',0],
-    ['MANAGER','Closing','ALL STAFF HAVING PROPER UNIFORM AND NAME BADGE','C',0],
-    ['MANAGER','Closing','ALL STAFF WORK THEIR ROSTERED SHIFT AS SCHEDULED','C',0],
     ['MANAGER','Closing','ALL GATES & ROLLER DOORS CLOSED AND LOCKED','C','O5'],
     ['MANAGER','Closing','BINS ARE EMPTY AND BIN AREA CLEAR','C','R1-2'],
     ['MANAGER','Closing','SHOP FLOOR LIGHTS TURN OFF','C',0],

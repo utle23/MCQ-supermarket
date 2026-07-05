@@ -42,7 +42,7 @@ function renderStaffHome(){
 }
 
 /* ============================================================ CHECKLIST — Opening/Closing + photo capture */
-const CK_DEADLINE={Opening:'10:30 AM',Closing:'6:30 PM'};
+const CK_DEADLINE={Opening:'10:30 AM',Closing:'9:30 PM'};
 function ckJS(s){ return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
 function staffNorm(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase(); }
 function staffScopeList(){
@@ -809,15 +809,18 @@ function renderAnnouncements(){
 }
 function annPaint(filter){
   const feed=$('#ann-feed'); if(!feed) return; let list=window.__annCache||[]; const f=filter||'';
-  // employees only see General posts + their OWN team group(s)
-  if(isEmployee()){ const me=myStaff(); const my=new Set([me.dept,...(Array.isArray(me.roles)?me.roles:[])].filter(Boolean).map(x=>String(x).toLowerCase()));
+  // visibility: staff AND dept leads only see General + their OWN team group(s);
+  // managers see every team of THEIR store (server already scopes to the store);
+  // only Super/Chú Ba see everything across all stores & departments
+  const _leadRole=!!(State.account&&State.account.role==='staff');
+  if(isEmployee()||_leadRole){ const me=myStaff(); const my=new Set([me.dept,...(Array.isArray(me.roles)?me.roles:[])].filter(Boolean).map(x=>String(x).toLowerCase()));
     list=list.filter(a=>!a.department || my.has(String(a.department).toLowerCase())); }
-  // group buttons on TOP (always visible): staff see THEIR team(s); lead/manager/super see every team
+  // group buttons on TOP: staff/leads see THEIR team(s); manager/super see every team
   let myGroups;
-  if(isEmployee()){ const me=myStaff(); myGroups=[...new Set([me.dept,...(Array.isArray(me.roles)?me.roles:[])].filter(Boolean))]; }
+  if(isEmployee()||_leadRole){ const me=myStaff(); myGroups=[...new Set([me.dept,...(Array.isArray(me.roles)?me.roles:[])].filter(Boolean))]; }
   else myGroups=((DB.checklist&&DB.checklist.depts)||[]).slice();
   const extra=[...new Set(list.map(a=>a.department).filter(d=>d&&!myGroups.includes(d)))];
-  const groups=myGroups.concat(isEmployee()?[]:extra);
+  const groups=myGroups.concat((isEmployee()||_leadRole)?[]:extra);
   const df=window.__annDeptF||'';
   const cnt=d=>list.filter(a=>a.department===d).length;
   const deptBar=`<div class="ann-teams"><button class="ann-team ${!df?'active':''}" onclick="annDeptF('')">All</button>
