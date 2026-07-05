@@ -24,6 +24,27 @@
   if(BASE===null) return;                           // no backend configured → leave MCQDB as-is
 
   var FB = window.MCQDB; if(!FB){ return; }
+
+  // central session-expired guard: ANY authorized /api call that returns 401 means the token
+  // is gone/expired/revoked → bounce to the login screen once (never for the public auth
+  // endpoints). Fixes the silent "cache-only, saves don't land" dead state.
+  if(!window.__mcqFetchWrapped){
+    window.__mcqFetchWrapped=true;
+    var _origFetch=window.fetch.bind(window);
+    var SKIP=/\/api\/(login|activate|password\/|health)/;
+    window.fetch=function(input,init){
+      return _origFetch(input,init).then(function(r){
+        try{
+          var url=(typeof input==='string'?input:(input&&input.url))||'';
+          if(r&&r.status===401 && url.indexOf('/api/')>=0 && !SKIP.test(url)
+             && window.localStorage && localStorage.getItem('mcq_token') && window.mcqSessionExpired){
+            window.mcqSessionExpired();
+          }
+        }catch(e){}
+        return r;
+      });
+    };
+  }
   // server-side email relay (Brevo key lives on the server, never in the frontend/repo)
   window.MCQ_EMAIL_RELAY = (BASE||'') + '/api/send-email';
   // server-side AI Vision (OpenAI/ChatGPT key lives on the server)

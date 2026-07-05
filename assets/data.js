@@ -20,6 +20,12 @@ const TONES = {
   Yes:'bad', No:'mute',
 };
 
+// LOCAL date helpers — toISOString() returns UTC, which in Perth (UTC+8) reads as YESTERDAY
+// between midnight and 8am. Everything that means "today" / a calendar day must use these.
+function dISO(d){ const x=d?new Date(d):new Date(); return x.getFullYear()+'-'+String(x.getMonth()+1).padStart(2,'0')+'-'+String(x.getDate()).padStart(2,'0'); }
+function todayISO(){ return dISO(); }
+try{ window.dISO=dISO; window.todayISO=todayISO; }catch(e){}
+
 const STORES = ['Morley','Mirrabooka','Malaga','Subiaco','Armadale','Warehouse'];
 const DRIVERS = ['Chu Phuoc','Chu Tam','Michael Tran','Duy Quyen Pham','Duy Thanh Le','Nguyen Ba Cong','Nguyen Thanh Tri'];
 

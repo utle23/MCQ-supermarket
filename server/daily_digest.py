@@ -35,14 +35,30 @@ def today_str():
     return time.strftime('%Y-%m-%d')
 
 
+_TMP_PHOTOS = []   # temp files created for Cloudinary-hosted photos (cleaned at exit)
+
 def photo_path(conn, pid):
     if not pid:
         return None
-    row = conn.execute('SELECT store_id,filename FROM photos WHERE id=?', (str(pid),)).fetchone()
+    row = conn.execute('SELECT * FROM photos WHERE id=?', (str(pid),)).fetchone()
     if not row:
         return None
     p = os.path.join(db.UPLOADS, db_safe(row['store_id']), row['filename'])
-    return p if os.path.isfile(p) else None
+    if os.path.isfile(p):
+        return p
+    # Render has no local disk — photos live on Cloudinary; fetch to a temp file for the PDF
+    cloud = row['cloud'] if ('cloud' in row.keys() and row['cloud']) else None
+    if cloud:
+        try:
+            import cloudstore, tempfile
+            if cloudstore.ENABLED:
+                data = cloudstore.get_photo(cloud)
+                tf = tempfile.NamedTemporaryFile(delete=False, suffix='.jpg')
+                tf.write(data); tf.close(); _TMP_PHOTOS.append(tf.name)
+                return tf.name
+        except Exception:
+            pass
+    return None
 
 
 def gather_store(conn, store, date):
@@ -244,6 +260,9 @@ def main():
     html = summary_html(summaries, date)
     send_brevo(recipients, subject, html, attachments)
     print('[digest] done:', len(summaries), 'stores,', len(attachments), 'PDFs,', len(recipients), 'recipients')
+    for f in _TMP_PHOTOS:
+        try: os.remove(f)
+        except Exception: pass
 
 
 if __name__ == '__main__':

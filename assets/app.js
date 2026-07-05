@@ -26,7 +26,7 @@ function storeCode(store){
   const parts=String(store||'store').replace(/[^a-z0-9 ]/gi,' ').trim().split(/\s+/).filter(Boolean);
   return (parts.length>1?parts.map(p=>p[0]).join(''):String(parts[0]||'sto').slice(0,3)).toUpperCase();
 }
-function ymdCompact(d){ return (d?new Date(d):new Date()).toISOString().slice(0,10).replace(/-/g,''); }
+function ymdCompact(d){ return dISO(d).replace(/-/g,''); }
 function makeRecordId(prefix,store,d){
   const code=storeCode(storeForWrite(store));
   return `${code}-${prefix}-${ymdCompact(d)}-${Math.floor(1000+Math.random()*9000)}`;
@@ -493,8 +493,22 @@ function maybeStartRouteSync(){
     startAccountSync(true);
   }
 }
+// session-expired guard: fired by api.js when any authorized call returns 401 (token gone/expired)
+let _sessionExpiredShown=false;
+function mcqSessionExpired(){
+  if(_sessionExpiredShown || !State.account) return;   // only when we thought we were signed in
+  _sessionExpiredShown=true;
+  try{ if(window.MCQDB && MCQDB.logout) MCQDB.logout(); }catch(e){}
+  try{ localStorage.removeItem('mcq_token'); }catch(e){}
+  try{ stopLiveRefresh(); if(window.wsStop) wsStop(); stopIdleWatch(); }catch(e){}
+  dataSyncRun++; State.account=null;
+  try{ sessionStorage.removeItem('mcq_acct'); }catch(e){}
+  showLogin('Your session has expired — please sign in again.');
+}
+window.mcqSessionExpired=mcqSessionExpired;
 async function loginAs(role, branch, meta){
-  meta=meta||{};
+  meta=meta||{}; _sessionExpiredShown=false;   // fresh session → re-arm the guard
+
   const name = role==='super' ? 'Head Office' : role==='ba' ? 'Chú Ba' : role==='employee' ? (meta.name||'Staff') : role==='admin' ? (branch+' Manager') : (branch+' Dept Lead');
   const initials = role==='super' ? 'HO' : role==='ba' ? 'CB' : role==='employee' ? (String(meta.name||'S').trim().slice(0,2).toUpperCase()) : branch.slice(0,2).toUpperCase();
   State.account={ name:(meta.name&&role!=='employee'?meta.name:name), role, branch, initials, staffId:meta.staffId||null, staffName:meta.name||null,
@@ -1043,7 +1057,7 @@ function ensureDriverStaff(name, store){
   if((DB.staff||[]).some(s=>s.name===name && s.store===store)) return;  // already a staff member here
   const rec={ id:(typeof storeCode==='function'?storeCode(store):'STF')+'-'+String(20000+Math.floor(Math.random()*9000)),
     name, role:'Driver', dept:'Logistics', store, phone:'', email:'', gender:'', dob:'',
-    start:new Date().toISOString().slice(0,10), active:1 };
+    start:todayISO(), active:1 };
   DB.staff=DB.staff||[]; DB.staff.unshift(rec);
   try{ auditLog('create','staff',rec.id,store,null,rec); }catch(e){}
   toast(`👤 ${name} added to Staff Members (Driver)`);
@@ -1211,7 +1225,7 @@ function setCrumb(ic,title,sub){ $('#crumbs').innerHTML=`<div class="c-ic">${ic}
 function opts(list){ return (list||[]).map(o=>`<option>${esc(o)}</option>`).join(''); }
 function prettyKey(k){ return k.replace(/([A-Z])/g,' $1').replace(/^./,c=>c.toUpperCase()).replace(/Yn$/,'?').trim(); }
 function truncate(s,n){ s=String(s||''); return s.length>n?s.slice(0,n-1)+'…':s; }
-function relTime(d){ if(!d) return ''; const t=new Date(String(d).replace(' ','T')); if(isNaN(t)) return d; const diff=(Date.now()-t)/86400000; if(diff<1)return'today'; if(diff<2)return'yesterday'; if(diff<30)return Math.floor(diff)+'d ago'; return t.toISOString().slice(0,10); }
+function relTime(d){ if(!d) return ''; const t=new Date(String(d).replace(' ','T')); if(isNaN(t)) return d; const diff=(Date.now()-t)/86400000; if(diff<1)return'today'; if(diff<2)return'yesterday'; if(diff<30)return Math.floor(diff)+'d ago'; return dISO(t); }
 let toastT;
 function toast(msg){ let el=$('#toast'); if(!el){el=document.createElement('div');el.id='toast';el.className='toast';document.body.appendChild(el);} el.innerHTML=`<span class="t-ok">✓</span>${esc(msg)}`; el.classList.add('show'); clearTimeout(toastT); toastT=setTimeout(()=>el.classList.remove('show'),2600); }
 

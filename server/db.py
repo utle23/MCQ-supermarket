@@ -150,6 +150,9 @@ CREATE TABLE IF NOT EXISTS accounts (
 CREATE TABLE IF NOT EXISTS device_creds (
   id TEXT PRIMARY KEY, secret_hash TEXT, cred_id TEXT, role TEXT, store_id TEXT,
   staff_id TEXT, staff_name TEXT, account_id TEXT, label TEXT, created_at TEXT, last_used TEXT);
+-- login brute-force throttle: failed attempts per key (IP, or IP+id), auto-locks
+CREATE TABLE IF NOT EXISTS login_throttle (
+  k TEXT PRIMARY KEY, fails INTEGER DEFAULT 0, locked_until REAL DEFAULT 0, updated_at REAL DEFAULT 0);
 -- Deputy attendance: one row per clock-in / clock-out webhook event
 CREATE TABLE IF NOT EXISTS attendance (
   id TEXT PRIMARY KEY, ts_id TEXT, event TEXT, store_id TEXT, staff_id TEXT, staff_name TEXT,
@@ -278,6 +281,63 @@ def init_db():
     conn.commit(); conn.close()
 
 # ---- auth ----
+## ---------- login brute-force throttle ----------
+THROTTLE_LOCK = 300        # lock duration (seconds) = 5 minutes
+THROTTLE_WINDOW = 900      # a fail streak older than this is forgotten (15 min)
+THROTTLE_ID_MAX = 6        # wrong attempts on ONE account (per IP) before that account locks
+THROTTLE_IP_MAX = 20       # wrong attempts from ONE IP across many accounts (anti-scan) — loose
+                           # so a shared store IP isn't locked by a few honest typos
+
+def _throttle_keys(ip, login_id):
+    """Returns [(key, limit)]. The per-account key locks fast (6); the broad per-IP key is
+    lenient (20) so one store's shared connection isn't locked by a couple of typos."""
+    ip = (str(ip or 'unknown').split(',')[0].strip()) or 'unknown'
+    keys = [('ip:' + ip, THROTTLE_IP_MAX)]
+    if str(login_id or '').strip():
+        keys.append(('id:' + ip + ':' + str(login_id).strip(), THROTTLE_ID_MAX))
+    return keys
+
+def login_lock_remaining(ip, login_id):
+    """Returns seconds remaining if any relevant key is locked, else 0."""
+    conn = connect()
+    try:
+        now_t = time.time(); worst = 0
+        for k, _lim in _throttle_keys(ip, login_id):
+            row = conn.execute('SELECT locked_until FROM login_throttle WHERE k=?', (k,)).fetchone()
+            if row and row['locked_until'] and row['locked_until'] > now_t:
+                worst = max(worst, int(row['locked_until'] - now_t))
+        return worst
+    finally:
+        conn.close()
+
+def login_note_fail(ip, login_id):
+    """Record a failed attempt on each key; lock a key once it passes its own limit."""
+    conn = connect()
+    try:
+        now_t = time.time()
+        for k, limit in _throttle_keys(ip, login_id):
+            row = conn.execute('SELECT fails,locked_until,updated_at FROM login_throttle WHERE k=?', (k,)).fetchone()
+            fails = 1
+            if row and row['updated_at'] and (now_t - row['updated_at']) < THROTTLE_WINDOW:
+                fails = int(row['fails'] or 0) + 1
+            locked = now_t + THROTTLE_LOCK if fails >= limit else (row['locked_until'] if row else 0)
+            conn.execute("""INSERT INTO login_throttle(k,fails,locked_until,updated_at) VALUES(?,?,?,?)
+                            ON CONFLICT (k) DO UPDATE SET fails=excluded.fails, locked_until=excluded.locked_until, updated_at=excluded.updated_at""",
+                         (k, fails, locked or 0, now_t))
+        conn.commit()
+    finally:
+        conn.close()
+
+def login_note_ok(ip, login_id):
+    """Successful login clears the counters for its keys (so honest users never accrue a lock)."""
+    conn = connect()
+    try:
+        for k, _lim in _throttle_keys(ip, login_id):
+            conn.execute('DELETE FROM login_throttle WHERE k=?', (k,))
+        conn.commit()
+    finally:
+        conn.close()
+
 def verify_login(mode, store, pw, login_id=None):
     """Returns (role, store_id[, meta]) on success or None. store_id is 'ALL' for super.
     The login form has NO role tabs any more — credentials are self-identifying:

@@ -41,7 +41,7 @@ window.MCQFace = (function(){
     if(!(r&&r.ok&&r.device_id)) throw new Error((r&&r.error)||'Server could not enrol this device');
     var entry={ v:2, id:credId, device_id:r.device_id, secret:r.secret, label:label||who, who:who,
       role:acct.role||'', store:(acct.role==='super'||acct.role==='ba')?'':(acct.branch||''),
-      created:new Date().toISOString().slice(0,10) };
+      created:(window.todayISO?todayISO():new Date().toISOString().slice(0,10)) };
     var list=load().filter(function(x){return x.id!==credId;}); list.push(entry); store(list);
     return entry;
   }

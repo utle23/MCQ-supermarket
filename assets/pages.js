@@ -1611,7 +1611,7 @@ function ckDoSubmit(){
     return {task:r.task, area:r.area, done:!!st.done, note:st.note||'', photos:(st.photos||[]).slice(), temp: st.temp?{value:st.temp.value,inRange:!!st.temp.inRange,defrosting:!!st.defrosting,source:st.temp.source||'',manual:!!st.temp.manual,confirmedBy:st.temp.confirmedBy||'',suggestedValue:st.temp.suggestedValue??null,rawReading:st.temp.rawReading||''}:null }; });
   const doneN=items.filter(i=>i.done).length, totalN=items.length;
   const resp=(State.chk.resp||{})[State.chk.dept]||{};
-  const ymd=new Date().toISOString().slice(0,10);
+  const ymd=todayISO();
   const sub={ id:makeRecordId('CKS',State.branch),
     store:State.branch, dept:State.chk.dept, session:State.chk.session, date:ymd, dayName:new Date().toLocaleDateString(undefined,{weekday:'long'}),
     by:myIdentityName(), responsible:resp.p1||'', created:new Date().toISOString().slice(0,16).replace('T',' '),
@@ -1978,7 +1978,7 @@ function renderStaff(){
   const ed=State.staffEdit, roles=DB.staffRoles||['Staff'];
   let editForm='';
   const cdepts=(DB.checklist&&DB.checklist.depts)||[];
-  if(ed){ const s = ed==='new'?{id:'',name:'',dept:'',role:'',store:State.branch,phone:'',email:'',gender:'',dob:'',start:new Date().toISOString().slice(0,10),cardId:'',address:'',suburb:'',country:'Australia',basis:'Individual',category:'',estatus:'',active:1} : (DB.staff.find(x=>x.id===ed)||{});
+  if(ed){ const s = ed==='new'?{id:'',name:'',dept:'',role:'',store:State.branch,phone:'',email:'',gender:'',dob:'',start:todayISO(),cardId:'',address:'',suburb:'',country:'Australia',basis:'Individual',category:'',estatus:'',active:1} : (DB.staff.find(x=>x.id===ed)||{});
     const storeField=isSuper()
       ? `<select id="st-store"><option value="" ${!s.store?'selected':''}>— No store added —</option>${DB.stores.map(x=>`<option ${x===s.store?'selected':''}>${esc(x)}</option>`).join('')}</select>`
       : `<input type="hidden" id="st-store" value="${esc(State.branch)}"><input value="${esc(State.branch)}" disabled>`;
@@ -2106,7 +2106,7 @@ function staffArchive(id){
   if(!recordInScope(s)){ toast('This staff member belongs to another store'); return; }
   if(!confirm(`Archive ${s.name}?\n\nThey disappear from the directory and all pickers, but everything is kept. If they come back, open 🗄 Archived and press Restore.`)) return;
   const before=JSON.parse(JSON.stringify(s));
-  s.archived=1; s.archivedAt=new Date().toISOString().slice(0,10); s.active=0;
+  s.archived=1; s.archivedAt=todayISO(); s.active=0;
   auditLog('archive','staff',s.id,s.store,before,s);
   if(window.persist) window.persist(); State.staffEdit=null; toast('🗄 '+s.name+' archived — restore any time'); renderStaff();
 }
@@ -2206,7 +2206,7 @@ function expToggle(btn,e){ if(e)e.stopPropagation(); const dd=btn.closest('.exp-
   document.querySelectorAll('.exp-dd.open').forEach(d=>d.classList.remove('open'));
   if(!wasOpen){ dd.classList.add('open'); setTimeout(()=>document.addEventListener('click',expCloseAll,{once:true}),0); } }
 function expCloseAll(){ document.querySelectorAll('.exp-dd.open').forEach(d=>d.classList.remove('open')); }
-function expFileName(title,ext){ return 'MCQ_'+String(title||'report').replace(/[^a-z0-9]+/gi,'_').replace(/^_|_$/g,'')+'_'+new Date().toISOString().slice(0,10)+'.'+ext; }
+function expFileName(title,ext){ return 'MCQ_'+String(title||'report').replace(/[^a-z0-9]+/gi,'_').replace(/^_|_$/g,'')+'_'+todayISO()+'.'+ext; }
 function expDownload(blob,name){ const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download=name; document.body.appendChild(a); a.click(); setTimeout(()=>{URL.revokeObjectURL(a.href); a.remove();},600); }
 function expScope(){ return isSuper()?'All stores':State.branch; }
 function expGetTable(id){ const t=document.getElementById(id); return t?t.innerHTML:null; }
@@ -2299,7 +2299,7 @@ async function ckAllStoresPDF(){
   toast('Building all-stores report…');
   try{ if(window.ensureJsPDF) await ensureJsPDF(); }catch(e){}
   if(!(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine not ready — try again'); return; }
-  const date=(State.chk&&State.chk.date)||new Date().toISOString().slice(0,10);
+  const date=(State.chk&&State.chk.date)||todayISO();
   const subs=(DB.checklistSubs||[]).filter(s=>s.date===date);
   if(!subs.length){ toast('No checklists submitted on '+date); return; }
   const stores=[...new Set(subs.map(s=>s.store))].sort();
@@ -2359,7 +2359,7 @@ async function ckSharePDF(session){
   toast('Building '+session+' PDF…');
   try{ if(window.ensureJsPDF) await ensureJsPDF(); }catch(e){}
   if(!(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine loading — using printable report'); return ckSessionPrint(session,rows); }
-  const date=new Date().toISOString().slice(0,10);
+  const date=todayISO();
   const store=isSuper()?'All stores':State.branch;
   let outCount=0; rows.forEach(r=>{ const st=State.chk.state[r.i]||{}; if(st.temp&&st.temp.inRange===false) outCount++; });
   // preload + downscale photos
@@ -2454,7 +2454,7 @@ function ckSessionPrint(session,rows){
   });
   body+='</tbody>';
   const head='<thead><tr><th style="width:30px">✓</th><th>Task</th><th style="width:360px">Photos</th></tr></thead>';
-  expPrintReport(`${session} Checklist`,head+body,`<b>Store:</b> ${esc(expScope())} &nbsp; <b>Session:</b> ${esc(session)} &nbsp; <b>Date:</b> ${new Date().toISOString().slice(0,10)} &nbsp; <b>Done:</b> ${done}/${total}`);
+  expPrintReport(`${session} Checklist`,head+body,`<b>Store:</b> ${esc(expScope())} &nbsp; <b>Session:</b> ${esc(session)} &nbsp; <b>Date:</b> ${todayISO()} &nbsp; <b>Done:</b> ${done}/${total}`);
 }
 function exportChecklist(fmt){
   const C=DB.checklist, s=State.chk;
@@ -2481,7 +2481,7 @@ function exportChecklist(fmt){
   body+='</tbody>';
   const resp=(State.chk.resp||{})[s.dept]||{};
   const title=`Checklist — ${s.dept} · ${s.session}`;
-  const meta=`<b>Store:</b> ${esc(expScope())} &nbsp; <b>Department:</b> ${esc(s.dept)} &nbsp; <b>Session:</b> ${esc(s.session)} &nbsp; <b>Date:</b> ${new Date().toISOString().slice(0,10)} &nbsp; <b>Done:</b> ${done}/${rows.length}${resp.p1?` &nbsp; <b>Responsible:</b> ${esc(resp.p1)}`:''}${resp.submittedBy?` &nbsp; <b>Submitted by:</b> ${esc(resp.submittedBy)}`:''}`;
+  const meta=`<b>Store:</b> ${esc(expScope())} &nbsp; <b>Department:</b> ${esc(s.dept)} &nbsp; <b>Session:</b> ${esc(s.session)} &nbsp; <b>Date:</b> ${todayISO()} &nbsp; <b>Done:</b> ${done}/${rows.length}${resp.p1?` &nbsp; <b>Responsible:</b> ${esc(resp.p1)}`:''}${resp.submittedBy?` &nbsp; <b>Submitted by:</b> ${esc(resp.submittedBy)}`:''}`;
   const inner=head+body;
   if(fmt==='excel') return expXlsBlob(title,inner,meta);
   if(fmt==='word') return expDocBlob(title,inner,meta);
@@ -2496,7 +2496,7 @@ function expMenu(fnName){
 function expRecords(title,cols,rows,fmt){
   const head='<thead><tr>'+cols.map(c=>`<th>${esc(c.label)}</th>`).join('')+'</tr></thead>';
   const body='<tbody>'+(rows.length?rows.map(r=>'<tr>'+cols.map(c=>{let v=c.get(r); if(v==null)v=''; return `<td>${esc(String(v))}</td>`;}).join('')+'</tr>').join(''):`<tr><td colspan="${cols.length}">No records.</td></tr>`)+'</tbody>';
-  const inner=head+body, meta=`<b>Scope:</b> ${esc(expScope())} &nbsp; <b>Records:</b> ${rows.length} &nbsp; <b>Date:</b> ${new Date().toISOString().slice(0,10)}`;
+  const inner=head+body, meta=`<b>Scope:</b> ${esc(expScope())} &nbsp; <b>Records:</b> ${rows.length} &nbsp; <b>Date:</b> ${todayISO()}`;
   if(fmt==='excel') return expXlsBlob(title,inner,meta);
   if(fmt==='word') return expDocBlob(title,inner,meta);
   return expPrintReport(title,inner,meta);
@@ -2505,7 +2505,7 @@ function expRecords(title,cols,rows,fmt){
 /* ============================================================ CLEANING & MAINTENANCE — editable weekly schedule */
 const SCHED_DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
 function schedWeekStart(off){ const d=new Date(); d.setHours(0,0,0,0); const wd=(d.getDay()+6)%7; d.setDate(d.getDate()-wd+(off||0)*7); return d; }
-function schedWeekKey(off){ return schedWeekStart(off).toISOString().slice(0,10); }
+function schedWeekKey(off){ return dISO(schedWeekStart(off)); }
 function schedTickKey(id,day,off){ return schedWeekKey(off)+'|'+id+'|'+day; }
 function schedTab(t){ State.sched=State.sched||{}; State.sched.tab=t; renderSchedules(); }
 function schedWeek(delta){ State.sched=State.sched||{}; State.sched.week=(State.sched.week||0)+delta; renderSchedules(); }
@@ -2529,7 +2529,7 @@ function schedDay(id,day){ const t=(DB.scheduleTasks||[]).find(x=>x.id===id); if
 function schedCompleteOpen(id,day,off){
   const t=(DB.scheduleTasks||[]).find(x=>x.id===id); if(!t)return;
   const store=schedStore(), date=schedWeekStart(off); date.setDate(date.getDate()+SCHED_DAYS.indexOf(day));
-  State.schedComplete={taskId:id,day,week:off||0,store,date:date.toISOString().slice(0,10),staffName:(t.who||'').split(',')[0].trim(),note:'',photo:null};
+  State.schedComplete={taskId:id,day,week:off||0,store,date:dISO(date),staffName:(t.who||'').split(',')[0].trim(),note:'',photo:null};
   schedCompleteDrawer();
 }
 function schedCompleteSet(field,value){ State.schedComplete=State.schedComplete||{}; State.schedComplete[field]=value; }
@@ -2732,7 +2732,7 @@ function binSetStore(store){ const s=binState(); s.store=store; s.checks={}; s.n
 function binSet(field,value){ const s=binState(); s[field]=value; }
 function binToggleTask(id,on){ const s=binState(); s.checks=s.checks||{}; s.checks[id]=!!on; }
 function binDayDate(day,off){ const start=schedWeekStart(off||0), idx=SCHED_DAYS.indexOf(day), d=new Date(start); d.setDate(start.getDate()+Math.max(0,idx)); return d; }
-function binDayKey(day,off){ return binDayDate(day,off).toISOString().slice(0,10); }
+function binDayKey(day,off){ return dISO(binDayDate(day,off)); }
 function binRecordsForWeek(){
   const s=binState(), store=binStore(), start=schedWeekStart(s.week||0), end=new Date(start); end.setDate(start.getDate()+7);
   return (binCfg().records||[]).filter(r=>(isSuper()?r.store===store:r.store===State.branch) && new Date(r.date)>=start && new Date(r.date)<end);
@@ -2931,7 +2931,7 @@ function mgrSynthSubs(){
   if(State._synthSubs) return State._synthSubs;
   const depts=(DB.checklist&&DB.checklist.depts)||['MANAGER','CASHIER','FV','GROCERY','FROZEN & DAIRY','BUTCHER'];
   const stores=DB.stores, names=DB.staff.map(s=>s.name);
-  const today=new Date(), fmt=d=>d.toISOString().slice(0,10), dn=d=>d.toLocaleDateString(undefined,{weekday:'long'});
+  const today=new Date(), fmt=d=>dISO(d), dn=d=>d.toLocaleDateString(undefined,{weekday:'long'});
   const out=[];
   [0,1,2,3,4,5,6].forEach(off=>{ const d=new Date(today); d.setDate(d.getDate()-off); const ds=fmt(d), dname=dn(d);
     stores.forEach((store,si)=>depts.forEach((dept,di)=>['Opening','Closing'].forEach((session,sei)=>{
@@ -3265,7 +3265,7 @@ function mgrReview(id){
 }
 function renderManager(){
   setAccent('#0f766e'); setCrumb('🛡️','Manager Panel','Verify checklists & action today’s issues');
-  const todayStr=new Date().toISOString().slice(0,10);
+  const todayStr=todayISO();
   if(!State.mgr) State.mgr={sort:'newest',date:todayStr};
   if(!State.mgr.date) State.mgr.date=todayStr;
   if(isSuper()&&!State.mgr.store) State.mgr.store='ALL';
@@ -3378,7 +3378,7 @@ function renderAnalytics(){
 function pgState(){ State.pg=State.pg||{store:isSuper()?'All stores':State.branch,dept:'All departments',area:'All sections',date:''}; if(State.pg.date===undefined) State.pg.date=''; return State.pg; }
 function pgSet(field,value){ const pg=pgState(); pg[field]=value; if(field==='dept') pg.area='All sections'; renderPhotos(); }
 function pgPhotos(){
-  const rows=[], today=new Date().toISOString().slice(0,10);
+  const rows=[], today=todayISO();
   (DB.checklistSubs||[]).forEach(sub=>{
     if(!isSuper()&&sub.store!==State.branch) return;
     (sub.items||[]).forEach(it=>(it.photos||[]).forEach((src,idx)=>rows.push({
@@ -3794,7 +3794,7 @@ async function cfgLoad(store){ const c=cfgState(); c.loading=true; c.error=''; r
 function cfgAudit(action,entity,id,before,after,note){ const c=cfgState(); if(!c.data)return; const u=auditUser(); c.data.auditLogs=c.data.auditLogs||[]; c.data.auditLogs.unshift({id:makeRecordId('AUD',c.store),created:new Date().toISOString(),store:c.store,user:u.name,role:u.role,action,entity,entityId:id,note:note||'',changes:auditDiff(before,after)}); }
 function cfgDirty(){ cfgState().dirty=true; }
 function cfgStaffSet(i,k,v){ const c=cfgState(), row=c.data.staff[i]; if(!row)return; const before=cfgClone(row); row[k]=k==='active'?(v==='1'?1:0):v; row.store=c.store; cfgAudit('update','staff',row.id,before,row); cfgDirty(); }
-function cfgStaffAdd(){ const c=cfgState(); c.data.staff.unshift({id:storeCode(c.store)+'-'+String(20000+Math.floor(Math.random()*9000)),name:'New staff',role:'Staff',store:c.store,phone:'',dob:'',start:new Date().toISOString().slice(0,10),active:1}); cfgAudit('create','staff',c.data.staff[0].id,null,c.data.staff[0]); cfgDirty(); renderStoreConfig(); }
+function cfgStaffAdd(){ const c=cfgState(); c.data.staff.unshift({id:storeCode(c.store)+'-'+String(20000+Math.floor(Math.random()*9000)),name:'New staff',role:'Staff',store:c.store,phone:'',dob:'',start:todayISO(),active:1}); cfgAudit('create','staff',c.data.staff[0].id,null,c.data.staff[0]); cfgDirty(); renderStoreConfig(); }
 function cfgStaffDel(i){ const c=cfgState(), row=c.data.staff[i]; if(!row||!confirm('Delete this staff member from '+c.store+'?'))return; cfgAudit('delete','staff',row.id,row,null); c.data.staff.splice(i,1); cfgDirty(); renderStoreConfig(); }
 function cfgCkSet(i,pos,v){ const c=cfgState(), row=c.data.checklistItems[i]; if(!row)return; const before=cfgClone(row); row[pos]=v; cfgAudit('update','checklistItem',String(i),before,row); cfgDirty(); }
 function cfgCkAdd(){ const c=cfgState(); c.data.checklistItems.unshift(['MANAGER','General','New checklist task','A','']); cfgAudit('create','checklistItem','new',null,c.data.checklistItems[0]); cfgDirty(); renderStoreConfig(); }

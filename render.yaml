@@ -21,6 +21,32 @@ services:
         sync: false
       - key: DEPUTY_TOKEN
         sync: false
+      - key: BREVO_API_KEY        # email (activation, forgot-password, alerts) — set in dashboard
+        sync: false
+
+  # 9 PM (Perth) all-store daily summary email — was a PythonAnywhere scheduled task;
+  # on Render it must be its own Cron Job or it never runs.
+  - type: cron
+    name: mcq-daily-digest
+    runtime: python
+    schedule: "0 13 * * *"        # 13:00 UTC = 21:00 Australia/Perth (UTC+8, no DST)
+    buildCommand: pip install -r requirements.txt
+    startCommand: python server/daily_digest.py
+    envVars:
+      - key: TZ
+        value: Australia/Perth    # so the digest dates itself in Perth time
+      - key: DATABASE_URL
+        fromDatabase:
+          name: mcq-postgres
+          property: connectionString
+      - key: BREVO_API_KEY
+        sync: false               # set on this cron service in the dashboard
+      - key: MCQ_FROM_EMAIL
+        sync: false
+      - key: MCQ_FROM_NAME
+        sync: false
+      - key: CLOUDINARY_URL       # so PDFs can embed photos hosted on Cloudinary
+        sync: false
 databases:
   - name: mcq-postgres
     plan: basic-256mb           # ~US$6/mo; upgrade anytime. Free plan expires after 30 days.

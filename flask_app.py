@@ -36,9 +36,24 @@ try:
 except Exception:
     pass
 
-from flask import Flask, send_from_directory, Response
+import logging, traceback
+from flask import Flask, send_from_directory, Response, request, jsonify
 import app as backend   # server/app.py  (provides the `api` blueprint + add_cors + db)
 import db               # server/db.py
+
+# ---- production logging → stdout (Render/PythonAnywhere capture it in their Logs tab) ----
+logging.basicConfig(level=logging.INFO,
+                    format='%(asctime)s %(levelname)s %(name)s: %(message)s')
+log = logging.getLogger('mcq')
+
+# optional error alerting: set SENTRY_DSN in the env + `pip install sentry-sdk` to enable
+if os.environ.get('SENTRY_DSN'):
+    try:
+        import sentry_sdk
+        sentry_sdk.init(dsn=os.environ['SENTRY_DSN'], traces_sample_rate=0.0)
+        log.info('Sentry error monitoring enabled')
+    except Exception as _se:
+        log.warning('Sentry requested but not initialised: %s', _se)
 
 app = Flask(__name__, static_folder=None)
 # allow large photo uploads and image-in-body posts (Werkzeug caps form FIELDS at 500KB by
@@ -54,6 +69,22 @@ try:
     ws_hub.attach(app, db)
 except Exception as _e:            # flask-sock missing → app still works (clients fall back to polling)
     print('[MCQ] websocket hub disabled:', _e)
+
+# ---- never let an unhandled exception die as an HTML 500: log the full traceback with
+#      request context, and return clean JSON so the frontend's .json() never chokes ----
+@app.errorhandler(Exception)
+def _on_error(e):
+    from werkzeug.exceptions import HTTPException
+    if isinstance(e, HTTPException):
+        return e                      # 401/403/404/413/429… keep their intended status
+    path = request.path if request else '?'
+    log.error('Unhandled error on %s %s (ip=%s)\n%s',
+              request.method if request else '?', path,
+              request.headers.get('X-Forwarded-For', request.remote_addr) if request else '?',
+              traceback.format_exc())
+    if path.startswith('/api/'):
+        return jsonify(ok=False, error='Server error — the team has been notified.'), 500
+    return Response('Something went wrong. Please try again.', status=500, mimetype='text/plain')
 
 # files that must never be served publicly
 BLOCK = {'.git', '.gitignore', 'flask_app.py', 'requirements.txt',

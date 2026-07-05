@@ -134,7 +134,7 @@
     else { v.className='ai-flag'; v.innerHTML=`⚠️ Mismatch — shelf <b>$${shelf.toFixed(2)}</b> vs system <b>$${sys.toFixed(2)}</b> (Δ $${diff.toFixed(2)}). Fix the label to avoid checkout complaints.`; }
   };
   function parseDates(text){ const out=[], re=/(\d{1,2})\s?[\/\.\-]\s?(\d{1,2})\s?[\/\.\-]\s?(\d{2,4})/g; let m; const today=new Date(); today.setHours(0,0,0,0);
-    while((m=re.exec(text||''))){ let d=+m[1],mo=+m[2],y=+m[3]; if(y<100)y+=2000; if(mo>12&&d<=12){const t=d;d=mo;mo=t;} if(mo<1||mo>12||d<1||d>31)continue; const dt=new Date(y,mo-1,d); if(isNaN(dt))continue; const days=Math.round((dt-today)/864e5); out.push({iso:dt.toISOString().slice(0,10),days}); }
+    while((m=re.exec(text||''))){ let d=+m[1],mo=+m[2],y=+m[3]; if(y<100)y+=2000; if(mo>12&&d<=12){const t=d;d=mo;mo=t;} if(mo<1||mo>12||d<1||d>31)continue; const dt=new Date(y,mo-1,d); if(isNaN(dt))continue; const days=Math.round((dt-today)/864e5); out.push({iso:(window.dISO?dISO(dt):dt.toISOString().slice(0,10)),days}); }
     return out; }
   function parsePrices(text){ const out=[], re=/\$?\s?(\d{1,3}\.\d{2})\b/g; let m; while((m=re.exec(text||''))){ const p=parseFloat(m[1]); if(p>0&&p<1000)out.push(p); } return out; }
 
@@ -209,7 +209,7 @@
   }
 
   /* ---------------- Daily Manager Report (reads live data) ---------------- */
-  function aiReport(){ const scope=isSuper()?'All stores':State.branch; const today=new Date().toISOString().slice(0,10);
+  function aiReport(){ const scope=isSuper()?'All stores':State.branch; const today=(window.todayISO?todayISO():new Date().toISOString().slice(0,10));
     const reg=['issue','maintenance','incident','complaint']; const closed=['Closed','Cancelled','Resolved','Store Confirmed','Completed'];
     let open=0; reg.forEach(id=>(DB.modules[id].records||[]).forEach(r=>{ if((isSuper()||r.store===State.branch)&&!closed.includes(r.status)) open++; }));
     const vios=(DB.modules.violation.records||[]).filter(r=>isSuper()||r.store===State.branch).length;

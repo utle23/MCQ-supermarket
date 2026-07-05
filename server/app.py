@@ -54,17 +54,31 @@ def health():
     return jsonify(ok=True, time=db.now(), db_bytes=size, stores=len(db.STORES))
 
 # ---------- auth ----------
+def _client_ip():
+    xff = request.headers.get('X-Forwarded-For', '')
+    return (xff.split(',')[0].strip() if xff else '') or request.remote_addr or 'unknown'
+
 @api.route('/api/login', methods=['POST'])
 def login():
     d = request.get_json(force=True, silent=True) or {}
-    res = db.verify_login(d.get('mode'), d.get('store'), d.get('password'), login_id=d.get('id'))
+    ip = _client_ip(); lid = d.get('id')
+    lock = db.login_lock_remaining(ip, lid)
+    if lock:
+        mins = max(1, (lock + 59) // 60)
+        return jsonify(ok=False, locked=True,
+                       error='Too many failed attempts. Please wait %d minute%s and try again.'
+                             % (mins, '' if mins == 1 else 's')), 429
+    res = db.verify_login(d.get('mode'), d.get('store'), d.get('password'), login_id=lid)
     if isinstance(res, dict) and res.get('wrong_tab'):
+        db.login_note_fail(ip, lid); time.sleep(0.4)
         return jsonify(ok=False, error='This ID belongs to a %s account — please use the %s tab.'
                        % (res['wrong_tab'], res['wrong_tab'])), 401
     if isinstance(res, dict) and res.get('need_id'):
         return jsonify(ok=False, error='Managers & Department Leads now sign in with their personal ID + password. Enter your 4-digit ID. No account yet? Ask Head Office to set up your access.'), 401
     if not res:
+        db.login_note_fail(ip, lid); time.sleep(0.4)   # slow down scripted guessing
         return jsonify(ok=False, error='Invalid credentials'), 401
+    db.login_note_ok(ip, lid)
     role, store = res[0], res[1]
     meta = res[2] if len(res) > 2 else {}
     tok = db.issue_token(role, store, meta.get('staff_id'), meta.get('staff_name'), meta.get('account_id'))

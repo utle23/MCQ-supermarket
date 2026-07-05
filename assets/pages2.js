@@ -112,7 +112,7 @@ function vioNew(){
           <div class="field"><label>Severity</label><select id="vio-sev2">${['Minor','Moderate','Major','Critical'].map(s=>`<option ${s===State.vio.sev?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
           <div class="field"><label>Warning step <span class="auto-tag" id="vio-step-auto" style="display:none">auto</span></label><select id="vio-step" onchange="State.vio.step=this.value">${DB.warningSteps.map(s=>`<option ${s===State.vio.step?'selected':''}>${esc(s)}</option>`).join('')}</select></div>
           <div class="field full" id="vio-suggest-wrap" style="display:none"><div class="vio-suggest" id="vio-suggest"></div></div>
-          <div class="field"><label>Incident date</label><input type="date" id="vio-date" value="${new Date().toISOString().slice(0,10)}"></div>
+          <div class="field"><label>Incident date</label><input type="date" id="vio-date" value="${todayISO()}"></div>
           <div class="field"><label>Follow-up date</label><input type="date" id="vio-follow"></div>
           <div class="field full"><label>Rule</label><input id="vio-rule" placeholder="Pick a rule card →" value="${esc(State.vio.ruleTitle||'')}" readonly></div>
           <div class="field full"><label>Description <span class="req">*</span></label><textarea id="vio-desc" placeholder="Describe the exact violation…"></textarea></div>
@@ -231,7 +231,7 @@ function trnForm(){
         <div class="field"><label>Trainee <span class="req">*</span></label><input id="trn-name" list="trn-staff" placeholder="Select or type name"><datalist id="trn-staff">${staff.map(n=>`<option value="${esc(n)}">`).join('')}</datalist></div>
         <div class="field"><label>Role <span class="req">*</span></label><select id="trn-role" onchange="trnRole(this.value)"><option value="">— Select role —</option>${roles.map(r=>`<option>${esc(r)}</option>`).join('')}</select></div>
         <div class="field"><label>Trainer</label><input id="trn-trainer" list="trn-staff" placeholder="Who ran the training?"></div>
-        <div class="field"><label>Date</label><input type="date" id="trn-date" value="${new Date().toISOString().slice(0,10)}"></div>
+        <div class="field"><label>Date</label><input type="date" id="trn-date" value="${todayISO()}"></div>
       </div></div></div>
     <div class="card trn-sec"><div class="trn-sec-h"><span class="sec-num">2</span> Training topics <span class="trn-count" id="trn-count">0 achieved · 0 needs practice</span></div><div class="card-pad">
       <div class="trn-legend"><span><i class="dot" style="background:#43A047"></i>Achieved</span><span><i class="dot" style="background:#FB8C00"></i>Needs practice</span><span><i class="dot" style="background:#9E9E9E"></i>Not covered</span></div>
@@ -440,7 +440,7 @@ function bdSubmit(){ const staff=$('#bd-staff').value.trim(); if(!staff||staff.s
   if(!person.dob){ toast('This person has no date of birth — add it in Staff Members first'); return; }
   const recStore=storeForWrite(person.store||State.branch);
   const ex=DB.modules.birthday.records.find(r=>(r.staffId&&String(r.staffId)===String(person.id))||(r.staffName===staff&&r.store===recStore));
-  const rec={id:ex?ex.id:makeRecordId('BDY',recStore),staffId:person.id,staffName:staff,store:recStore,birthday:person.dob,favoriteGift:$('#bd-gift').value,status:$('#bd-status').value,created:new Date().toISOString().slice(0,10)};
+  const rec={id:ex?ex.id:makeRecordId('BDY',recStore),staffId:person.id,staffName:staff,store:recStore,birthday:person.dob,favoriteGift:$('#bd-gift').value,status:$('#bd-status').value,created:todayISO()};
   if(ex){ const before=JSON.parse(JSON.stringify(ex)); Object.assign(ex,rec); auditLog('update','birthday',ex.id,ex.store,before,ex); }
   else { auditLog('create','birthday',rec.id,rec.store,null,rec); DB.modules.birthday.records.unshift(rec); }
   if(window.persist) window.persist();
