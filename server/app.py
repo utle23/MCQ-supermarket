@@ -53,6 +53,20 @@ def health():
     size = os.path.getsize(db.DB_PATH) if os.path.exists(db.DB_PATH) else 0
     return jsonify(ok=True, time=db.now(), db_bytes=size, stores=len(db.STORES))
 
+# ---------- 9:30 PM daily digest, triggerable by an external cron (cron-job.org) ----------
+# Protect with a shared secret in the URL: /api/cron/daily-digest?key=<CRON_SECRET>
+# (&email=someone@x.com to test-send to one address). Runs in a background thread so the
+# cron caller gets an instant 200 and never times out while 6 PDFs build + email.
+@api.route('/api/cron/daily-digest', methods=['GET', 'POST'])
+def cron_daily_digest():
+    secret = os.environ.get('CRON_SECRET', '')
+    if not secret or (request.args.get('key') or '') != secret:
+        abort(403)
+    override = request.args.get('email') or None
+    import threading, daily_digest
+    threading.Thread(target=lambda: daily_digest.run(override), daemon=True).start()
+    return jsonify(ok=True, started=True, note='digest is building & emailing in the background')
+
 # ---------- auth ----------
 def _client_ip():
     xff = request.headers.get('X-Forwarded-For', '')
