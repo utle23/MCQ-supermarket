@@ -55,6 +55,8 @@ def login():
     if isinstance(res, dict) and res.get('wrong_tab'):
         return jsonify(ok=False, error='This ID belongs to a %s account — please use the %s tab.'
                        % (res['wrong_tab'], res['wrong_tab'])), 401
+    if isinstance(res, dict) and res.get('need_id'):
+        return jsonify(ok=False, error='Managers & Department Leads now sign in with their personal ID + password. Enter your 4-digit ID. No account yet? Ask Head Office to set up your access.'), 401
     if not res:
         return jsonify(ok=False, error='Invalid credentials'), 401
     role, store = res[0], res[1]

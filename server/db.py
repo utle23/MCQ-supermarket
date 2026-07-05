@@ -295,14 +295,12 @@ def verify_login(mode, store, pw, login_id=None):
                                (str(pw or '').strip(),)).fetchone()
             if not row or row['store_id'] not in STORES: return None
             return ('employee', row['store_id'], {'staff_id': row['staff_id'], 'staff_name': row['staff_name']})
-        if mode == 'admin':
-            if store not in STORES: return None
-            row = conn.execute("SELECT password_hash FROM users WHERE role='admin' AND store_id=?", (store,)).fetchone()
-            return ('admin', store) if row and row['password_hash'] == hash_pw(pw) else None
-        # staff (Department Lead): per-store password
-        if store not in STORES: return None
-        row = conn.execute("SELECT password_hash FROM users WHERE role='staff' AND store_id=?", (store,)).fetchone()
-        return ('staff', store) if row and row['password_hash'] == hash_pw(pw) else None
+        # Manager & Department Lead no longer use a shared per-store password —
+        # each person signs in with their personal ID + password (which also enforces
+        # that they can only enter the access level assigned to them).
+        if mode in ('admin', 'staff'):
+            return {'need_id': True}
+        return None
     finally:
         conn.close()
 

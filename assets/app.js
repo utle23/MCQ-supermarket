@@ -103,7 +103,6 @@ function showLogin(notice){
   document.getElementById('boot-splash')?.remove();
   document.body.classList.add('on-login');
   $('#app').style.display='none';
-  const branches = DB.branches.map(b=>`<option value="${esc(b)}">${b==='Demo'?'🎬 Demo (sample data)':'MCQ '+esc(b)}</option>`).join('');
   $('#login-root').style.display='flex';
   $('#login-root').innerHTML = `
     <div class="login-bg"><span class="orb o1"></span><span class="orb o2"></span><span class="orb o3"></span><span class="orb o4"></span></div>
@@ -121,11 +120,7 @@ function showLogin(notice){
         <button class="seg-btn" data-mode="super"><i class="fas fa-crown"></i><span>Super</span></button>
         <button class="seg-btn" data-mode="ba"><span>Chú Ba</span></button>
       </div>
-      <div id="login-store-row">
-        <label class="login-lbl">Store / Branch</label>
-        <select id="login-branch" class="login-input">${branches}</select>
-      </div>
-      <label class="login-lbl">ID <span class="login-opt">· 4-digit personal ID (leave empty to use a store password)</span></label>
+      <label class="login-lbl">ID <span class="login-opt" id="login-id-opt">· your 4-digit personal ID</span></label>
       <input id="login-id" class="login-input" inputmode="numeric" maxlength="4" placeholder="e.g. 2345" autocomplete="off">
       <label class="login-lbl">Password</label>
       <div class="login-pw">
@@ -155,7 +150,7 @@ function showLogin(notice){
     $$('#login-mode .seg-btn').forEach(x=>x.classList.toggle('active',x===b));
     updateLoginHint();
   });
-  $('#login-branch').addEventListener('change',updateLoginHint);
+  $('#login-id').addEventListener('keydown',e=>{ if(e.key==='Enter') doLogin(); });
   $('#login-pw').addEventListener('keydown',e=>{ if(e.key==='Enter') doLogin(); });
   updateLoginHint();
 }
@@ -204,7 +199,7 @@ async function actLookup(){
       <h2 class="act-h">Already activated</h2>
       <p class="act-p">This email already has an account.</p>
       <div class="act-id-box"><span class="act-id-lbl">Your ID</span><span class="act-id">${esc(r.id)}</span></div>
-      <p class="act-p">Sign in on the <b>${esc(r.tab)}</b> tab with your ID and password.<br>Forgot the password? Ask Head Office to reset it.</p>
+      <p class="act-p">Sign in on the <span class="act-tab">${esc(r.tab)}</span> tab with your ID and password.<br>Forgot the password? Ask Head Office to reset it.</p>
       <button class="login-btn act-cta" onclick="actPrefill('${esc(r.id)}','${esc(r.role)}')">Go to sign in →</button>`);
     return;
   }
@@ -245,7 +240,7 @@ async function actCreate(){
     <p class="act-p">Your account is ready. This is your permanent ID — save it:</p>
     <div class="act-id-box"><span class="act-id-lbl">Your ID</span><span class="act-id">${esc(r.id)}</span></div>
     <div class="act-access"><span class="act-chip">${esc(roleName)}</span>${r.store?`<span class="act-chip act-chip-store">🏪 ${esc(r.store)}</span>`:''}</div>
-    <p class="act-p">Sign in on the <b>${esc(r.tab)}</b> tab with this ID and your new password.${r.needs_profile?'<br>📋 After signing in, please complete <b>My Profile</b> first.':''}</p>
+    <p class="act-p">Sign in on the <span class="act-tab">${esc(r.tab)}</span> tab with this ID and your new password.${r.needs_profile?'<br>📋 After signing in, please complete <b>My Profile</b> first.':''}</p>
     <button class="login-btn act-cta" onclick="actPrefill('${esc(r.id)}','${esc(r.role)}')">Sign in now →</button>`);
 }
 function actPrefill(id,role){
@@ -257,26 +252,32 @@ function actPrefill(id,role){
 }
 window.actOpen=actOpen; window.actClose=actClose; window.actLookup=actLookup; window.actCreate=actCreate; window.actPrefill=actPrefill;
 function loginFail(m){ const e=$('#login-err'); if(e) e.textContent='❌ '+m; const c=$('.login-card'); if(c){ c.classList.add('shake'); setTimeout(()=>c.classList.remove('shake'),450); } }
-function updateLoginHint(){ const el=$('#login-hint'); if(!el) return; const mode=loginMode(), branch=$('#login-branch')?.value;
-  const row=$('#login-store-row'); if(row) row.style.display=(mode==='super'||mode==='ba'||mode==='employee')?'none':'block';
-  el.innerHTML = mode==='super' ? `👑 Super Admin — all stores &amp; cross-store compare`
-    : mode==='ba' ? `👓 Chú Ba — view checklist results across all stores (read-only)`
-    : mode==='admin' ? `🛡️ Manager — ${esc(branch||'this store')} only`
+function updateLoginHint(){ const el=$('#login-hint'); if(!el) return; const mode=loginMode();
+  // ID is required for Manager/Dept Lead (personal login); optional for the others
+  const opt=$('#login-id-opt'); if(opt) opt.textContent=(mode==='admin'||mode==='staff')?'· your 4-digit personal ID (required)':'· 4-digit personal ID (optional)';
+  el.innerHTML = mode==='super' ? `👑 Super Admin — enter the master password (all stores)`
+    : mode==='ba' ? `👓 Chú Ba — enter the master password (read-only, all stores)`
+    : mode==='admin' ? `🛡️ Manager — sign in with your personal ID + password`
     : mode==='employee' ? `🧑‍🏭 Staff — enter your numeric password`
-    : `🧑‍💼 Department Lead — ${esc(branch||'your store')}`; }
+    : `🧑‍💼 Department Lead — sign in with your personal ID + password`; }
 function doLogin(){
-  const pw=$('#login-pw').value.trim(), branch=$('#login-branch').value, mode=loginMode();
+  const pw=$('#login-pw').value.trim(), mode=loginMode();
+  const loginId=($('#login-id')?.value||'').trim();
   $('#login-err').textContent='';
-  // server-checked login when the PythonAnywhere API backend is active (passwords live on the server)
+  // Manager & Dept Lead must use their personal ID (store is derived from the account)
+  if((mode==='admin'||mode==='staff') && !loginId){
+    return loginFail('Enter your 4-digit personal ID. No account yet? Ask Head Office to set up your access.');
+  }
+  // server-checked login when the API backend is active (passwords live on the server)
   if(window.MCQDB && MCQDB._api && MCQDB.login){
     const btn=$('.login-btn'); if(btn){ btn.disabled=true; btn.textContent='Signing in…'; }
-    const loginId=($('#login-id')?.value||'').trim();
-    MCQDB.login(mode, branch, pw, loginId).then(res=>{
+    MCQDB.login(mode, '', pw, loginId).then(res=>{
       if(res && res.ok){ loginAs(res.role, (res.role==='super'||res.role==='ba')?'All stores':res.store, {staffId:res.staff_id, name:res.staff_name, accountId:res.account_id, needsProfile:res.needs_profile, acctAdmin:res.acct_admin}); }
       else { if(btn){ btn.disabled=false; btn.textContent='Sign In →'; } loginFail(res&&res.error?res.error:'Incorrect password.'); }
     }).catch(()=>{ if(btn){ btn.disabled=false; btn.textContent='Sign In →'; } loginFail('Cannot reach the server.'); });
     return;
   }
+  // offline fallback (only when the server API is unavailable): shared master passwords still work
   if(mode==='super'){
     if(pw===DB.auth.superAdminPassword) return loginAs('super','All stores');
     return loginFail('Incorrect super admin password.');
@@ -285,18 +286,8 @@ function doLogin(){
     if(pw===(DB.auth.baPassword||'19')) return loginAs('ba','All stores');
     return loginFail('Incorrect Chú Ba password.');
   }
-  if(mode==='admin'){
-    if(pw===(DB.auth.adminPasswords||{})[branch]) return loginAs('admin',branch);
-    return loginFail('Incorrect admin password for '+branch+'.');
-  }
-  if(mode==='employee'){
-    // individual staff logins live only on the server — no offline fallback
-    return loginFail('Staff logins need an internet connection. Please try again when online.');
-  }
-  // staff: must match THIS branch's password
-  if(pw===DB.auth.branchPasswords[branch]) return loginAs('staff',branch);
-  if(Object.values(DB.auth.adminPasswords||{}).includes(pw)) return loginFail('That is an admin password — switch to the Admin tab.');
-  loginFail(`Wrong password for MCQ ${branch}.`);
+  // Manager / Dept Lead / Staff logins live on the server — no offline fallback
+  return loginFail('This account needs an internet connection. Please try again when online.');
 }
 let dataSyncRun = 0;
 function syncStillCurrent(run,account){ return run===dataSyncRun && State.account===account; }

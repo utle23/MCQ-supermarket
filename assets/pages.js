@@ -355,7 +355,6 @@ function renderEmployeeProfile(){
       <div class="field"><label>Gender</label><select id="ep-gender"><option value=""></option>${sel(s.gender,['Male','Female','Other'])}</select></div>
       <div class="field"><label>Date of birth</label><input type="date" id="ep-dob" value="${esc(s.dob||'')}"></div>
       <div class="field"><label>Card ID</label><input id="ep-cardid" value="${esc(s.cardId||'')}"></div>
-      <div class="field"><label>Tax File Number</label><input id="ep-tfn" value="${esc(s.tfn||'')}"></div>
       <div class="field"><label>Street address</label><input id="ep-address" value="${esc(s.address||'')}"></div>
       <div class="field"><label>Suburb / City</label><input id="ep-suburb" value="${esc(s.suburb||'')}"></div>
       <div class="field"><label>Country</label><input id="ep-country" value="${esc(s.country||'')}"></div>
@@ -414,7 +413,7 @@ async function empProfileSave(){
   if(!s.id){ toast('Your profile is not linked to a staff record — ask your manager.'); return; }
   const patch={ name:g('ep-name').trim()||s.name, phone:g('ep-phone'), email:g('ep-email'), gender:g('ep-gender'),
     dept:g('ep-dept'), role:g('ep-role'), classification:g('ep-role'),
-    dob:g('ep-dob'), cardId:g('ep-cardid'), tfn:g('ep-tfn'), address:g('ep-address'), suburb:g('ep-suburb'), country:g('ep-country') };
+    dob:g('ep-dob'), cardId:g('ep-cardid'), address:g('ep-address'), suburb:g('ep-suburb'), country:g('ep-country') };
   if(State.empPhoto) patch.photo=State.empPhoto;
   const newStore=g('ep-store');
   if(newStore && newStore!==s.store) patch.store=newStore;   // moving store re-homes the staff row + account
@@ -1935,7 +1934,7 @@ function renderStaff(){
   const ed=State.staffEdit, roles=DB.staffRoles||['Staff'];
   let editForm='';
   const cdepts=(DB.checklist&&DB.checklist.depts)||[];
-  if(ed){ const s = ed==='new'?{id:'',name:'',dept:'',role:'',store:State.branch,phone:'',email:'',gender:'',dob:'',start:new Date().toISOString().slice(0,10),cardId:'',tfn:'',address:'',suburb:'',country:'Australia',basis:'Individual',category:'',estatus:'',active:1} : (DB.staff.find(x=>x.id===ed)||{});
+  if(ed){ const s = ed==='new'?{id:'',name:'',dept:'',role:'',store:State.branch,phone:'',email:'',gender:'',dob:'',start:new Date().toISOString().slice(0,10),cardId:'',address:'',suburb:'',country:'Australia',basis:'Individual',category:'',estatus:'',active:1} : (DB.staff.find(x=>x.id===ed)||{});
     const storeField=isSuper()
       ? `<select id="st-store"><option value="" ${!s.store?'selected':''}>— No store added —</option>${DB.stores.map(x=>`<option ${x===s.store?'selected':''}>${esc(x)}</option>`).join('')}</select>`
       : `<input type="hidden" id="st-store" value="${esc(State.branch)}"><input value="${esc(State.branch)}" disabled>`;
@@ -1957,7 +1956,6 @@ function renderStaff(){
         <div class="field"><label>Date of birth</label><input type="date" id="st-dob" value="${esc(s.dob||'')}"></div>
         <div class="field"><label>Start date</label><input type="date" id="st-start" value="${esc(s.start||'')}"></div>
         <div class="field"><label>Card ID</label><input id="st-cardid" value="${esc(s.cardId||'')}"></div>
-        <div class="field"><label>Tax File Number</label><input id="st-tfn" value="${esc(s.tfn||'')}"></div>
         <div class="field"><label>Street address</label><input id="st-address" value="${esc(s.address||'')}"></div>
         <div class="field"><label>Suburb / City</label><input id="st-suburb" value="${esc(s.suburb||'')}"></div>
         <div class="field"><label>Country</label><input id="st-country" value="${esc(s.country||'')}"></div>
@@ -2043,7 +2041,7 @@ function staffSave(ed){
   const adminRole=document.getElementById('st-admin')?.checked||false;
   const roles=[...document.querySelectorAll('.st-role-cb:checked')].map(c=>c.value);
   const rec={name,dept:g('st-dept'),role,classification:role,roles,admin:adminRole,store,phone:g('st-phone'),email:g('st-email'),gender:g('st-gender'),
-    dob:g('st-dob'),start:g('st-start'),cardId:g('st-cardid'),tfn:g('st-tfn'),address:g('st-address'),suburb:g('st-suburb'),
+    dob:g('st-dob'),start:g('st-start'),cardId:g('st-cardid'),address:g('st-address'),suburb:g('st-suburb'),
     country:g('st-country'),basis:g('st-basis'),category:g('st-cat'),estatus:g('st-estatus'),active:g('st-active')==='1'?1:0};
   if(ed==='new'){ rec.id=storeCode(store)+'-'+String(20000+Math.floor(Math.random()*9000)); auditLog('create','staff',rec.id,rec.store,null,rec); DB.staff.unshift(rec); }
   else { const s=DB.staff.find(x=>x.id===ed); if(!recordInScope(s)){ toast('This staff member belongs to another store'); return; } if(s){ const before=JSON.parse(JSON.stringify(s)); Object.assign(s,rec); auditLog('update','staff',s.id,s.store,before,s); } }

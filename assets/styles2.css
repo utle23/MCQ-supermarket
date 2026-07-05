@@ -1438,6 +1438,8 @@ html,body{max-width:100%}
 .act-access{display:flex;gap:8px;justify-content:center;margin-bottom:12px;flex-wrap:wrap}
 .act-chip{background:#0e9f6e;color:#fff;font-weight:800;font-size:12.5px;padding:6px 14px;border-radius:999px}
 .act-chip-store{background:#0891b2}
+/* highlighted access-tab name inside activation messages (e.g. "Manager") */
+.act-tab{color:#0e9f6e;font-weight:800;background:#e7f7f0;border:1px solid #b6ecd6;padding:1px 9px;border-radius:7px;white-space:nowrap}
 .login-err:empty{display:none}
 /* profile: about-me + setup banner */
 .ep-setup-banner{display:flex;align-items:center;gap:13px;background:linear-gradient(135deg,#fffbeb,#fef3c7);border:1.5px solid #fcd34d;border-radius:15px;padding:13px 17px;margin-bottom:15px;cursor:pointer;transition:.14s}
