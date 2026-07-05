@@ -25,6 +25,17 @@ import os, sys
 BASE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(BASE, 'server'))   # so `import app`/`import db` resolve to server/*
 
+# non-secret service defaults; the SECRET keys (OpenAI/Brevo) come from env vars on
+# Render/PythonAnywhere, or from server/keys_local.py (gitignored) for local dev —
+# this repo is public, so GitHub blocks key pushes and OpenAI auto-revokes leaked keys.
+os.environ.setdefault('OPENAI_VISION_MODEL', 'gpt-4o')
+os.environ.setdefault('MCQ_FROM_EMAIL', 'mcqcafe.notify@gmail.com')
+os.environ.setdefault('MCQ_FROM_NAME', 'MCQ Supermarket Notification')
+try:
+    import keys_local   # noqa: F401 — sets OPENAI_API_KEY / BREVO_API_KEY when present
+except Exception:
+    pass
+
 from flask import Flask, send_from_directory, Response
 import app as backend   # server/app.py  (provides the `api` blueprint + add_cors + db)
 import db               # server/db.py
@@ -37,6 +48,12 @@ app.config['MAX_FORM_MEMORY_SIZE'] = 32 * 1024 * 1024   # Werkzeug 3.1+ (ignored
 db.init_db()                       # create/seed SQLite on first boot
 app.register_blueprint(backend.api)  # mounts /api/* on this same app
 backend.add_cors(app)              # harmless on same-origin; helps if you ever split origins
+# realtime WebSocket hub (/api/ws) — clients get push hints instead of polling
+try:
+    import ws_hub
+    ws_hub.attach(app, db)
+except Exception as _e:            # flask-sock missing → app still works (clients fall back to polling)
+    print('[MCQ] websocket hub disabled:', _e)
 
 # files that must never be served publicly
 BLOCK = {'.git', '.gitignore', 'flask_app.py', 'requirements.txt',

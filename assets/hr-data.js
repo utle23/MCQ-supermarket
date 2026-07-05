@@ -7,17 +7,17 @@
    ============================================================ */
 
 /* ---------- Auth & branches ---------- */
-DB.branches = ['Morley','Mirrabooka','Malaga','Subiaco','Armadale','Warehouse','Demo'];
+DB.branches = ['Morley','Mirrabooka','Malaga','Subiaco','Armadale','Warehouse'];
 DB.auth = {
   adminPasswords: {                       // each store has its OWN admin password
     'Morley':'1010', 'Mirrabooka':'2020', 'Malaga':'3030', 'Subiaco':'4040',
-    'Armadale':'5050', 'Warehouse':'8080', 'Demo':'0000',
+    'Armadale':'5050', 'Warehouse':'8080',
   },
   superAdminPassword: '99999',             // super admin — ALL stores + cross-store compare
   baPassword: '19',                        // Chú Ba — read-only checklist viewer (all stores)
   branchPasswords: {                      // each branch has its OWN staff password
     'Morley':'1111', 'Mirrabooka':'2222', 'Malaga':'3333', 'Subiaco':'4444',
-    'Armadale':'5555', 'Warehouse':'8000', 'Demo':'0000',
+    'Armadale':'5555', 'Warehouse':'8000',
   },
   idleMinutes: 30,            // auto-logout after 30 min idle
   absoluteHours: 8,

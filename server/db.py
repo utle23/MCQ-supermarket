@@ -66,7 +66,7 @@ def _pg_ddl(script):
     s = s.replace('created_at REAL', 'created_at DOUBLE PRECISION').replace('expires_at REAL', 'expires_at DOUBLE PRECISION')
     return s
 
-STORES = ['Morley', 'Mirrabooka', 'Malaga', 'Subiaco', 'Armadale', 'Warehouse', 'Demo']
+STORES = ['Morley', 'Mirrabooka', 'Malaga', 'Subiaco', 'Armadale', 'Warehouse']
 # Stores that were removed — their data is purged on init (see init_db).
 RETIRED_STORES = ['Beechboro Fresh', 'Market West']
 
@@ -76,9 +76,9 @@ BA_PW = '19'   # "Chú Ba" — read-only viewer of checklist results across ALL 
 # Per-store admin passwords (each store admin has its own). Change here, then the next
 # app start re-seeds new ones (existing data is untouched).
 ADMIN_PW = {'Morley':'1010','Mirrabooka':'2020','Malaga':'3030','Subiaco':'4040',
-            'Armadale':'5050','Warehouse':'8080','Demo':'0000'}
+            'Armadale':'5050','Warehouse':'8080'}
 BRANCH_PW = {'Morley':'1111','Mirrabooka':'2222','Malaga':'3333','Subiaco':'4444',
-             'Armadale':'5555','Warehouse':'8000','Demo':'0000'}
+             'Armadale':'5555','Warehouse':'8000'}
 
 TOKEN_TTL = 60 * 60 * 24 * 7    # 7 days (was 30) — shorter window if a token leaks
 
@@ -308,6 +308,24 @@ def verify_login(mode, store, pw, login_id=None):
     finally:
         conn.close()
 
+# ---------- realtime: tiny change-hints pushed to connected WebSocket clients ----------
+EVENT_SINKS = []   # ws_hub registers its broadcaster here (single-process / SQLite path)
+def emit_event(what):
+    """Notify every connected client that `what` changed ('inbox' / 'announcements').
+    Postgres: NOTIFY reaches every gunicorn worker's listener thread. Fire-and-forget."""
+    payload = json.dumps({'what': what})
+    try:
+        if IS_PG:
+            conn = connect()
+            try: conn.execute("SELECT pg_notify('mcq_events', ?)", (payload,))
+            finally: conn.close()
+        else:
+            for cb in EVENT_SINKS:
+                try: cb(payload)
+                except Exception: pass
+    except Exception:
+        pass
+
 def issue_token(role, store_id, staff_id=None, staff_name=None, account_id=None):
     tok = secrets.token_hex(24)
     conn = connect()
@@ -427,7 +445,7 @@ def delete_staff_account(store, staff_id):
 # Every person activates once with the Gmail they use in Deputy: matched against the chosen
 # store's staff directory -> gets a unique 4-digit ID (first digit = store) + their own password.
 ACCT_ID_PREFIX = {'Morley': '1', 'Mirrabooka': '2', 'Malaga': '3', 'Subiaco': '4',
-                  'Armadale': '5', 'Warehouse': '8', 'Demo': '9'}
+                  'Armadale': '5', 'Warehouse': '8'}
 ACCT_TABS = {'employee': 'Staff', 'staff': 'Dept Lead', 'admin': 'Manager', 'super': 'Super'}
 
 def _gen_account_id(conn, store):
@@ -1042,6 +1060,7 @@ def send_message(au, store, kind, subject, body_html, to_staff_id=None, to_store
             thread_id = 'T' + str(mid)
             conn.execute('UPDATE messages SET thread_id=? WHERE id=?', (thread_id, mid))
         conn.commit()
+        emit_event('inbox')
         return {'id': mid, 'thread_id': thread_id}
     finally:
         conn.close()

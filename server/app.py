@@ -427,6 +427,7 @@ def announcement_post():
         require_store(au, store)                           # Manager pinned to own store
     aid = db.post_announcement(au, store, d.get('title'), d.get('body_html'), d.get('image_id'), d.get('department'), d.get('attachments'))
     db.write_audit(uid(au), store, 'post', 'announcement', str(aid), None, {'title': d.get('title')})
+    db.emit_event('announcements')
     return jsonify(ok=True, id=aid)
 
 @api.route('/api/announcement/update', methods=['POST'])
@@ -435,7 +436,9 @@ def announcement_update():
     if au['role'] not in ('super', 'admin', 'staff'): abort(403)
     d = request.get_json(force=True, silent=True) or {}
     ok = db.update_announcement(au, d.get('id'), d.get('title'), d.get('body_html'), d.get('image_id'), d.get('attachments'), d.get('department'), d.get('store'))
-    if ok: db.write_audit(uid(au), au.get('store_id') or '', 'update', 'announcement', str(d.get('id')), None, {'title': d.get('title')})
+    if ok:
+        db.write_audit(uid(au), au.get('store_id') or '', 'update', 'announcement', str(d.get('id')), None, {'title': d.get('title')})
+        db.emit_event('announcements')
     return jsonify(ok=ok)
 
 @api.route('/api/announcement/delete', methods=['POST'])
@@ -444,6 +447,7 @@ def announcement_delete():
     d = request.get_json(force=True, silent=True) or {}
     ok = db.delete_announcement(au, d.get('id'))
     if not ok: abort(403)
+    db.emit_event('announcements')
     return jsonify(ok=True)
 
 @api.route('/api/announcement/pin', methods=['POST'])
@@ -452,6 +456,7 @@ def announcement_pin():
     d = request.get_json(force=True, silent=True) or {}
     ok = db.set_announcement_pin(au, d.get('id'), bool(d.get('pinned')))
     if not ok: abort(403)
+    db.emit_event('announcements')
     return jsonify(ok=True)
 
 # ---------- store list / summary ----------

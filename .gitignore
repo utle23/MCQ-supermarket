@@ -22,3 +22,5 @@ server/__pycache__/
 
 # generated user guide (local only — has screenshots)
 MCQ_Supermarket_User_Guide.pdf
+.claude/
+server/keys_local.py

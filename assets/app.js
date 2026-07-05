@@ -539,20 +539,45 @@ let _unreadTimer=null;
 function startUnreadPoll(){
   if(!window.mcqRefreshUnread) return;
   try{ mcqRefreshUnread(); }catch(e){}
+  wsStart();                                          // realtime push — polling below is only the fallback
   if(_unreadTimer) return;
-  // 12s while the tab is VISIBLE (fast message delivery), zero traffic while hidden —
-  // net server load is lower than the old always-on 30s poll, yet delivery feels 2-3x faster.
+  // fallback poll: 12s while visible WITHOUT a live socket; a light 90s safety net with one.
   _unreadTimer=setInterval(()=>{
     if(!State.account) return;
     if(document.hidden) return;                       // backgrounded tab / phone in pocket: no polling
+    if(window.__mcqWsLive){ if(Date.now()-(_wsLastBeat||0)<90000) return; }   // socket alive → no HTTP polling
     const busy=document.getElementById('mcq-modal') || $('.drawer.open');
     const ae=document.activeElement, typing=ae&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName||'');
     if(busy||typing) return;
     try{ mcqRefreshUnread(); }catch(e){}
   }, 12000);
   // coming back to the tab → check mail immediately (feels instant after unlocking the phone)
-  document.addEventListener('visibilitychange',()=>{ if(!document.hidden && State.account){ try{ mcqRefreshUnread(); }catch(e){} } });
+  document.addEventListener('visibilitychange',()=>{ if(!document.hidden && State.account){ try{ mcqRefreshUnread(); }catch(e){} wsStart(); } });
 }
+/* ---- realtime: one WebSocket per signed-in client; server pushes tiny change-hints
+   ({"what":"inbox"} / {"what":"announcements"}) and we refetch through the normal
+   authorized endpoints. Auto-reconnects with backoff; polling above is the safety net. */
+let _ws=null,_wsRetry=800,_wsPing=null,_wsLastBeat=0;
+function wsStart(){
+  if(_ws || !State.account || !window.WebSocket) return;
+  const tok=(window.localStorage&&localStorage.getItem('mcq_token'))||''; if(!tok) return;
+  let url; try{ url=(location.protocol==='https:'?'wss://':'ws://')+location.host+'/api/ws?token='+encodeURIComponent(tok); }catch(e){ return; }
+  try{ _ws=new WebSocket(url); }catch(e){ _ws=null; return; }
+  _ws.onopen=()=>{ window.__mcqWsLive=true; _wsLastBeat=Date.now(); _wsRetry=800;
+    clearInterval(_wsPing); _wsPing=setInterval(()=>{ try{ if(_ws&&_ws.readyState===1) _ws.send('ping'); }catch(e){} },25000); };
+  _ws.onmessage=ev=>{ _wsLastBeat=Date.now(); let d={}; try{ d=JSON.parse(ev.data); }catch(e){ return; }
+    if(d.what==='inbox'){
+      try{ mcqRefreshUnread(); }catch(e){}
+      // live-update the inbox list when it's on screen (never while a modal/composer is open)
+      if(State.route&&State.route.mod==='inbox' && window.renderInbox && !document.getElementById('mcq-modal')) try{ renderInbox(); }catch(e){}
+    }
+    if(d.what==='announcements' && State.route&&State.route.mod==='announcements' && window.renderAnnouncements && !document.getElementById('mcq-modal')) try{ renderAnnouncements(); }catch(e){}
+  };
+  _ws.onclose=()=>{ window.__mcqWsLive=false; _ws=null; clearInterval(_wsPing);
+    if(State.account) setTimeout(wsStart, _wsRetry=Math.min(_wsRetry*2,30000)); };
+  _ws.onerror=()=>{ try{ _ws&&_ws.close(); }catch(e){} };
+}
+function wsStop(){ try{ _ws&&_ws.close(); }catch(e){} _ws=null; window.__mcqWsLive=false; clearInterval(_wsPing); }
 let _liveTimer=null;
 const LIVE_ROUTES=['home','manager','analytics','history','photos','feedback','baview'];
 function startLiveRefresh(){
@@ -580,7 +605,7 @@ async function logout(reason){
   try{ const t=localStorage.getItem('mcq_token');
     if(t) await fetch('/api/logout',{method:'POST',headers:{'Authorization':'Bearer '+t}}).catch(()=>{});
     if(window.MCQDB && MCQDB.logout) MCQDB.logout(); }catch(e){}
-  stopLiveRefresh();
+  stopLiveRefresh(); wsStop();
   dataSyncRun++;
   State.superFullSyncStarted=false;
   State.superFullSyncFailedAt=0;
@@ -746,7 +771,6 @@ function buildTopbar(){
   }
   const superStoreSel = isSuper() ? '' : `<span class="tb-badge"><i class="fas fa-store"></i> ${esc(scopeLabel)}</span>`;
   $('#topbar-right').innerHTML = `
-    ${State.branch==='Demo'?'<span class="tb-badge" style="background:#fdf2f8;color:#9d174d;border-color:#f9c9e0">🎬 Sample data</span>':''}
     ${superStoreSel}
     <span class="tb-badge"><i class="fas fa-clock"></i> idle <b id="idle-ind">30m</b></span>
     <span class="tb-badge ${isAdmin()?'badge-admin':''}"><i class="fas ${isAdmin()?'fa-shield-halved':'fa-user'}"></i> ${roleLabel}</span>
@@ -1231,7 +1255,6 @@ function closeLightbox(){ const ov=document.getElementById('mcq-lightbox'); if(o
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeLightbox(); });
 Object.assign(window,{go,openDetail,closeDrawer,submitForm,reviewSave,recSaveAll,recDelete,logout,doLogin,togglePw,updateLoginHint,faceIdLogin,closeFid,toggleGroup,toggleSidebar,closeSidebarM,openLightbox,closeLightbox});
 async function boot(){
-  try{ if(window.MCQDemo) MCQDemo.inject(); }catch(e){}   // seed the isolated Demo store (store:'Demo' only)
   try{ const saved=sessionStorage.getItem('mcq_acct'); if(saved){ State.account=JSON.parse(saved); State.branch=State.account.branch; State.role=State.account.role==='staff'?'store':'ho'; } }catch(e){}
   if(State.account){
     setBootMessage(`Opening ${syncScopeLabel(State.account)} workspace...`,'Using cached data while cloud sync starts');

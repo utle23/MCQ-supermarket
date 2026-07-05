@@ -173,7 +173,6 @@
           if(FB.resetToBase) FB.resetToBase();
           if(rows.length && FB.aggregateStates) FB.aggregateStates(rows);
           FB._loadedStores=rows.map(function(r){return r.store;});   // only these are safe for Super to save back
-          try{ if(window.MCQDemo) MCQDemo.inject(); }catch(e){}   // ensure Demo shows for Super even before its first save
           FB._loaded=true;
           FB.lastSync={status:'synced',message:'Loaded '+rows.length+' store(s)'};
           if(FB.rerenderApp) FB.rerenderApp();
@@ -189,7 +188,7 @@
     try{ if(localStorage.getItem('mcq_dirty_'+store)) flush=postState(store).catch(function(){}); }catch(_){}
     return flush.then(function(){ return getState(store); }).then(function(d){
       if(d&&d.state){ if(FB.resetToBase) FB.resetToBase(); if(FB.applyStoreState) FB.applyStoreState(d.state); if(FB.rerenderApp) FB.rerenderApp(); }
-      else { try{ if(store==='Demo' && window.MCQDemo) MCQDemo.inject(); }catch(e){} FB._loaded=true; postState(store); }   // first run for this store → seed backend from local (Demo gets its sample data)
+      else { FB._loaded=true; postState(store); }   // first run for this store → seed backend from local
       FB._loaded=true;
       try{ localStorage.removeItem('mcq_dirty_'+store); }catch(_){}   // reconciled — server now has everything
       FB.lastSync={status:'synced',message:'Loaded '+store};
@@ -254,7 +253,7 @@
   FB.savePhoto = function(dataUrl){
     var id='p_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
     PS[id]=dataUrl;
-    var acct=(window.State&&State.account)||{}; var store=acct.branch&&acct.role!=='super'?acct.branch:(acct.branch||stores()[0]||'Morley');
+    var acct=(window.State&&State.account)||{}; var store=(acct.role==='super'||acct.role==='ba'||acct.branch==='All stores')?(stores()[0]||'Morley'):(acct.branch||stores()[0]||'Morley');   // super/ba have no store of their own — file the photo under a real store (any store they can access)
     try{
       var fd=new FormData(); fd.append('id',id); fd.append('store_id',store);
       // send as a real file part — form FIELDS are capped at 500KB by Werkzeug (413), files are not
@@ -263,6 +262,20 @@
       fetch(api('/api/photos'), {method:'POST', headers:headers(), body:fd}).catch(function(){});
     }catch(e){}
     return id;
+  };
+  // upload ONE photo and resolve only when the server has confirmed it (used by the
+  // composers: embedded editor images become real photo files, not megabyte base64 bodies)
+  window.mcqPhotoUpload=function(dataUrl){
+    var id='p_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
+    PS[id]=dataUrl;
+    var acct=(window.State&&State.account)||{}; var store=(acct.role==='super'||acct.role==='ba'||acct.branch==='All stores')?(stores()[0]||'Morley'):(acct.branch||stores()[0]||'Morley');   // super/ba have no store of their own — file the photo under a real store (any store they can access)
+    var fd=new FormData(); fd.append('id',id); fd.append('store_id',store);
+    var blob=dataUrlToBlob(dataUrl);
+    if(blob){ fd.append('image', blob, id+'.jpg'); } else { fd.append('dataUrl', dataUrl); }
+    return fetch(api('/api/photos'), {method:'POST', headers:headers(), body:fd})
+      .then(function(r){ return r.json(); })
+      .then(function(j){ return (j&&j.ok)?{ok:true,id:j.id||id}:{ok:false}; })
+      .catch(function(){ return {ok:false}; });
   };
   // batch photo-driven re-renders: many images loading in a burst → ONE re-render, not N (smooth)
   var _photoRR; function photoRerenderSoon(){ clearTimeout(_photoRR); _photoRR=setTimeout(function(){ if(FB.rerenderApp) FB.rerenderApp(); }, 180); }

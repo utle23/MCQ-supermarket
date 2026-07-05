@@ -6,7 +6,7 @@ services:
     runtime: python
     plan: standard              # 1 CPU / 2GB — good for 5 stores × 70 users; scale later
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn flask_app:app --workers 4 --threads 4 --timeout 120 --bind 0.0.0.0:$PORT
+    startCommand: gunicorn flask_app:app --workers 4 --threads 48 --timeout 120 --bind 0.0.0.0:$PORT
     healthCheckPath: /api/health
     envVars:
       - key: CLOUDINARY_URL     # photos + attachments live on Cloudinary (set in dashboard, secret)

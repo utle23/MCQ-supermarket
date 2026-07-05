@@ -181,7 +181,7 @@ function renderChecklist(){
   const areaChips=ckAreaChips();
   $('#content').innerHTML=`
    <div class="page-head"><div class="ph-ic">✅</div>
-     <div><h2>Store Operation Checklist</h2><p>Every photo task needs evidence before submit. Temperatures can be typed manually — AI photo reading is optional.</p></div>
+     <div><h2>Store Operation Checklist</h2><p>Photos are optional — attach one if you want evidence, or for AI to read a temperature display.</p></div>
      <div class="ph-actions">${checklistExportMenu()}</div></div>
    <div class="ck-sessionbar card">
      <div class="seg ck-seg">
@@ -529,6 +529,7 @@ function inboxShowThread(threadId,msgs){
     ${msgAttHtml()}
     <button class="btn primary" onclick="inboxReply('${ckJS(threadId)}')"><i class="fas fa-paper-plane"></i>&nbsp; Send reply</button></div>`:'';
   mcqModal('📥 Conversation', `<div class="th-scroll">${bubbles}</div>${reply}`, {wide:true});
+  hydratePhotos();   // resolve data-mcq-photo images (embedded editor photos stored as files)
   if(canReply && window.ckMount) ckMount('th-reply-txt');
 }
 // Forward a message (Gmail-style): opens the right composer prefilled with the quoted body
@@ -536,7 +537,10 @@ function inboxShowThread(threadId,msgs){
 function msgForward(i){
   const m=(window.__thMsgs||[])[i]; if(!m) return;
   const subj=/^fwd:/i.test(m.subject||'')?(m.subject||''):('Fwd: '+(m.subject||'Message'));
-  const quoted=`<p><br></p><blockquote><p>—— Forwarded message ——<br><b>From:</b> ${esc(m.from_name||m.from_role||'')} · ${esc((m.created_at||'').slice(0,16).replace('T',' '))}</p>${m.body_html||''}</blockquote>`;
+  // embedded photos stored as files: swap the reference for the already-hydrated blob so the
+  // editor shows the picture; sending re-extracts it back into a file automatically
+  let fwdBody=String(m.body_html||'').replace(/<img([^>]*?)data-mcq-photo="([^"]+)"([^>]*?)>/gi,(t,a,id,b)=>_phObj[id]?`<img src="${_phObj[id]}">`:t);
+  const quoted=`<p><br></p><blockquote><p>—— Forwarded message ——<br><b>From:</b> ${esc(m.from_name||m.from_role||'')} · ${esc((m.created_at||'').slice(0,16).replace('T',' '))}</p>${fwdBody}</blockquote>`;
   const atts=(m.attachments||[]).map(a=>({id:a.id,name:a.name,size:a.size,mime:a.mime,state:'ok'}));
   mcqModalClose();
   if(isEmployee()) staffCompose(); else composeOpen();
@@ -552,6 +556,43 @@ window.msgForward=msgForward;
 // an image in the body counts as content — don't require typed text when the user only inserted a photo
 function msgHasContent(html){ return !!(String(html||'').replace(/<[^>]+>/g,'').trim() || /<img/i.test(html||'')); }
 window.msgHasContent=msgHasContent;
+/* ---- embedded editor images → real photo files ----
+   A pasted/inserted photo used to travel as a megabyte base64 string inside body_html —
+   slow to send, slow for every reader. Now each embedded image is uploaded ONCE as a real
+   photo (Cloudinary/disk) and the body keeps only a tiny data-mcq-photo reference that
+   hydratePhotos() resolves for readers. Old messages with data: URLs still render fine. */
+const MCQ_IMG_PLACEHOLDER='data:image/gif;base64,R0lGODlhAQABAIAAAPLy8gAAACH5BAEAAAAALAAAAAABAAEAAAICRAEAOw==';
+async function msgExtractImages(html){
+  const d=document.createElement('div'); d.innerHTML=String(html||'');
+  const imgs=[...d.querySelectorAll('img')].filter(im=>/^(data:image\/|blob:)/i.test(im.getAttribute('src')||''));
+  if(!imgs.length) return d.innerHTML;
+  await Promise.all(imgs.map(async im=>{
+    try{
+      let src=im.getAttribute('src')||'';
+      if(/^blob:/i.test(src)){ // forwarded/hydrated image → read it back into a data URL first
+        const bl=await fetch(src).then(r=>r.blob());
+        src=await new Promise((res,rej)=>{ const fr=new FileReader(); fr.onload=()=>res(fr.result); fr.onerror=rej; fr.readAsDataURL(bl); });
+      }
+      const r=window.mcqPhotoUpload?await mcqPhotoUpload(src):null;
+      if(r&&r.ok&&r.id){ im.setAttribute('src',MCQ_IMG_PLACEHOLDER); im.setAttribute('data-mcq-photo',r.id); }
+      // upload failed → keep the data URL so the message still works (just heavier)
+    }catch(e){}
+  }));
+  return d.innerHTML;
+}
+const _phObj={};
+function hydratePhotos(root){
+  [...(root||document).querySelectorAll('img[data-mcq-photo]')].forEach(im=>{
+    const id=im.getAttribute('data-mcq-photo'); if(!id) return;
+    if(_phObj[id]){ im.src=_phObj[id]; return; }
+    im.style.minHeight='60px'; im.style.background='#f1f5f9';
+    fetch('/api/photos/'+encodeURIComponent(id),{headers:{Authorization:'Bearer '+(localStorage.getItem('mcq_token')||'')}})
+      .then(r=>{ if(!r.ok) throw 0; return r.blob(); })
+      .then(b=>{ _phObj[id]=URL.createObjectURL(b); im.src=_phObj[id]; im.style.minHeight=''; im.style.background=''; })
+      .catch(()=>{ im.style.minHeight=''; });
+  });
+}
+window.msgExtractImages=msgExtractImages; window.hydratePhotos=hydratePhotos;
 // inline photo(s) for inbox mirrors of reports/verifications — only self-contained data URLs travel
 function inlinePhotoHtml(refs){
   const list=Array.isArray(refs)?refs:(refs?[refs]:[]);
@@ -593,12 +634,15 @@ function msgAttPending(){ return _msgAtts.some(a=>a.state==='up'); }
 function attCards(atts){ return (atts&&atts.length)?`<div class="att-cards">`+atts.map(a=>`<button class="att-card" onclick="mcqFileDownload('${ckJS(a.id)}','${ckJS(a.name||'file')}')" title="Download">
     <span class="att-ic">${attIcon(a.name,a.mime)}</span><span class="att-meta"><b>${esc(a.name||'file')}</b><small>${attFmtSize(a.size)}</small></span><span class="att-dl"><i class="fas fa-download"></i></span></button>`).join('')+`</div>`:''; }
 window.msgAttPick=msgAttPick; window.msgAttDel=msgAttDel; window.msgAttReset=msgAttReset;
-function inboxReply(threadId){
+async function inboxReply(threadId){
   const html=(window.ckHtml?ckHtml('th-reply-txt'):'');
   if(!msgHasContent(html) && !msgAttPayload().length){ toast('Write a reply or attach a file'); return; }
   if(msgAttPending()){ toast('Please wait — attachment still uploading…'); return; }
-  mcqMsgSend({kind:'reply', thread_id:threadId, subject:'Reply', body_html:html, attachments:msgAttPayload()}).then(r=>{
-    if(r&&r.ok){ toast('✓ Reply sent'); mcqModalClose(); renderInbox(); } else toast('Could not send reply'); });
+  const btn=document.querySelector('.th-reply .btn.primary'); if(btn){ if(btn.disabled) return; btn.disabled=true; btn.innerHTML='⏳ Sending…'; }
+  const body=await msgExtractImages(html);   // embedded photos → real files (small, fast body)
+  mcqMsgSend({kind:'reply', thread_id:threadId, subject:'Reply', body_html:body, attachments:msgAttPayload()}).then(r=>{
+    if(r&&r.ok){ toast('✓ Reply sent'); mcqModalClose(); renderInbox(); }
+    else { if(btn){ btn.disabled=false; btn.innerHTML='<i class="fas fa-paper-plane"></i>&nbsp; Send reply'; } toast('Could not send reply'); } });
 }
 // Manager/Super compose a document → a specific employee or all staff of a store
 function composeStaffOptions(store){ return (DB.staff||[]).filter(s=>s.store===store && s.active!==0).map(s=>`<option value="id:${esc(s.id)}">👤 ${esc(s.name)}</option>`).join(''); }
@@ -611,20 +655,24 @@ function composeOpen(){
     <div class="field"><label>Subject</label><input id="cmp-subj" placeholder="e.g. New roster / policy update"></div>
     <div class="field"><label>Message</label><div id="cmp-body-wrap"><textarea id="cmp-body" rows="8" placeholder="Write your document / message…"></textarea></div></div>
     ${msgAttHtml()}
-    <div style="display:flex;gap:10px;margin-top:10px"><button class="btn primary" onclick="composeSend()"><i class="fas fa-paper-plane"></i>&nbsp; Send</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>`, {wide:true});
+    <div style="display:flex;gap:10px;margin-top:10px"><button id="cmp-send-btn" class="btn primary" onclick="composeSend()"><i class="fas fa-paper-plane"></i>&nbsp; Send</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>`, {wide:true});
   if(window.ckMount) ckMount('cmp-body');   // Phase 5 upgrades the textarea to CKEditor when available
 }
 function composeStoreChange(){ const st=document.getElementById('cmp-store')?.value||State.branch; const t=document.getElementById('cmp-target'); if(t) t.innerHTML=`<option value="all">📢 All staff at this store</option>`+composeStaffOptions(st); }
-function composeSend(){
+async function composeSend(){
   const store=isSuper()?(document.getElementById('cmp-store')?.value||State.branch):State.branch;
   const target=document.getElementById('cmp-target')?.value||'all';
   const subj=(document.getElementById('cmp-subj')?.value||'').trim();
-  const body=(window.ckHtml?ckHtml('cmp-body'):(document.getElementById('cmp-body')?.value||''));
-  if(!msgHasContent(body) && !msgAttPayload().length){ toast('Write a message or attach a file'); return; }
+  const raw=(window.ckHtml?ckHtml('cmp-body'):(document.getElementById('cmp-body')?.value||''));
+  if(!msgHasContent(raw) && !msgAttPayload().length){ toast('Write a message or attach a file'); return; }
   if(msgAttPending()){ toast('Please wait — attachment still uploading…'); return; }
+  const btn=document.getElementById('cmp-send-btn'); if(btn){ if(btn.disabled) return; btn.disabled=true; btn.innerHTML='⏳ Sending…'; }
+  const body=await msgExtractImages(raw);   // embedded photos → real files (small, fast body)
   const payload={kind:'document', store, subject:subj||'Document', body_html:body, attachments:msgAttPayload()};
   if(target==='all') payload.to_store_all=true; else if(target.indexOf('id:')===0) payload.to_staff_id=target.slice(3);
-  mcqMsgSend(payload).then(r=>{ if(r&&r.ok){ toast('✓ Document sent'); mcqModalClose(); renderInbox(); } else toast('Could not send'); });
+  mcqMsgSend(payload).then(r=>{
+    if(r&&r.ok){ toast('✓ Document sent'); mcqModalClose(); renderInbox(); }
+    else { if(btn){ btn.disabled=false; btn.innerHTML='<i class="fas fa-paper-plane"></i>&nbsp; Send'; } toast('Could not send'); } });
 }
 function inboxDelete(id){
   if(!confirm('Delete this message for everyone?')) return;
@@ -656,7 +704,7 @@ function staffCompose(){
     <div class="field"><label>Subject</label><input id="scm-subj" placeholder="e.g. Shift swap request"></div>
     <div class="field"><label>Message</label><textarea id="scm-body" rows="7" placeholder="Write your message…"></textarea></div>
     ${msgAttHtml()}
-    <div style="display:flex;gap:10px;margin-top:10px"><button class="btn primary" onclick="staffComposeSend()"><i class="fas fa-paper-plane"></i>&nbsp; Send</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>`, {wide:true});
+    <div style="display:flex;gap:10px;margin-top:10px"><button id="scm-send-btn" class="btn primary" onclick="staffComposeSend()"><i class="fas fa-paper-plane"></i>&nbsp; Send</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>`, {wide:true});
   if(window.ckMount) ckMount('scm-body');
 }
 function staffComposeLevel(){
@@ -665,18 +713,22 @@ function staffComposeLevel(){
   if(st) st.style.display=(lvl==='mgmt')?'':'none';        // store choice only matters for management mail
   if(pr) pr.style.display=(lvl==='person')?'':'none';
 }
-function staffComposeSend(){
+async function staffComposeSend(){
+  const lvl=document.getElementById('scm-level')?.value||'mgmt';   // BUG FIX: lvl was never declared → ReferenceError → Send silently did nothing
   const subj=(document.getElementById('scm-subj')?.value||'').trim();
-  const body=(window.ckHtml?ckHtml('scm-body'):(document.getElementById('scm-body')?.value||''));
-  if(!msgHasContent(body) && !msgAttPayload().length){ toast('Write a message or attach a file'); return; }
+  const raw=(window.ckHtml?ckHtml('scm-body'):(document.getElementById('scm-body')?.value||''));
+  if(!msgHasContent(raw) && !msgAttPayload().length){ toast('Write a message or attach a file'); return; }
   if(msgAttPending()){ toast('Please wait — attachment still uploading…'); return; }
+  const btn=document.getElementById('scm-send-btn'); if(btn){ if(btn.disabled) return; btn.disabled=true; btn.innerHTML='⏳ Sending…'; }
+  const body=await msgExtractImages(raw);   // embedded photos → real files (small, fast body)
   const payload={kind:'message', subject:subj||'Message', body_html:body, attachments:msgAttPayload()};
   let sentTo='management';
   if(lvl==='super'){ payload.to_super=true; payload.to_managers=false; sentTo='Head Office'; }
-  else if(lvl==='person'){ const p=document.getElementById('scm-person'); payload.to_staff_id=p?.value||''; payload.to_super=false; payload.to_managers=false; sentTo=p?.selectedOptions[0]?.textContent||'the person'; if(!payload.to_staff_id){ toast('Pick a person'); return; } }
+  else if(lvl==='person'){ const p=document.getElementById('scm-person'); payload.to_staff_id=p?.value||''; payload.to_super=false; payload.to_managers=false; sentTo=p?.selectedOptions[0]?.textContent||'the person'; if(!payload.to_staff_id){ if(btn){ btn.disabled=false; btn.innerHTML='<i class="fas fa-paper-plane"></i>&nbsp; Send'; } toast('Pick a person'); return; } }
   else { const st=document.getElementById('scm-store')?.value||State.branch; payload.store=st; payload.to_managers=true; payload.to_super=false; sentTo=st+' management'; }
-  if(window.mcqMsgSend) mcqMsgSend(payload).then(r=>{ toast(r&&r.ok?('✉️ Sent to '+sentTo):'Could not send'); });
-  mcqModalClose();
+  mcqMsgSend(payload).then(r=>{
+    if(r&&r.ok){ toast('✉️ Sent to '+sentTo); mcqModalClose(); }
+    else { if(btn){ btn.disabled=false; btn.innerHTML='<i class="fas fa-paper-plane"></i>&nbsp; Send'; } toast('Could not send'); } });
 }
 window.staffComposeLevel=staffComposeLevel;
 window.staffCompose=staffCompose; window.staffComposeSend=staffComposeSend;
@@ -790,6 +842,7 @@ function annPaint(filter){
       ${a.title?`<h3 class="ann-title">${esc(a.title)}</h3>`:''}${img}<div class="ann-body">${safeHtml(a.body_html)}</div>${attCards(a.attachments)}</div>`;
   }).join(''):'<div class="empty"><div class="e-ic">📣</div>No announcements yet.</div>';
   feed.innerHTML=deptBar+filterSel+`<div class="ann-list">${cards}</div>`;
+  hydratePhotos(feed);   // resolve data-mcq-photo images (embedded editor photos stored as files)
 }
 function annDeptF(v){ window.__annDeptF=v; annPaint(document.getElementById('ann-filter')?.value||''); }
 window.annDeptF=annDeptF;
@@ -829,12 +882,12 @@ async function annPhotoPick(inp){
   const p=document.getElementById('ann-photo-prev'); if(p) p.innerHTML=ref?`<img src="${imgSrc(ref)}" class="ann-prev-img">`:'';
   const l=document.getElementById('ann-photo-lbl'); if(l) l.innerHTML='<i class="fas fa-check"></i>&nbsp; Photo added — tap to change';
 }
-function annPost(){
+async function annPost(){
   const store=document.getElementById('ann-store')?.value||State.branch;
   const title=(document.getElementById('ann-title')?.value||'').trim();
-  const body=(window.ckHtml?ckHtml('ann-body'):(document.getElementById('ann-body')?.value||''));
-  const hasText=!!String(body).replace(/<[^>]+>/g,'').trim();
-  const hasImg=/<img/i.test(body)||!!_annPhoto;   // an image (in the editor OR the upload) is valid content — no title/heading required
+  const raw=(window.ckHtml?ckHtml('ann-body'):(document.getElementById('ann-body')?.value||''));
+  const hasText=!!String(raw).replace(/<[^>]+>/g,'').trim();
+  const hasImg=/<img/i.test(raw)||!!_annPhoto;   // an image (in the editor OR the upload) is valid content — no title/heading required
   if(!title && !hasText && !hasImg && !msgAttPayload().length){ toast('Add a title, a message, a photo or a file'); return; }
   if(msgAttPending()){ toast('Please wait — attachment still uploading…'); return; }
   const annAtts=msgAttPayload();
@@ -842,14 +895,14 @@ function annPost(){
   const photo=_annPhoto; _annPhoto=null;
   const editId=window.__annEditId; window.__annEditId=null;
   mcqModalClose();                     // close instantly — don't make the user wait for the server
+  toast(editId?'✏️ Saving…':'📣 Posting…');
+  const body=await msgExtractImages(raw);   // embedded photos → real files (small, fast body)
   if(editId){
-    toast('✏️ Saving…');
     fetch('/api/announcement/update',{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+(localStorage.getItem('mcq_token')||'')},body:JSON.stringify({id:editId,title,body_html:body,image_id:photo||undefined,attachments:annAtts,department:department||'',store})})
       .then(r=>r.json()).then(r=>{ toast(r&&r.ok?'✏️ Announcement updated':'Could not update'); if(State.route&&State.route.mod==='announcements') renderAnnouncements(); })
       .catch(()=>toast('Could not update'));
     return;
   }
-  toast('📣 Posting…');
   Promise.resolve(mcqAnnPost({store, title, body_html:body, image_id:photo||null, department:department||null, attachments:annAtts})).then(r=>{
     toast(r&&r.ok?'📣 Announcement posted':'Could not post — please try again');
     if(State.route&&State.route.mod==='announcements') renderAnnouncements();
@@ -1108,9 +1161,7 @@ function ckProgress(){
 function ckTaskIssue(r,st){
   st=st||{};
   if(st.done){
-    // temperature is OPTIONAL (AI scan / manual °C are helpers, never a requirement);
-    // temp tasks also don't require a photo — other photo tasks still need one
-    if(r.photo && !(r.meta&&r.meta.temp) && (st.photos||[]).length<1) return 'photo missing';
+    // photos and temperature are OPTIONAL everywhere — AI photo reading is just a helper
     return null;   // satisfied
   }
   if(String(st.note||'').trim()) return null;   // not done but a reason was written → OK
@@ -1153,16 +1204,7 @@ function ckUpdateSubmitBtn(){
 function ckTick(i){
   const st=State.chk.state[i]=State.chk.state[i]||{};
   const r=ckItem(DB.checklist.items[i],i);
-  const ps=r.photo;
-  const skipPhoto=r.meta.temp&&st.defrosting;
-  // temperature reading (AI or manual) is OPTIONAL — never blocks ticking done
-  // non-temperature photo tasks still need a photo before ticking done
-  if(!st.done && ps && !r.meta.temp && (st.photos||[]).length<1){
-    toast('📷 Attach at least 1 photo before marking this done');
-    const row=document.getElementById('ck-row-'+i); const pe=row&&row.querySelector('.ck-photos');
-    if(pe){ pe.classList.add('invalid','shake'); setTimeout(()=>pe.classList.remove('shake','invalid'),1400); }
-    return;
-  }
+  // photos & temperature readings are OPTIONAL — nothing blocks ticking a task done
   st.done=!st.done; const row=document.getElementById('ck-row-'+i);
   if(row){row.classList.toggle('done',st.done);row.querySelector('.ck-check').textContent=st.done?'✓':'';ckNeedNoteUi(i);}
   ckProgress(); ckSaveDraft();
