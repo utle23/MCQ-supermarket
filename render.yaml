@@ -24,12 +24,12 @@ services:
       - key: BREVO_API_KEY        # email (activation, forgot-password, alerts) — set in dashboard
         sync: false
 
-  # 9 PM (Perth) all-store daily summary email — was a PythonAnywhere scheduled task;
+  # 9:30 PM (Perth) all-store daily summary email — was a PythonAnywhere scheduled task;
   # on Render it must be its own Cron Job or it never runs.
   - type: cron
     name: mcq-daily-digest
     runtime: python
-    schedule: "0 13 * * *"        # 13:00 UTC = 21:00 Australia/Perth (UTC+8, no DST)
+    schedule: "30 13 * * *"       # 13:30 UTC = 21:30 Australia/Perth (UTC+8, no DST)
     buildCommand: pip install -r requirements.txt
     startCommand: python server/daily_digest.py
     envVars:
