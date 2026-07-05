@@ -237,6 +237,10 @@ def init_db():
     except Exception: pass
     try: conn.execute("ALTER TABLE announcements ADD COLUMN attachments_json TEXT DEFAULT '[]'")   # announcement files
     except Exception: pass
+    try: conn.execute('ALTER TABLE accounts ADD COLUMN reset_code TEXT')          # forgot-password: hashed code
+    except Exception: pass
+    try: conn.execute('ALTER TABLE accounts ADD COLUMN reset_expires REAL')       # forgot-password: code expiry (epoch)
+    except Exception: pass
     # seed stores
     for s in STORES:
         conn.execute('INSERT INTO stores(id,name,active,created_at) VALUES(?,?,1,?) ON CONFLICT (id) DO NOTHING', (s, s, now()))
@@ -442,24 +446,40 @@ def _store_staff_by_email(conn, store, email):
         try: d = json.loads(r['data_json'] or '{}')
         except Exception: d = {}
         if str(d.get('email') or '').strip().lower() == e:
-            return {'staff_id': r['id'], 'name': d.get('name') or '', 'data': d}
+            return {'staff_id': r['id'], 'name': d.get('name') or '', 'store': store, 'data': d}
     return None
 
-def activate_lookup(email, store):
-    """Step 1 of activation: does this Gmail exist in the chosen store's staff directory?"""
+def _staff_by_email_any(conn, email):
+    """Find a staff member by email across ALL stores (store is no longer picked at activation)."""
+    e = str(email or '').strip().lower()
+    if not e: return None
+    for r in conn.execute('SELECT id,store_id,data_json FROM staff').fetchall():
+        try: d = json.loads(r['data_json'] or '{}')
+        except Exception: d = {}
+        if str(d.get('email') or '').strip().lower() == e:
+            return {'staff_id': r['id'], 'name': d.get('name') or '', 'store': r['store_id'], 'data': d}
+    return None
+
+def activate_lookup(email, store=None):
+    """Step 1 of activation: is this Gmail known? (store is derived from the match, not picked)."""
     conn = connect()
     try:
         acc = conn.execute('SELECT id,role,store_id,activated FROM accounts WHERE lower(email)=lower(?)',
                            (str(email or '').strip(),)).fetchone()
         if acc and acc['activated']:
             return {'already': True, 'id': acc['id'], 'role': acc['role'], 'tab': ACCT_TABS.get(acc['role'], 'Staff')}
-        hit = _store_staff_by_email(conn, store, email)
-        return {'already': False, 'match': bool(hit), 'name': (hit or {}).get('name', '')}
+        # matched if the account admin pre-assigned an account OR the email is in any store's staff list
+        hit = _staff_by_email_any(conn, email)
+        match = bool(acc or hit)
+        return {'already': False, 'match': match, 'found': match,
+                'name': (dict(acc).get('name') if acc else None) or (hit or {}).get('name', ''),
+                'store': (acc['store_id'] if acc else None) or (hit or {}).get('store', '')}
     finally:
         conn.close()
 
-def activate_account(email, store, password, name=None):
-    """Step 2: create (or claim) the account. Returns the new credentials + assigned access."""
+def activate_account(email, store=None, password=None, name=None):
+    """Step 2: create (or claim) the account. Store is derived from the pre-assigned account
+    or the staff-directory match — activation no longer asks the person to pick a store."""
     email = str(email or '').strip()
     if not email or '@' not in email: return {'error': 'Enter a valid email address'}
     if len(str(password or '')) < 6: return {'error': 'Password must be at least 6 characters'}
@@ -468,7 +488,6 @@ def activate_account(email, store, password, name=None):
         acc = conn.execute('SELECT * FROM accounts WHERE lower(email)=lower(?)', (email,)).fetchone()
         if acc and acc['activated']:
             return {'error': 'This email is already activated — your ID is ' + acc['id']}
-        hit = _store_staff_by_email(conn, store, email)
         if acc:   # pre-assigned by the account admin -> claim it (keep assigned role/store)
             conn.execute('UPDATE accounts SET password=?, activated=1, updated_at=? WHERE id=?',
                          (str(password), now(), acc['id']))
@@ -476,7 +495,9 @@ def activate_account(email, store, password, name=None):
             a = conn.execute('SELECT * FROM accounts WHERE id=?', (acc['id'],)).fetchone()
             return {'id': a['id'], 'role': a['role'], 'store': a['store_id'], 'name': a['name'],
                     'tab': ACCT_TABS.get(a['role'], 'Staff'), 'matched': True}
-        if hit:   # CASE 1: email matches the store's staff directory
+        hit = _staff_by_email_any(conn, email)
+        if hit:   # email matches a staff record -> create their Staff account in that person's store
+            store = hit['store']
             aid = _gen_account_id(conn, store)
             conn.execute('''INSERT INTO accounts(id,password,role,store_id,staff_id,name,email,activated,needs_profile,created_at,updated_at)
                             VALUES(?,?,?,?,?,?,?,1,0,?,?)''',
@@ -484,21 +505,47 @@ def activate_account(email, store, password, name=None):
             conn.commit()
             return {'id': aid, 'role': 'employee', 'store': store, 'name': hit['name'],
                     'tab': 'Staff', 'matched': True}
-        # CASE 2: brand-new member — create their staff row too, flag "set up your profile"
-        import random
-        disp = (name or '').strip() or email.split('@')[0].replace('.', ' ').title()
-        sid = (store[:3].upper() if store else 'GEN') + '-' + str(20000 + random.randint(0, 9999))
-        srec = {'id': sid, 'name': disp, 'email': email, 'store': store, 'active': 1,
-                'role': '', 'dept': '', 'start': time.strftime('%Y-%m-%d')}
-        conn.execute('INSERT INTO staff(id,store_id,data_json) VALUES(?,?,?) ON CONFLICT (store_id,id) DO UPDATE SET data_json=excluded.data_json',
-                     (sid, store, json.dumps(srec)))
-        aid = _gen_account_id(conn, store)
-        conn.execute('''INSERT INTO accounts(id,password,role,store_id,staff_id,name,email,activated,needs_profile,created_at,updated_at)
-                        VALUES(?,?,?,?,?,?,?,1,1,?,?)''',
-                     (aid, str(password), 'employee', store, sid, disp, email, now(), now()))
+        # not in the system at all: activation is only for people Head Office has added
+        return {'error': "This email isn't registered yet. Please ask Head Office to add you first."}
+    finally:
+        conn.close()
+
+# ---------- forgot password: emailed one-time code ----------
+def create_reset_code(email):
+    """Generate a 6-digit reset code for the account with this email; store it hashed with a
+    15-minute expiry. Returns {email,name,code} for the caller to email, or None if no account."""
+    import random
+    email = str(email or '').strip()
+    if not email or '@' not in email: return None
+    conn = connect()
+    try:
+        a = conn.execute('SELECT id,name,email FROM accounts WHERE lower(email)=lower(?)', (email,)).fetchone()
+        if not a: return None
+        code = '%06d' % random.randint(0, 999999)
+        conn.execute('UPDATE accounts SET reset_code=?, reset_expires=? WHERE id=?',
+                     (hash_pw(code), time.time() + 900, a['id']))
         conn.commit()
-        return {'id': aid, 'role': 'employee', 'store': store, 'name': disp,
-                'tab': 'Staff', 'matched': False, 'needs_profile': True}
+        return {'email': a['email'], 'name': a['name'], 'code': code}
+    finally:
+        conn.close()
+
+def reset_password(email, code, new_password):
+    """Verify the emailed code and set a new password (also activates the account)."""
+    email = str(email or '').strip()
+    code = str(code or '').strip()
+    if len(str(new_password or '')) < 6: return {'error': 'Password must be at least 6 characters'}
+    conn = connect()
+    try:
+        a = conn.execute('SELECT * FROM accounts WHERE lower(email)=lower(?)', (email,)).fetchone()
+        if not a or not a['reset_code']: return {'error': 'Please request a new code.'}
+        if not a['reset_expires'] or time.time() > a['reset_expires']:
+            return {'error': 'This code has expired — please request a new one.'}
+        if a['reset_code'] != hash_pw(code):
+            return {'error': 'Incorrect code. Please check the email and try again.'}
+        conn.execute('UPDATE accounts SET password=?, activated=1, reset_code=NULL, reset_expires=NULL, updated_at=? WHERE id=?',
+                     (str(new_password), now(), a['id']))
+        conn.commit()
+        return {'id': a['id'], 'role': a['role'], 'tab': ACCT_TABS.get(a['role'], 'Staff'), 'name': a['name']}
     finally:
         conn.close()
 

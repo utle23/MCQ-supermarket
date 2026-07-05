@@ -214,17 +214,17 @@ def device_revoke():
 @api.route('/api/activate/lookup', methods=['POST'])
 def activate_lookup():
     d = request.get_json(force=True, silent=True) or {}
-    if d.get('store') not in db.STORES: abort(400)
-    return jsonify(ok=True, **db.activate_lookup(d.get('email'), d.get('store')))
+    if not d.get('email'): abort(400)
+    return jsonify(ok=True, **db.activate_lookup(d.get('email')))
 
 @api.route('/api/activate', methods=['POST'])
 def activate():
     d = request.get_json(force=True, silent=True) or {}
-    if d.get('store') not in db.STORES: abort(400)
-    res = db.activate_account(d.get('email'), d.get('store'), d.get('password'), d.get('name'))
+    if not d.get('email'): abort(400)
+    res = db.activate_account(d.get('email'), password=d.get('password'))
     if res.get('error'):
         return jsonify(ok=False, error=res['error']), 400
-    db.write_audit('activation', d.get('store'), 'create', 'account', res.get('id'), None, {'matched': res.get('matched')})
+    db.write_audit('activation', res.get('store') or '', 'create', 'account', res.get('id'), None, {'matched': res.get('matched')})
     return jsonify(ok=True, **res)
 
 # ---------- central account management (account admin — Khoi Nguyen — only) ----------
@@ -701,34 +701,78 @@ def post_settings():
     return jsonify(ok=True)
 
 # ---------- email relay (Brevo) — API key stays on the SERVER, never in the frontend / repo ----------
-@api.route('/api/send-email', methods=['POST'])
-def send_email():
-    require_write(require_auth())
+def _brevo_send(recipients, subject, html, attachment=None, from_email=None, from_name=None):
+    """Send an email via Brevo. `recipients` = [{email,name}]. Returns (ok, detail)."""
     key = os.environ.get('BREVO_API_KEY', '')
-    d = request.get_json(force=True, silent=True) or {}
-    to = [r for r in (d.get('to') or []) if r.get('email')]
-    if not to: return jsonify(ok=False, error='no recipients'), 400
-    if not key: return jsonify(ok=False, fallback=True, error='BREVO_API_KEY not set on the server'), 200
-    sender = {'email': d.get('fromEmail') or os.environ.get('MCQ_FROM_EMAIL', 'mcqcafe.notify@gmail.com'),
-              'name':  d.get('fromName')  or os.environ.get('MCQ_FROM_NAME', 'MCQ Supermarket Notification')}
+    to = [r for r in (recipients or []) if r.get('email')]
+    if not to: return False, 'no recipients'
+    if not key: return False, 'BREVO_API_KEY not set on the server'
+    sender = {'email': from_email or os.environ.get('MCQ_FROM_EMAIL', 'mcqcafe.notify@gmail.com'),
+              'name':  from_name  or os.environ.get('MCQ_FROM_NAME', 'MCQ Supermarket Notification')}
     payload = {'sender': sender,
                'to': [{'email': r['email'], 'name': r.get('name') or r['email']} for r in to],
-               'subject': d.get('subject') or 'MCQ Supermarket',
-               'htmlContent': d.get('html') or ('<pre style="font-family:Arial">' + (d.get('text') or '') + '</pre>')}
-    att = d.get('attachment')
-    if isinstance(att, list) and att:
+               'subject': subject or 'MCQ Supermarket', 'htmlContent': html or ''}
+    if isinstance(attachment, list) and attachment:
         payload['attachment'] = [{'content': a.get('content'), 'name': a.get('name') or 'attachment.pdf'}
-                                 for a in att if a.get('content')]
+                                 for a in attachment if a.get('content')]
     req = urllib.request.Request('https://api.brevo.com/v3/smtp/email',
         data=json.dumps(payload).encode('utf-8'),
         headers={'api-key': key, 'content-type': 'application/json', 'accept': 'application/json'}, method='POST')
     try:
         with urllib.request.urlopen(req, timeout=15) as resp:
-            return jsonify(ok=(200 <= resp.status < 300), sent=len(to))
+            return (200 <= resp.status < 300), 'sent'
     except urllib.error.HTTPError as e:
-        return jsonify(ok=False, error='brevo ' + str(e.code), detail=e.read().decode('utf-8', 'ignore')[:200]), 200
+        return False, 'brevo ' + str(e.code) + ' ' + e.read().decode('utf-8', 'ignore')[:200]
     except Exception as e:
-        return jsonify(ok=False, error=str(e)), 200
+        return False, str(e)
+
+@api.route('/api/send-email', methods=['POST'])
+def send_email():
+    require_write(require_auth())
+    d = request.get_json(force=True, silent=True) or {}
+    to = [r for r in (d.get('to') or []) if r.get('email')]
+    if not to: return jsonify(ok=False, error='no recipients'), 400
+    if not os.environ.get('BREVO_API_KEY', ''):
+        return jsonify(ok=False, fallback=True, error='BREVO_API_KEY not set on the server'), 200
+    html = d.get('html') or ('<pre style="font-family:Arial">' + (d.get('text') or '') + '</pre>')
+    ok, detail = _brevo_send(to, d.get('subject'), html, attachment=d.get('attachment'),
+                             from_email=d.get('fromEmail'), from_name=d.get('fromName'))
+    if ok: return jsonify(ok=True, sent=len(to))
+    return jsonify(ok=False, error=detail), 200
+
+# ---------- forgot password: email a one-time code, then reset ----------
+def _reset_email_html(name, code):
+    first = (str(name or '').split(' ') or [''])[0] or 'there'
+    return ('<div style="font-family:Arial,Helvetica,sans-serif;max-width:460px;margin:auto">'
+            '<div style="background:linear-gradient(135deg,#f97316,#f59e0b);color:#fff;padding:18px 22px;border-radius:14px 14px 0 0">'
+            '<b style="font-size:18px">MCQ Supermarket</b><div style="opacity:.9;font-size:13px">Password reset</div></div>'
+            '<div style="border:1px solid #f1e3d4;border-top:none;border-radius:0 0 14px 14px;padding:22px">'
+            '<p>Hi %s,</p><p>Use this code to reset your password. It expires in <b>15 minutes</b>.</p>'
+            '<div style="font-size:34px;font-weight:800;letter-spacing:.35em;text-align:center;color:#c2570f;'
+            'background:#fff7ed;border:1.5px dashed #fdba74;border-radius:12px;padding:16px;margin:14px 0">%s</div>'
+            '<p style="color:#777;font-size:12.5px">If you didn\'t request this, you can ignore this email.</p></div></div>'
+            % (first, code))
+
+@api.route('/api/password/request', methods=['POST'])
+def password_request():
+    d = request.get_json(force=True, silent=True) or {}
+    info = db.create_reset_code(d.get('email'))
+    emailed = False
+    if info:
+        ok, _ = _brevo_send([{'email': info['email'], 'name': info['name']}],
+                            'Your MCQ Supermarket password reset code',
+                            _reset_email_html(info['name'], info['code']))
+        emailed = bool(ok)
+    # Always generic (don't reveal whether an email is registered)
+    return jsonify(ok=True, emailed=emailed,
+                   configured=bool(os.environ.get('BREVO_API_KEY', '')))
+
+@api.route('/api/password/reset', methods=['POST'])
+def password_reset():
+    d = request.get_json(force=True, silent=True) or {}
+    res = db.reset_password(d.get('email'), d.get('code'), d.get('password'))
+    if res.get('error'): return jsonify(ok=False, error=res['error']), 400
+    return jsonify(ok=True, **res)
 
 # ---------- AI Vision (OpenAI / ChatGPT) — API key stays on the SERVER (OPENAI_API_KEY) ----------
 def _openai_vision(image_bytes, mime, prompt, max_tokens=220):

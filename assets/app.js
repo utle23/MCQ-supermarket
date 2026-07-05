@@ -127,6 +127,7 @@ function showLogin(notice){
         <input id="login-pw" class="login-input" type="password" placeholder="Enter password" autocomplete="off">
         <button class="pw-eye" onclick="togglePw()">👁️</button>
       </div>
+      <button class="login-forgot" onclick="fpOpen()">Forgot password?</button>
       <div id="login-err" class="login-err"></div>
       <button class="login-btn" onclick="doLogin()">Sign In →</button>
       <div class="login-or"><span>or</span></div>
@@ -158,8 +159,7 @@ function loginMode(){ return $('#login-mode .seg-btn.active').dataset.mode; }
 function togglePw(){ const p=$('#login-pw'); p.type=p.type==='password'?'text':'password'; }
 
 /* ============================================================ ACCOUNT ACTIVATION WIZARD */
-const ACT_STORES=['Morley','Mirrabooka','Malaga','Subiaco','Armadale','Warehouse','Demo'];
-let _act={};   // {email, store, match, name}
+let _act={};   // {email, match, name}
 function actClose(){ const o=document.getElementById('act-ov'); if(o) o.remove(); }
 function actShell(inner){
   actClose();
@@ -175,23 +175,20 @@ function actOpen(){
   actShell(`
     <div class="act-step-dots"><span class="on"></span><span></span><span></span></div>
     <h2 class="act-h">Activate your account</h2>
-    <p class="act-p">Enter <b>exactly the Gmail you use to log in to the Deputy app</b>, and choose your store. We'll match it with your staff profile.</p>
+    <p class="act-p">Enter <b>exactly the Gmail you use to log in to the Deputy app</b>. We'll match it with your staff profile.</p>
     <label class="login-lbl">Your Gmail</label>
     <input id="act-email" class="login-input" type="email" placeholder="name@gmail.com" autocomplete="email">
-    <label class="login-lbl">Your store</label>
-    <select id="act-store" class="login-input">${ACT_STORES.map(s=>`<option>${s}</option>`).join('')}</select>
     <div id="act-err" class="login-err"></div>
     <button class="login-btn act-cta" onclick="actLookup()">Continue →</button>`);
   setTimeout(()=>document.getElementById('act-email')?.focus(),80);
 }
 async function actLookup(){
   const email=(document.getElementById('act-email')?.value||'').trim();
-  const store=document.getElementById('act-store')?.value||'Morley';
   const err=document.getElementById('act-err');
   if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ if(err) err.textContent='Please enter a valid email address.'; return; }
   const btn=document.querySelector('.act-cta'); if(btn){ btn.disabled=true; btn.textContent='Checking…'; }
   let r=null;
-  try{ r=await fetch('/api/activate/lookup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email,store})}).then(x=>x.json()); }catch(e){}
+  try{ r=await fetch('/api/activate/lookup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})}).then(x=>x.json()); }catch(e){}
   if(!r||!r.ok){ if(btn){ btn.disabled=false; btn.textContent='Continue →'; } if(err) err.textContent='Cannot reach the server — please try again.'; return; }
   if(r.already){
     actShell(`
@@ -199,38 +196,40 @@ async function actLookup(){
       <h2 class="act-h">Already activated</h2>
       <p class="act-p">This email already has an account.</p>
       <div class="act-id-box"><span class="act-id-lbl">Your ID</span><span class="act-id">${esc(r.id)}</span></div>
-      <p class="act-p">Sign in on the <span class="act-tab">${esc(r.tab)}</span> tab with your ID and password.<br>Forgot the password? Ask Head Office to reset it.</p>
+      <p class="act-p">Sign in on the <span class="act-tab">${esc(r.tab)}</span> tab with your ID and password.<br>Forgot your password? Use <b>Forgot password?</b> on the sign-in screen.</p>
       <button class="login-btn act-cta" onclick="actPrefill('${esc(r.id)}','${esc(r.role)}')">Go to sign in →</button>`);
     return;
   }
-  _act={email,store,match:!!r.match,name:r.name||''};
+  if(!r.match){
+    // email isn't in the system → activation is only for people Head Office has added
+    actShell(`
+      <div class="act-badge act-new">✋</div>
+      <h2 class="act-h">Email not registered</h2>
+      <p class="act-p">We couldn't find <b>${esc(email)}</b> in the staff system yet.<br>Please ask <b>Head Office</b> to add you, then activate again.</p>
+      <button class="login-btn act-cta" onclick="actClose()">Got it</button>`);
+    return;
+  }
+  _act={email,name:r.name||''};
   actShell(`
     <div class="act-step-dots"><span class="on"></span><span class="on"></span><span></span></div>
-    ${r.match
-      ? `<div class="act-badge act-ok">✓</div><h2 class="act-h">We found you!</h2>
-         <p class="act-p"><b>${esc(r.name)}</b> · MCQ ${esc(store)}<br>Now create your own password to finish.</p>`
-      : `<div class="act-badge act-new">＋</div><h2 class="act-h">New member</h2>
-         <p class="act-p">This Gmail isn't in <b>MCQ ${esc(store)}</b>'s staff list yet — no problem, we'll create a fresh account. You'll be asked to complete your profile after your first sign-in.</p>
-         <label class="login-lbl">Your full name</label>
-         <input id="act-name" class="login-input" placeholder="e.g. Van Anh Le">`}
+    <div class="act-badge act-ok">✓</div><h2 class="act-h">We found you!</h2>
+    <p class="act-p"><b>${esc(r.name)}</b>${r.store?` · MCQ ${esc(r.store)}`:''}<br>Now create your own password to finish.</p>
     <label class="login-lbl">Create a password</label>
     <input id="act-pw1" class="login-input" type="password" placeholder="At least 6 characters">
     <label class="login-lbl">Confirm password</label>
     <input id="act-pw2" class="login-input" type="password" placeholder="Type it again">
     <div id="act-err" class="login-err"></div>
     <button class="login-btn act-cta" onclick="actCreate()">Create my account →</button>`);
-  setTimeout(()=>document.getElementById(r.match?'act-pw1':'act-name')?.focus(),80);
+  setTimeout(()=>document.getElementById('act-pw1')?.focus(),80);
 }
 async function actCreate(){
   const p1=document.getElementById('act-pw1')?.value||'', p2=document.getElementById('act-pw2')?.value||'';
-  const name=(document.getElementById('act-name')?.value||'').trim();
   const err=document.getElementById('act-err');
   if(p1.length<6){ if(err) err.textContent='Password must be at least 6 characters.'; return; }
   if(p1!==p2){ if(err) err.textContent='The two passwords do not match.'; return; }
-  if(!_act.match && !name){ if(err) err.textContent='Please enter your full name.'; return; }
   const btn=document.querySelector('.act-cta'); if(btn){ btn.disabled=true; btn.textContent='Creating…'; }
   let r=null;
-  try{ r=await fetch('/api/activate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:_act.email,store:_act.store,password:p1,name})}).then(x=>x.json()); }catch(e){}
+  try{ r=await fetch('/api/activate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:_act.email,password:p1})}).then(x=>x.json()); }catch(e){}
   if(!r||!r.ok){ if(btn){ btn.disabled=false; btn.textContent='Create my account →'; } if(err) err.textContent=(r&&r.error)||'Could not activate — please try again.'; return; }
   const roleName={employee:'Staff',staff:'Department Lead',admin:'Manager',super:'Super Admin'}[r.role]||'Staff';
   actShell(`
@@ -251,6 +250,68 @@ function actPrefill(id,role){
   document.getElementById('login-pw')?.focus();
 }
 window.actOpen=actOpen; window.actClose=actClose; window.actLookup=actLookup; window.actCreate=actCreate; window.actPrefill=actPrefill;
+
+/* ============================================================ FORGOT PASSWORD (emailed code) */
+let _fp={};
+function fpOpen(){
+  _fp={};
+  actShell(`
+    <div class="act-step-dots"><span class="on"></span><span></span></div>
+    <h2 class="act-h">Reset your password</h2>
+    <p class="act-p">Enter your <b>Gmail</b> and we'll email you a 6-digit code.</p>
+    <label class="login-lbl">Your Gmail</label>
+    <input id="fp-email" class="login-input" type="email" placeholder="name@gmail.com" autocomplete="email">
+    <div id="fp-err" class="login-err"></div>
+    <button class="login-btn act-cta" onclick="fpRequest()">Send code →</button>`);
+  setTimeout(()=>document.getElementById('fp-email')?.focus(),80);
+}
+async function fpRequest(){
+  const email=(document.getElementById('fp-email')?.value||'').trim();
+  const err=document.getElementById('fp-err');
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ if(err) err.textContent='Please enter a valid email address.'; return; }
+  const btn=document.querySelector('.act-cta'); if(btn){ btn.disabled=true; btn.textContent='Sending…'; }
+  let r=null;
+  try{ r=await fetch('/api/password/request',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})}).then(x=>x.json()); }catch(e){}
+  if(!r||!r.ok){ if(btn){ btn.disabled=false; btn.textContent='Send code →'; } if(err) err.textContent='Cannot reach the server — please try again.'; return; }
+  _fp={email};
+  fpCodeStep(r.configured===false);
+}
+function fpCodeStep(notConfigured){
+  actShell(`
+    <div class="act-step-dots"><span class="on"></span><span class="on"></span></div>
+    <div class="act-badge act-ok">📧</div>
+    <h2 class="act-h">Check your email</h2>
+    <p class="act-p">If <b>${esc(_fp.email)}</b> has an account, a 6-digit code is on its way. It expires in 15 minutes.${notConfigured?'<br><span style="color:#c2570f">⚠️ Email is not set up on the server yet — ask Head Office.</span>':''}</p>
+    <label class="login-lbl">6-digit code</label>
+    <input id="fp-code" class="login-input" inputmode="numeric" maxlength="6" placeholder="123456" autocomplete="off">
+    <label class="login-lbl">New password</label>
+    <input id="fp-pw1" class="login-input" type="password" placeholder="At least 6 characters">
+    <label class="login-lbl">Confirm new password</label>
+    <input id="fp-pw2" class="login-input" type="password" placeholder="Type it again">
+    <div id="fp-err" class="login-err"></div>
+    <button class="login-btn act-cta" onclick="fpReset()">Reset password →</button>
+    <button class="act-link" onclick="fpRequest()">Resend code</button>`);
+  setTimeout(()=>document.getElementById('fp-code')?.focus(),80);
+}
+async function fpReset(){
+  const code=(document.getElementById('fp-code')?.value||'').trim();
+  const p1=document.getElementById('fp-pw1')?.value||'', p2=document.getElementById('fp-pw2')?.value||'';
+  const err=document.getElementById('fp-err');
+  if(code.length<4){ if(err) err.textContent='Enter the 6-digit code from your email.'; return; }
+  if(p1.length<6){ if(err) err.textContent='Password must be at least 6 characters.'; return; }
+  if(p1!==p2){ if(err) err.textContent='The two passwords do not match.'; return; }
+  const btn=document.querySelector('.act-cta'); if(btn){ btn.disabled=true; btn.textContent='Resetting…'; }
+  let r=null;
+  try{ r=await fetch('/api/password/reset',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email:_fp.email,code,password:p1})}).then(x=>x.json()); }catch(e){}
+  if(!r||!r.ok){ if(btn){ btn.disabled=false; btn.textContent='Reset password →'; } if(err) err.textContent=(r&&r.error)||'Could not reset — please try again.'; return; }
+  actShell(`
+    <div class="act-badge act-ok act-pop">🎉</div>
+    <h2 class="act-h">Password updated!</h2>
+    <div class="act-id-box"><span class="act-id-lbl">Your ID</span><span class="act-id">${esc(r.id)}</span></div>
+    <p class="act-p">Sign in on the <span class="act-tab">${esc(r.tab)}</span> tab with your ID and new password.</p>
+    <button class="login-btn act-cta" onclick="actPrefill('${esc(r.id)}','${esc(r.role)}')">Sign in now →</button>`);
+}
+window.fpOpen=fpOpen; window.fpRequest=fpRequest; window.fpReset=fpReset;
 function loginFail(m){ const e=$('#login-err'); if(e) e.textContent='❌ '+m; const c=$('.login-card'); if(c){ c.classList.add('shake'); setTimeout(()=>c.classList.remove('shake'),450); } }
 function updateLoginHint(){ const el=$('#login-hint'); if(!el) return; const mode=loginMode();
   // ID is required for Manager/Dept Lead (personal login); optional for the others
