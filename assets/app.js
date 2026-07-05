@@ -163,8 +163,8 @@ function actOpen(){
   actShell(`
     <div class="act-step-dots"><span class="on"></span><span></span><span></span></div>
     <h2 class="act-h">Activate your account</h2>
-    <p class="act-p">Enter <b>exactly the Gmail you use to log in to the Deputy app</b>. We'll match it with your staff profile.</p>
-    <label class="login-lbl">Your Gmail</label>
+    <p class="act-p">Enter <b>exactly the email you use to log in to the Deputy app</b>. We'll match it with your staff profile.</p>
+    <label class="login-lbl">Your email</label>
     <input id="act-email" class="login-input" type="email" placeholder="name@gmail.com" autocomplete="email">
     <div id="act-err" class="login-err"></div>
     <button class="login-btn act-cta" onclick="actLookup()">Continue →</button>`);
@@ -230,7 +230,7 @@ async function actCreate(){
     <div class="act-id-box"><span class="act-id-lbl">Your ID</span><span class="act-id">${esc(r.id)}</span></div>
     <div class="act-access"><span class="act-chip">${esc(roleName)}</span>${r.store?`<span class="act-chip act-chip-store">🏪 ${esc(r.store)}</span>`:''}</div>
     ${r.emailed
-      ? `<div class="act-mail-note">📧 Your <b>ID</b> &amp; <b>password</b> have been sent to <b>${esc(_act.email||'your Gmail')}</b> — check your inbox.</div>`
+      ? `<div class="act-mail-note">📧 Your <b>ID</b> &amp; <b>password</b> have been sent to <b>${esc(_act.email||'your email')}</b> — check your inbox.</div>`
       : `<div class="act-mail-note warn">⚠️ We couldn't email your details — please save your ID &amp; password somewhere safe now.</div>`}
     <p class="act-p">Sign in with this ID and your new password — your access: <span class="act-tab">${esc(r.tab)}</span>.${r.needs_profile?'<br>📋 After signing in, please complete <b>My Profile</b> first.':''}</p>
     <button class="login-btn act-cta" onclick="actPrefill('${esc(r.id)}','${esc(r.role)}')">Sign in now →</button>`);
@@ -249,8 +249,8 @@ function fpOpen(){
   actShell(`
     <div class="act-step-dots"><span class="on"></span><span></span></div>
     <h2 class="act-h">Reset your password</h2>
-    <p class="act-p">Enter your <b>Gmail</b> and we'll email you a 6-digit code.</p>
-    <label class="login-lbl">Your Gmail</label>
+    <p class="act-p">Enter your <b>email</b> and we'll send you a 6-digit code.</p>
+    <label class="login-lbl">Your email</label>
     <input id="fp-email" class="login-input" type="email" placeholder="name@gmail.com" autocomplete="email">
     <div id="fp-err" class="login-err"></div>
     <button class="login-btn act-cta" onclick="fpRequest()">Send code →</button>`);
@@ -308,8 +308,8 @@ window.fpOpen=fpOpen; window.fpRequest=fpRequest; window.fpReset=fpReset;
 function idOpen(){
   actShell(`
     <h2 class="act-h">Find your ID</h2>
-    <p class="act-p">Enter your <b>Gmail</b> and we'll show the ID linked to it.</p>
-    <label class="login-lbl">Your Gmail</label>
+    <p class="act-p">Enter your <b>email</b> and we'll show the ID linked to it.</p>
+    <label class="login-lbl">Your email</label>
     <input id="fid-email" class="login-input" type="email" placeholder="name@gmail.com" autocomplete="email">
     <div id="fid-err" class="login-err"></div>
     <button class="login-btn act-cta" onclick="idLookup()">Find my ID →</button>`);
@@ -328,7 +328,7 @@ async function idLookup(){
       <div class="act-badge act-ok">🪪</div>
       <h2 class="act-h">Here's your ID</h2>
       <div class="act-id-box"><span class="act-id-lbl">Your ID</span><span class="act-id">${esc(r.id)}</span></div>
-      <p class="act-p">Sign in with this ID and your password — your access: <span class="act-tab">${esc(r.tab)}</span>.<br>Forgot the password too? Use <b>Forgot password?</b> — same Gmail.</p>
+      <p class="act-p">Sign in with this ID and your password — your access: <span class="act-tab">${esc(r.tab)}</span>.<br>Forgot the password too? Use <b>Forgot password?</b> — same email.</p>
       <button class="login-btn act-cta" onclick="actPrefill('${esc(r.id)}','${esc(r.role)}')">Go to sign in →</button>`);
     return;
   }
