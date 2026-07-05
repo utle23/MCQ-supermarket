@@ -65,6 +65,13 @@ def login():
                    acct_admin=db.is_account_admin({'account_id': meta.get('account_id')}) if meta.get('account_id') else False,
                    stores=db.STORES if role in ('super', 'ba') else [store])
 
+@api.route('/api/logout', methods=['POST'])
+def logout_route():
+    h = request.headers.get('Authorization', '')
+    tok = h[7:] if h.startswith('Bearer ') else ''
+    db.revoke_token(tok)
+    return jsonify(ok=True)
+
 # ---------- Deputy attendance (clock-in/out webhooks → lateness, warnings, inbox) ----------
 def _deputy_norm(topic, d):
     """Normalise a Deputy timesheet payload into our attendance event. Deputy field names vary

@@ -480,6 +480,10 @@ async function logout(reason){
     try{ State.dataSync={status:'loading',message:'Saving…'}; refreshSyncUi(); }catch(e){}
     await MCQDB.saveAll();
   } }catch(e){}
+  // revoke the server session token so a leaked/shared device can't reuse it
+  try{ const t=localStorage.getItem('mcq_token');
+    if(t) await fetch('/api/logout',{method:'POST',headers:{'Authorization':'Bearer '+t}}).catch(()=>{});
+    if(window.MCQDB && MCQDB.logout) MCQDB.logout(); }catch(e){}
   stopLiveRefresh();
   dataSyncRun++;
   State.superFullSyncStarted=false;

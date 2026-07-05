@@ -1200,7 +1200,7 @@ function ckRmPhoto(e,i,url){
 function ckSession(v){State.chk.session=v;State.chk.area='ALL';renderChecklist();}
 function ckDept(d){State.chk.dept=d;State.chk.area='ALL';renderChecklist();}
 /* ---- admin checklist CRUD (add / edit / delete task) ---- */
-function ckPersistTemplate(){ if(window.persist) window.persist(); }
+function ckPersistTemplate(){ try{ DB.checklist=DB.checklist||{}; DB.checklist.templateVersion=(+(DB.checklist.templateVersion||0))+1; }catch(e){} if(window.persist) window.persist(); }
 function ckEditTask(i){ State.chk.editing=i; renderChecklist(); }
 function ckCancelEdit(){ State.chk.editing=null; renderChecklist(); }
 function ckSaveTask(i){
@@ -3494,15 +3494,18 @@ window.mcqEmail={
     if(window.MCQ_EMAIL_RELAY) return c.channel!=='gmail' && c.channel!=='mailto';
     return c.channel==='brevo' && !!c.apiKey && !!c.fromEmail; },
   notify(eventType,subject,body,meta){ const to=this.recipients(eventType,meta); if(!to.length) return; const cfg=this.cfg();
-    this.mirrorInbox(to,subject,body);   // every alert ALSO lands in the matching staff member's app Inbox
+    this.mirrorInbox(to,subject,body,eventType);   // ALSO land in the matching staff member's app Inbox
     if(this.canBrevo()) return this._brevo(to,subject,body,cfg);
     if(cfg.channel==='gmail'){ this._gmail(to,subject,body); toast(`📧 Gmail compose opened · ${to.length} recipient(s)`); return; }
     if(cfg.channel==='mailto'){ window.location.href=this._mailto(to,subject,body); return; }
     toast(`📧 ${to.length} recipient(s) would be notified (demo) — enable real sending in Email settings`); },
   // recipients whose email matches a staff member get the SAME alert in their app Inbox
-  mirrorInbox(to,subject,body){
+  mirrorInbox(to,subject,body,eventType){
     try{
       if(!window.mcqMsgSend) return;
+      // 'issue' already posts a native kind:'issue' inbox message to managers+super, so mirroring
+      // it here would double up for a dept-lead who is also an email recipient — skip it.
+      if(eventType==='issue') return;
       const seen={};
       (to||[]).forEach(r=>{
         const e=String(r.email||'').trim().toLowerCase(); if(!e||seen[e]) return; seen[e]=1;

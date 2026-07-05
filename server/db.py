@@ -35,7 +35,7 @@ ADMIN_PW = {'Morley':'1010','Mirrabooka':'2020','Malaga':'3030','Subiaco':'4040'
 BRANCH_PW = {'Morley':'1111','Mirrabooka':'2222','Malaga':'3333','Subiaco':'4444',
              'Armadale':'5555','Warehouse':'8000','Demo':'0000'}
 
-TOKEN_TTL = 60 * 60 * 24 * 30   # 30 days
+TOKEN_TTL = 60 * 60 * 24 * 7    # 7 days (was 30) — shorter window if a token leaks
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS stores (
@@ -253,6 +253,14 @@ def issue_token(role, store_id, staff_id=None, staff_name=None, account_id=None)
                  (tok, role, store_id, time.time(), time.time() + TOKEN_TTL, staff_id, staff_name, account_id))
     conn.commit(); conn.close()
     return tok
+
+def revoke_token(token):
+    if not token: return
+    conn = connect()
+    try:
+        conn.execute('DELETE FROM tokens WHERE token=?', (token,)); conn.commit()
+    finally:
+        conn.close()
 
 def auth_from_token(token):
     if not token: return None
@@ -1163,6 +1171,19 @@ def save_state(store_id, state, user):
         lean['staff'] = []
         lean['checklistSubs'] = '[]'
         lean['scheduleHistory'] = '[]'
+        # concurrency guard: never let an OLDER checklist template overwrite a newer one.
+        # Each edit bumps checklistTemplateVersion; a stale client (e.g. autosave from a session
+        # that loaded before someone else's edit) keeps the server's newer template instead.
+        try:
+            prev = conn.execute('SELECT state_json FROM store_state WHERE store_id=?', (store_id,)).fetchone()
+            if prev and prev['state_json']:
+                pj = json.loads(prev['state_json'])
+                if int(pj.get('checklistTemplateVersion') or 0) > int(state.get('checklistTemplateVersion') or 0):
+                    lean['checklistItems'] = pj.get('checklistItems')
+                    lean['checklistTemplateVersion'] = pj.get('checklistTemplateVersion')
+                    if pj.get('checklistDeadlines') is not None: lean['checklistDeadlines'] = pj.get('checklistDeadlines')
+        except Exception:
+            pass
         if isinstance(ba, dict):
             ba2 = dict(ba); ba2['records'] = []
             lean['binAdmin'] = json.dumps(ba2)
