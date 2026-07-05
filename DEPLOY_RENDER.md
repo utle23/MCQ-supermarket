@@ -18,7 +18,7 @@ survive deploys on a persistent disk.
 1. **New → Postgres** → plan Basic (~$6/mo) → copy its **Internal Database URL**.
 2. **New → Web Service** → connect the repo →
    - Build: `pip install -r requirements.txt`
-   - Start: `gunicorn flask_app:app --workers 3 --timeout 120 --bind 0.0.0.0:$PORT`
+   - Start: `gunicorn flask_app:app --workers 3 --threads 4 --timeout 120 --bind 0.0.0.0:$PORT`
    - Instance: **Starter $7** (always-on) or **Standard $25** (recommended for 5×70).
 3. Web service → **Disks → Add Disk**: mount `/var/data`, size 5GB.
 4. Web service → **Environment**:
