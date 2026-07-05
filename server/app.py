@@ -498,7 +498,7 @@ def post_config(store_id):
     cfg = d.get('config', d)
     conn = db.connect()
     conn.execute("""INSERT INTO store_config(store_id,config_json,updated_at) VALUES(?,?,?)
-                    ON CONFLICT(store_id) DO UPDATE SET config_json=excluded.config_json, updated_at=excluded.updated_at""",
+                    ON CONFLICT (store_id) DO UPDATE SET config_json=excluded.config_json, updated_at=excluded.updated_at""",
                  (store_id, json.dumps(cfg), db.now()))
     conn.commit(); conn.close()
     db.write_audit(uid(au), store_id, 'save', 'store_config', store_id, None, None)
@@ -566,7 +566,7 @@ def post_photo():
         abort(400)
     meta = {'area': request.form.get('area', ''), 'equipment': request.form.get('equipment', '')}
     conn = db.connect()
-    conn.execute('INSERT OR REPLACE INTO photos(id,store_id,filename,mime,meta_json,created_at) VALUES(?,?,?,?,?,?)',
+    conn.execute('INSERT INTO photos(id,store_id,filename,mime,meta_json,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT (id) DO UPDATE SET filename=excluded.filename, mime=excluded.mime, meta_json=excluded.meta_json, created_at=excluded.created_at',
                  (pid, store_id, pid + '.' + ext, mime, json.dumps(meta), db.now()))
     conn.commit(); conn.close()
     db.write_audit(uid(au), store_id, 'create', 'photo', pid, None, None)

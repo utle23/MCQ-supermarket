@@ -14,12 +14,57 @@ Design notes
 * To move to MySQL on PythonAnywhere: swap `connect()` for a MySQL connector and
   change `AUTOINC`/types; all SQL is kept simple and portable.
 """
-import os, sqlite3, json, time, hashlib, secrets
+import os, sqlite3, json, time, hashlib, secrets, re as _re
 
 BASE   = os.path.dirname(os.path.abspath(__file__))
-DATA   = os.path.join(BASE, 'data')
+# DATA_DIR lets a host (e.g. a Render persistent disk) place the DB file + uploads on durable
+# storage. Falls back to the repo folders for local dev.
+DATA   = os.environ.get('DATA_DIR') or os.path.join(BASE, 'data')
 DB_PATH = os.path.join(DATA, 'mcq.db')
-UPLOADS = os.path.join(BASE, 'uploads')
+UPLOADS = os.environ.get('UPLOADS_DIR') or (os.path.join(DATA, 'uploads') if os.environ.get('DATA_DIR') else os.path.join(BASE, 'uploads'))
+
+# ---- database backend: Postgres when DATABASE_URL is set (Render), else SQLite (local dev) ----
+DATABASE_URL = os.environ.get('DATABASE_URL', '')
+IS_PG = bool(DATABASE_URL)
+if IS_PG:
+    import psycopg2, psycopg2.extras
+
+class _Cur:
+    """Uniform cursor: .fetchone()/.fetchall() return dict-like rows (row['col'] + row.keys())."""
+    def __init__(self, cur): self._c = cur
+    def fetchone(self): return self._c.fetchone()
+    def fetchall(self): return self._c.fetchall()
+    @property
+    def rowcount(self): return self._c.rowcount
+
+def _pg_translate(sql):
+    # Postgres uses %s placeholders and needs literal % doubled; our SQL never uses a literal %.
+    return sql.replace('?', '%s')
+
+class _Conn:
+    """Thin wrapper so the whole codebase can keep calling conn.execute(sql, params) with ? holders,
+    conn.commit()/close(), and conn.executescript(ddl) on BOTH SQLite and Postgres."""
+    def __init__(self, raw): self.raw = raw
+    def execute(self, sql, params=()):
+        if IS_PG:
+            cur = self.raw.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute(_pg_translate(sql), params)
+            return _Cur(cur)
+        return self.raw.execute(sql, params)
+    def executescript(self, script):
+        if IS_PG:
+            ddl = _pg_ddl(script)
+            cur = self.raw.cursor(); cur.execute(ddl); return _Cur(cur)
+        return self.raw.executescript(script)
+    def commit(self): return self.raw.commit()
+    def close(self): return self.raw.close()
+
+def _pg_ddl(script):
+    """Make the shared SQLite schema valid for Postgres: autoincrement PKs + REAL types."""
+    s = script
+    s = _re.sub(r'INTEGER PRIMARY KEY AUTOINCREMENT', 'BIGSERIAL PRIMARY KEY', s, flags=_re.I)
+    s = s.replace('created_at REAL', 'created_at DOUBLE PRECISION').replace('expires_at REAL', 'expires_at DOUBLE PRECISION')
+    return s
 
 STORES = ['Morley', 'Mirrabooka', 'Malaga', 'Subiaco', 'Armadale', 'Warehouse', 'Demo']
 # Stores that were removed — their data is purged on init (see init_db).
@@ -120,13 +165,16 @@ CREATE INDEX IF NOT EXISTS idx_ann_store ON announcements(store_id);
 """
 
 def connect():
+    if IS_PG:
+        raw = psycopg2.connect(DATABASE_URL); raw.set_client_encoding('UTF8')
+        return _Conn(raw)
     os.makedirs(DATA, exist_ok=True)
     os.makedirs(UPLOADS, exist_ok=True)
     conn = sqlite3.connect(DB_PATH, timeout=30)
     conn.row_factory = sqlite3.Row
     conn.execute('PRAGMA journal_mode=WAL')      # avoids "database is locked" under load
     conn.execute('PRAGMA foreign_keys=ON')
-    return conn
+    return _Conn(conn)
 
 def now():
     return time.strftime('%Y-%m-%d %H:%M:%S')
@@ -145,7 +193,7 @@ def set_setting(key, value):
     conn = connect()
     try:
         conn.execute('INSERT INTO settings(key,value_json,updated_at) VALUES(?,?,?) '
-                     'ON CONFLICT(key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at',
+                     'ON CONFLICT (key) DO UPDATE SET value_json=excluded.value_json, updated_at=excluded.updated_at',
                      (key, json.dumps(value), now()))
         conn.commit()
     finally:
@@ -156,6 +204,12 @@ def hash_pw(pw):
 
 def init_db():
     conn = connect()
+    # Postgres aborts the whole transaction on the first error, but the idempotent ALTER-TABLE
+    # migrations below intentionally fail (duplicate column) on every boot after the first.
+    # Autocommit makes each DDL statement independent so one expected failure can't poison the rest.
+    if IS_PG:
+        try: conn.raw.autocommit = True
+        except Exception: pass
     conn.executescript(SCHEMA)
     # migration: schedule_history needs a stable client id so merge-saves upsert
     # (instead of duplicating) and concurrent users don't clobber each other.
@@ -179,17 +233,17 @@ def init_db():
     except Exception: pass
     # seed stores
     for s in STORES:
-        conn.execute('INSERT OR IGNORE INTO stores(id,name,active,created_at) VALUES(?,?,1,?)', (s, s, now()))
+        conn.execute('INSERT INTO stores(id,name,active,created_at) VALUES(?,?,1,?) ON CONFLICT (id) DO NOTHING', (s, s, now()))
     # seed users (passwords server-side only)
     def add_user(role, store, pw, sync=False):
-        cur = conn.execute('SELECT 1 FROM users WHERE role=? AND IFNULL(store_id,"")=?', (role, store or ''))
+        cur = conn.execute("SELECT 1 FROM users WHERE role=? AND COALESCE(store_id,'')=?", (role, store or ''))
         if not cur.fetchone():
             conn.execute('INSERT INTO users(role,store_id,password_hash,created_at) VALUES(?,?,?,?)',
                          (role, store, hash_pw(pw), now()))
         elif sync:
             # keep the stored password in sync with the constant above (lets us
             # change admin/super passwords by editing this file + restarting)
-            conn.execute('UPDATE users SET password_hash=? WHERE role=? AND IFNULL(store_id,"")=?',
+            conn.execute("UPDATE users SET password_hash=? WHERE role=? AND COALESCE(store_id,'')=?",
                          (hash_pw(pw), role, store or ''))
     add_user('super', None, SUPER_PW, sync=True)
     add_user('ba', None, BA_PW, sync=True)
@@ -224,10 +278,10 @@ def verify_login(mode, store, pw, login_id=None):
     conn = connect()
     try:
         if mode == 'super':
-            row = conn.execute('SELECT password_hash FROM users WHERE role="super"').fetchone()
+            row = conn.execute("SELECT password_hash FROM users WHERE role='super'").fetchone()
             return ('super', 'ALL') if row and row['password_hash'] == hash_pw(pw) else None
         if mode == 'ba':
-            row = conn.execute('SELECT password_hash FROM users WHERE role="ba"').fetchone()
+            row = conn.execute("SELECT password_hash FROM users WHERE role='ba'").fetchone()
             return ('ba', 'ALL') if row and row['password_hash'] == hash_pw(pw) else None
         if mode == 'employee':
             # individual staff account — numeric password only (globally unique)
@@ -237,11 +291,11 @@ def verify_login(mode, store, pw, login_id=None):
             return ('employee', row['store_id'], {'staff_id': row['staff_id'], 'staff_name': row['staff_name']})
         if mode == 'admin':
             if store not in STORES: return None
-            row = conn.execute('SELECT password_hash FROM users WHERE role="admin" AND store_id=?', (store,)).fetchone()
+            row = conn.execute("SELECT password_hash FROM users WHERE role='admin' AND store_id=?", (store,)).fetchone()
             return ('admin', store) if row and row['password_hash'] == hash_pw(pw) else None
         # staff (Department Lead): per-store password
         if store not in STORES: return None
-        row = conn.execute('SELECT password_hash FROM users WHERE role="staff" AND store_id=?', (store,)).fetchone()
+        row = conn.execute("SELECT password_hash FROM users WHERE role='staff' AND store_id=?", (store,)).fetchone()
         return ('staff', store) if row and row['password_hash'] == hash_pw(pw) else None
     finally:
         conn.close()
@@ -330,7 +384,7 @@ def update_staff_profile(store, staff_id, patch):
         new_store = str((patch or {}).get('store') or '') if isinstance(patch, dict) else ''
         target = new_store if (new_store and new_store in STORES and new_store != store) else store
         cur['store'] = target; cur['id'] = sid
-        conn.execute('INSERT OR REPLACE INTO staff(id,store_id,data_json) VALUES(?,?,?)', (sid, target, json.dumps(cur)))
+        conn.execute('INSERT INTO staff(id,store_id,data_json) VALUES(?,?,?) ON CONFLICT (store_id,id) DO UPDATE SET data_json=excluded.data_json', (sid, target, json.dumps(cur)))
         if target != store:
             conn.execute('DELETE FROM staff WHERE store_id=? AND id=?', (store, sid))
             conn.execute('UPDATE accounts SET store_id=?, updated_at=? WHERE staff_id=?', (target, now(), sid))
@@ -432,7 +486,7 @@ def activate_account(email, store, password, name=None):
         sid = (store[:3].upper() if store else 'GEN') + '-' + str(20000 + random.randint(0, 9999))
         srec = {'id': sid, 'name': disp, 'email': email, 'store': store, 'active': 1,
                 'role': '', 'dept': '', 'start': time.strftime('%Y-%m-%d')}
-        conn.execute('INSERT OR REPLACE INTO staff(id,store_id,data_json) VALUES(?,?,?)',
+        conn.execute('INSERT INTO staff(id,store_id,data_json) VALUES(?,?,?) ON CONFLICT (store_id,id) DO UPDATE SET data_json=excluded.data_json',
                      (sid, store, json.dumps(srec)))
         aid = _gen_account_id(conn, store)
         conn.execute('''INSERT INTO accounts(id,password,role,store_id,staff_id,name,email,activated,needs_profile,created_at,updated_at)
@@ -913,13 +967,12 @@ def send_message(au, store, kind, subject, body_html, to_staff_id=None, to_store
                         for cand in (root['from_staff_id'], root['to_staff_id']):
                             if cand and str(cand) != me:
                                 to_staff_id = cand; break
-        conn.execute('''INSERT INTO messages(store_id,from_role,from_name,from_staff_id,to_staff_id,
+        mid = conn.execute('''INSERT INTO messages(store_id,from_role,from_name,from_staff_id,to_staff_id,
             to_super,to_managers,to_store_all,kind,subject,body_html,thread_id,read_by_json,attachments_json,created_at)
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''',
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
             (store, au.get('role'), _role_display(au, store), au.get('staff_id'),
              (str(to_staff_id) if to_staff_id else None), ts, tm, (1 if ta else 0),
-             kind, subject or '', body_html or '', thread_id, '[]', json.dumps(atts), now()))
-        mid = conn.execute('SELECT last_insert_rowid() AS id').fetchone()['id']
+             kind, subject or '', body_html or '', thread_id, '[]', json.dumps(atts), now())).fetchone()['id']
         if not thread_id:
             thread_id = 'T' + str(mid)
             conn.execute('UPDATE messages SET thread_id=? WHERE id=?', (thread_id, mid))
@@ -1021,10 +1074,9 @@ def post_announcement(au, store, title, body_html, image_id=None, department=Non
     atts = sanitize_attachments(attachments)
     conn = connect()
     try:
-        conn.execute('INSERT INTO announcements(store_id,title,body_html,image_id,author,created_at,department,attachments_json) VALUES(?,?,?,?,?,?,?,?)',
+        aid = conn.execute('INSERT INTO announcements(store_id,title,body_html,image_id,author,created_at,department,attachments_json) VALUES(?,?,?,?,?,?,?,?) RETURNING id',
                      (store, title or '', body_html or '', image_id, _role_display(au, None if store == 'ALL' else store), now(),
-                      (str(department).strip() or None) if department else None, json.dumps(atts)))
-        aid = conn.execute('SELECT last_insert_rowid() AS id').fetchone()['id']
+                      (str(department).strip() or None) if department else None, json.dumps(atts))).fetchone()['id']
         conn.commit()
         return aid
     finally:
@@ -1135,27 +1187,27 @@ def save_state(store_id, state, user):
                 if not isinstance(arr, list): continue
                 for i, r in enumerate(arr):
                     rid = str((isinstance(r, dict) and r.get('id')) or (str(m) + '#' + str(i)))
-                    conn.execute('INSERT OR REPLACE INTO records(id,store_id,module,data_json,created_at) VALUES(?,?,?,?,?)',
+                    conn.execute('INSERT INTO records(id,store_id,module,data_json,created_at) VALUES(?,?,?,?,?) ON CONFLICT (store_id,module,id) DO UPDATE SET data_json=excluded.data_json, created_at=excluded.created_at',
                                  (rid, store_id, str(m), json.dumps(r), now()))
         # staff (merge/upsert)
         staff = state.get('staff') or []
         if isinstance(staff, list):
             for i, s in enumerate(staff):
                 sid = str((isinstance(s, dict) and (s.get('id') or s.get('code'))) or ('s#' + str(i)))
-                conn.execute('INSERT OR REPLACE INTO staff(id,store_id,data_json) VALUES(?,?,?)', (sid, store_id, json.dumps(s)))
+                conn.execute('INSERT INTO staff(id,store_id,data_json) VALUES(?,?,?) ON CONFLICT (store_id,id) DO UPDATE SET data_json=excluded.data_json', (sid, store_id, json.dumps(s)))
         # checklist submissions (merge/upsert)
         subs = _parse(state.get('checklistSubs'))
         if isinstance(subs, list):
             for i, s in enumerate(subs):
                 cid = str((isinstance(s, dict) and s.get('id')) or ('c#' + str(i)))
-                conn.execute('INSERT OR REPLACE INTO checklist_submissions(id,store_id,data_json,created_at) VALUES(?,?,?,?)',
+                conn.execute('INSERT INTO checklist_submissions(id,store_id,data_json,created_at) VALUES(?,?,?,?) ON CONFLICT (store_id,id) DO UPDATE SET data_json=excluded.data_json, created_at=excluded.created_at',
                              (cid, store_id, json.dumps(s), now()))
         # schedule history (merge/upsert by client record id, deduped via rec_id index)
         sh = _parse(state.get('scheduleHistory'))
         if isinstance(sh, list):
             for i, r in enumerate(sh):
                 rid = str((isinstance(r, dict) and r.get('id')) or ('sh#' + str(i)))
-                conn.execute('INSERT OR REPLACE INTO schedule_history(rec_id,store_id,data_json,created_at) VALUES(?,?,?,?)',
+                conn.execute('INSERT INTO schedule_history(rec_id,store_id,data_json,created_at) VALUES(?,?,?,?) ON CONFLICT (store_id,rec_id) DO UPDATE SET data_json=excluded.data_json, created_at=excluded.created_at',
                              (rid, store_id, json.dumps(r), now()))
         # bin records (merge/upsert)
         ba = _parse(state.get('binAdmin'))
@@ -1163,7 +1215,7 @@ def save_state(store_id, state, user):
         if isinstance(bin_recs, list):
             for i, r in enumerate(bin_recs):
                 bid = str((isinstance(r, dict) and r.get('id')) or ('b#' + str(i)))
-                conn.execute('INSERT OR REPLACE INTO bin_records(id,store_id,data_json,created_at) VALUES(?,?,?,?)',
+                conn.execute('INSERT INTO bin_records(id,store_id,data_json,created_at) VALUES(?,?,?,?) ON CONFLICT (store_id,id) DO UPDATE SET data_json=excluded.data_json, created_at=excluded.created_at',
                              (bid, store_id, json.dumps(r), now()))
         # lean blob: identical shape, heavy arrays emptied (rebuilt on load)
         lean = dict(state)
@@ -1189,7 +1241,7 @@ def save_state(store_id, state, user):
             lean['binAdmin'] = json.dumps(ba2)
         blob = json.dumps(lean)
         conn.execute("""INSERT INTO store_state(store_id,state_json,updated_at,updated_by) VALUES(?,?,?,?)
-                        ON CONFLICT(store_id) DO UPDATE SET state_json=excluded.state_json,
+                        ON CONFLICT (store_id) DO UPDATE SET state_json=excluded.state_json,
                         updated_at=excluded.updated_at, updated_by=excluded.updated_by""",
                      (store_id, blob, now(), user))
         # capped snapshot trail (lean blob — size/timeline indicator)

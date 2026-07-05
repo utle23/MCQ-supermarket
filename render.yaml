@@ -1,0 +1,30 @@
+# Render Blueprint — MCQ Supermarket (Web Service + Postgres + persistent disk for uploads)
+# In Render: New → Blueprint → connect this repo. It reads this file and provisions everything.
+services:
+  - type: web
+    name: mcq-supermarket
+    runtime: python
+    plan: standard              # 1 CPU / 2GB — good for 5 stores × 70 users; scale later
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn flask_app:app --workers 3 --timeout 120 --bind 0.0.0.0:$PORT
+    healthCheckPath: /api/health
+    disk:                       # photos/files (uploads) live here so they survive deploys
+      name: mcq-uploads
+      mountPath: /var/data
+      sizeGB: 5
+    envVars:
+      - key: DATA_DIR           # uploads dir → the persistent disk
+        value: /var/data
+      - key: DATABASE_URL       # auto-filled from the Postgres instance below
+        fromDatabase:
+          name: mcq-postgres
+          property: connectionString
+      - key: DEPUTY_WEBHOOK_SECRET
+        sync: false             # set in the dashboard (secret)
+      - key: DEPUTY_HOST
+        sync: false
+      - key: DEPUTY_TOKEN
+        sync: false
+databases:
+  - name: mcq-postgres
+    plan: basic-256mb           # ~US$6/mo; upgrade anytime. Free plan expires after 30 days.
