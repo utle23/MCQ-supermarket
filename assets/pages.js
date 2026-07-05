@@ -4055,6 +4055,11 @@ function renderAccounts(){
       <div><h2>Account Management</h2><p>Assign each person's access level, store and department. Passwords are visible to you only.</p></div>
       <div class="ph-actions"><button class="btn primary" onclick="accAdd()"><i class="fas fa-user-plus"></i>&nbsp; Add person (by email)</button></div></div>
     <div class="card"><div class="card-head"><h3>All accounts · <span id="acc-count">…</span></h3>
+      <select id="acc-store" class="acc-inp" style="margin-left:12px;min-width:150px" onchange="accLoad()">
+        <option value="">🏬 All stores</option>
+        ${(DB.stores||[]).map(s=>`<option>${esc(s)}</option>`).join('')}
+        <option value="__none">🏢 Head office / no store</option>
+      </select>
       <input class="login-input" id="acc-q" placeholder="🔍 Search name, ID, email, store…" style="flex:1;min-width:200px;max-width:360px;margin:0 12px;border:1px solid var(--line);border-radius:9px;padding:7px 12px;font-size:13px" oninput="accSearch(this.value)">
       <span class="ch-sub">ID rule: Morley 1··· / Mirrabooka 2··· / Malaga 3··· / Subiaco 4··· / Armadale 5··· / Warehouse 8··· / Head office 7···</span></div>
       <div class="table-wrap"><table class="grid" id="acc-table"><thead><tr>
@@ -4067,8 +4072,11 @@ function accSearch(v){ clearTimeout(_accQT); _accQT=setTimeout(()=>accLoad(v),25
 function accLoad(q){
   if(!window.mcqAccounts) return;
   mcqAccounts(q||document.getElementById('acc-q')?.value||'').then(r=>{
-    const list=(r&&r.accounts)||[]; const el=document.getElementById('acc-body'); if(!el) return;
-    const n=document.getElementById('acc-count'); if(n) n.textContent=list.length+' people';
+    let list=(r&&r.accounts)||[]; const el=document.getElementById('acc-body'); if(!el) return;
+    const sf=document.getElementById('acc-store')?.value||'';
+    if(sf==='__none') list=list.filter(a=>!a.store_id);
+    else if(sf) list=list.filter(a=>a.store_id===sf);
+    const n=document.getElementById('acc-count'); if(n) n.textContent=list.length+' people'+(sf?(' · '+(sf==='__none'?'Head office':sf)):'');
     const roleSel=(a)=>['employee','staff','admin','super'].map(x=>`<option value="${x}" ${a.role===x?'selected':''}>${({employee:'Member (Staff)',staff:'Dept Lead',admin:'Manager',super:'Super Admin'})[x]}</option>`).join('');
     const storeSel=(a)=>`<option value="" ${!a.store_id?'selected':''}>— No store —</option>`+(DB.stores||[]).map(s=>`<option ${a.store_id===s?'selected':''}>${esc(s)}</option>`).join('');
     const depts=(DB.checklist&&DB.checklist.depts)||[];
