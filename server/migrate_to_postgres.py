@@ -47,9 +47,13 @@ for t in TABLES:
     collist = ','.join('"%s"' % c for c in cols)
     ph = ','.join(['%s'] * len(cols))
     n = 0
+    # accounts are authoritative in the SOURCE (init_db re-seeds them with new random
+    # passwords on the target before we copy) → overwrite instead of skipping
+    conflict = ('ON CONFLICT (id) DO UPDATE SET ' + ','.join('"%s"=excluded."%s"' % (c, c) for c in cols if c != 'id')
+                ) if t == 'accounts' else 'ON CONFLICT DO NOTHING'
     for r in rows:
         try:
-            pcur.execute('INSERT INTO %s (%s) VALUES (%s) ON CONFLICT DO NOTHING' % (t, collist, ph),
+            pcur.execute('INSERT INTO %s (%s) VALUES (%s) %s' % (t, collist, ph, conflict),
                          tuple(r[c] for c in cols))
             n += 1
         except Exception as e:
