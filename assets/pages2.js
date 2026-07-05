@@ -361,49 +361,90 @@ function raiSubmit(){ const staff=$('#rai-staff').value.trim(); if(!staff||staff
   toast('📤 Raise review submitted'); buildSidebar(); renderRaise();
 }
 
-/* ============================================================ BIRTHDAY GIVEAWAYS */
-function bdExport(fmt){ const cols=[{label:'Staff',get:r=>r.staffName},{label:'Store',get:r=>r.store},{label:'Birthday',get:r=>r.birthday},{label:'Favourite gift',get:r=>r.favoriteGift},{label:'Status',get:r=>r.status}]; expRecords('Birthday Giveaways',cols,scopedRecords('birthday'),fmt); }
+/* ============================================================ BIRTHDAY GIVEAWAYS
+   Birthdays come STRAIGHT from each staff member's Date of birth (profile) — nothing
+   to enter twice, per store automatically. The gift plan (favourite gift / Planned /
+   Given) is the only thing managers add. */
+function bdStaffList(){
+  return (DB.staff||[]).filter(s=>s.dob && s.active!==0 && !s.archived &&
+    (isSuper() ? (!State.superStore||State.superStore==='ALL'||s.store===State.superStore) : s.store===State.branch));
+}
+function bdCalc(dob){
+  const t=new Date(); t.setHours(0,0,0,0);
+  const [Y,M,D]=String(dob).split('-').map(Number);
+  if(!Y||!M||!D) return null;
+  let next=new Date(t.getFullYear(),M-1,D); if(next<t) next=new Date(t.getFullYear()+1,M-1,D);
+  const du=Math.round((next-t)/86400000);
+  return {du, turning:next.getFullYear()-Y, month:M, day:D,
+    label:next.toLocaleDateString('en-AU',{day:'numeric',month:'short'})};
+}
+function bdGiftRec(s){ return (DB.modules.birthday.records||[]).find(r=>(r.staffId&&String(r.staffId)===String(s.id))||(r.staffName===s.name&&r.store===s.store)); }
+function bdExport(fmt){ const cols=[{label:'Staff',get:r=>r.name},{label:'Store',get:r=>r.store},{label:'Dept',get:r=>r.dept||''},{label:'Birthday',get:r=>r.dob},{label:'Turning',get:r=>r.bd.turning},{label:'In (days)',get:r=>r.bd.du},{label:'Favourite gift',get:r=>r.gift||''},{label:'Status',get:r=>r.status||''}];
+  const rows=bdStaffList().map(s=>{const g=bdGiftRec(s)||{}; const bd=bdCalc(s.dob); return bd?{...s,bd,gift:g.favoriteGift||'',status:g.status||''}:null;}).filter(Boolean).sort((a,b)=>a.bd.du-b.bd.du);
+  expRecords('Birthdays — '+(isSuper()?(State.superStore&&State.superStore!=='ALL'?State.superStore:'All stores'):State.branch),cols,rows,fmt); }
 function renderBirthday(){
-  setAccent('#f9a825'); setCrumb('🎂','Birthday Giveaways','Never miss a team birthday');
-  const recs=scopedRecords('birthday');
-  const today=new Date();
-  const daysUntil=bd=>{ if(!bd) return 999; const [Y,M,D]=bd.split('-').map(Number); let n=new Date(today.getFullYear(),M-1,D); if(n<today.setHours(0,0,0,0))n=new Date(today.getFullYear()+1,M-1,D); return Math.ceil((n-new Date().setHours(0,0,0,0))/86400000); };
-  const withDays=recs.map(r=>({...r,du:daysUntil(r.birthday)})).sort((a,b)=>a.du-b.du);
-  const next=withDays[0];
-  const next30=withDays.filter(r=>r.du<=30);
-  const thisMonth=recs.filter(r=>(r.birthday||'').slice(5,7)===String(today.getMonth()+1).padStart(2,'0'));
-  const given=recs.filter(r=>r.status==='Given');
-  const staff=['— Select staff —',...DB.staff.filter(x=>isSuper()||x.store===State.branch).map(x=>x.name)];
+  setAccent('#f9a825'); setCrumb('🎂','Birthdays','From staff profiles · '+(isSuper()?(State.superStore&&State.superStore!=='ALL'?State.superStore:'all stores'):('MCQ '+State.branch)));
+  const list=bdStaffList().map(s=>{ const bd=bdCalc(s.dob); const g=bdGiftRec(s)||{}; return bd?{...s,bd,gift:g.favoriteGift||'',status:g.status||''}:null; }).filter(Boolean).sort((a,b)=>a.bd.du-b.bd.du);
+  const todayList=list.filter(r=>r.bd.du===0), next7=list.filter(r=>r.bd.du<=7), next30=list.filter(r=>r.bd.du<=30);
+  const m=new Date().getMonth()+1, thisMonth=list.filter(r=>r.bd.month===m);
+  const missing=(DB.staff||[]).filter(s=>!s.dob && s.active!==0 && !s.archived && (isSuper()? (!State.superStore||State.superStore==='ALL'||s.store===State.superStore) : s.store===State.branch)).length;
+  const next=list.find(r=>r.bd.du>0);
+  const hero = todayList.length
+    ? `<div class="bd-hero" style="background:linear-gradient(120deg,#fff7e0,#ffe9f2);color:#7c2d12"><div class="bd-days"><b>🎉</b><span>today</span></div><div><div class="bd-cap">Happy birthday!</div>
+        <div class="bd-name">${todayList.map(r=>esc(r.name)).join(' · ')}</div>
+        <div class="bd-tags">${todayList.map(r=>`<span class="badge warn">🎂 turning ${r.bd.turning} · ${esc(r.store)}</span>`).join('')}</div></div></div>`
+    : (next?`<div class="bd-hero"><div class="bd-days"><b>${next.bd.du}</b><span>days</span></div><div><div class="bd-cap">Next birthday</div><div class="bd-name">${esc(next.name)}</div>
+        <div class="bd-tags"><span class="badge warn">🎂 ${esc(next.bd.label)} · turning ${next.bd.turning}</span><span class="badge mute">${esc(next.dept||'')}${isSuper()?' · '+esc(next.store):''}</span><span class="badge ${next.status==='Given'?'ok':'info'}">🎁 ${esc(next.gift||'Gift not planned yet')}</span></div></div></div>`:'');
+  // month-by-month calendar for the whole year (current month first)
+  const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const byMonth=Array.from({length:12},(_,i)=>list.filter(r=>r.bd.month===i+1).sort((a,b)=>a.bd.day-b.bd.day));
+  const monthCards=Array.from({length:12},(_,k)=>{ const mi=(m-1+k)%12; const rows=byMonth[mi];
+    return `<div class="card bd-month ${mi===m-1?'bd-now':''}"><div class="card-head"><h3>${mi===m-1?'📍 ':''}${months[mi]}</h3><span class="ch-sub">${rows.length||'—'}</span></div>
+      ${rows.length?`<div class="card-pad" style="padding-top:6px">${rows.map(r=>`<div class="bd-row"><span class="bd-d">${r.bd.day}</span><div class="bd-who"><b>${esc(r.name)}</b><small>${esc(r.dept||r.role||'')}${isSuper()?' · '+esc(r.store):''} · turning ${r.bd.turning}</small></div>${r.bd.du<=30?`<span class="badge ${r.bd.du===0?'ok':r.bd.du<=7?'bad':'warn'}">${r.bd.du===0?'today 🎉':r.bd.du+'d'}</span>`:''}</div>`).join('')}</div>`:''}
+    </div>`; }).join('');
   $('#content').innerHTML=`
-    <div class="page-head"><div class="ph-ic" style="background:#fef4e0">🎂</div><div><h2>Birthday Giveaways</h2><p>Track staff birthdays and plan their gift.</p></div><div class="ph-actions">${expMenu('bdExport')}</div></div>
-    ${next?`<div class="bd-hero"><div class="bd-days"><b>${next.du}</b><span>days</span></div><div><div class="bd-cap">Next birthday</div><div class="bd-name">${esc(next.staffName)}</div>
-      <div class="bd-tags"><span class="badge warn">🎂 ${esc(next.birthday)}</span><span class="badge mute">🎁 ${esc(next.favoriteGift||'Gift not set')}</span><span class="badge ${next.status==='Given'?'ok':'info'}">${esc(next.status)}</span></div></div></div>`:''}
+    <div class="page-head"><div class="ph-ic" style="background:#fef4e0">🎂</div><div><h2>Birthdays</h2><p>Automatic from each staff member's date of birth — plan the gift, never miss the day.</p></div><div class="ph-actions">${expMenu('bdExport')}</div></div>
+    ${hero}
     <div class="kpi-grid">
-      <div class="kpi tone-warn"><div class="k-top"><div class="k-ic">🎂</div></div><div class="k-val">${recs.length}</div><div class="k-lbl">Staff tracked</div></div>
-      <div class="kpi tone-bad"><div class="k-top"><div class="k-ic">📅</div></div><div class="k-val">${next30.length}</div><div class="k-lbl">Next 30 days</div></div>
-      <div class="kpi tone-info"><div class="k-top"><div class="k-ic">🗓️</div></div><div class="k-val">${thisMonth.length}</div><div class="k-lbl">This month</div></div>
-      <div class="kpi tone-ok"><div class="k-top"><div class="k-ic">🎁</div></div><div class="k-val">${given.length}</div><div class="k-lbl">Given</div></div></div>
+      <div class="kpi tone-ok"><div class="k-top"><div class="k-ic">🎉</div></div><div class="k-val">${todayList.length}</div><div class="k-lbl">Today</div></div>
+      <div class="kpi tone-bad"><div class="k-top"><div class="k-ic">📅</div></div><div class="k-val">${next7.length}</div><div class="k-lbl">Next 7 days</div></div>
+      <div class="kpi tone-warn"><div class="k-top"><div class="k-ic">🗓️</div></div><div class="k-val">${thisMonth.length}</div><div class="k-lbl">This month</div></div>
+      <div class="kpi tone-info"><div class="k-top"><div class="k-ic">🎂</div></div><div class="k-val">${list.length}</div><div class="k-lbl">Birthdays tracked</div></div></div>
+    ${missing?`<div class="rail-tip" style="margin-bottom:14px">ℹ️ <b>${missing}</b> staff member${missing>1?'s have':' has'} no date of birth yet — add it in <a href="#/staff" style="font-weight:800">Staff Members</a> and they appear here automatically.</div>`:''}
     <div class="vio-grid">
-      <div><div class="section-title" style="margin-top:0">Upcoming birthdays</div>
-        <div class="card"><div class="table-wrap"><table class="grid"><thead><tr><th>Staff</th><th>Birthday</th><th>Gift</th><th>In</th><th>Status</th></tr></thead><tbody>
-        ${withDays.map(r=>`<tr onclick='openDetail("birthday","${esc(r.id)}","${ckJS(r.store||'')}")'><td><b>${esc(r.staffName)}</b><div class="cell-sub">${esc(r.store||'')}</div></td><td>${esc(r.birthday)}</td><td>${esc(r.favoriteGift||'—')}</td><td><span class="badge ${r.du<=7?'bad':r.du<=30?'warn':'mute'}">${r.du} days</span></td><td>${badge(r.status)}</td></tr>`).join('')}
-        </tbody></table></div></div></div>
-      <div class="card" style="align-self:start"><div class="card-head"><h3><i class="fas fa-pen-to-square"></i>&nbsp; Add / update birthday</h3></div><div class="card-pad"><div class="grid2">
+      <div><div class="section-title" style="margin-top:0">Coming up (30 days)</div>
+        <div class="card"><div class="table-wrap"><table class="grid"><thead><tr><th>Staff</th><th>Birthday</th><th>Turning</th><th>In</th><th>Gift</th><th>Status</th></tr></thead><tbody>
+        ${next30.length?next30.map(r=>`<tr style="cursor:pointer" onclick="bdPick('${ckJS(r.name)}')"><td><b>${esc(r.name)}</b><div class="cell-sub">${esc(r.dept||r.role||'')}${isSuper()?' · '+esc(r.store):''}</div></td><td>${esc(r.bd.label)}</td><td>${r.bd.turning}</td><td><span class="badge ${r.bd.du===0?'ok':r.bd.du<=7?'bad':'warn'}">${r.bd.du===0?'🎉 today':r.bd.du+' days'}</span></td><td>${esc(r.gift||'—')}</td><td>${r.status?badge(r.status):'<span class="badge mute">No plan</span>'}</td></tr>`).join(''):`<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">No birthdays in the next 30 days.</td></tr>`}
+        </tbody></table></div></div>
+        <div class="section-title">Year calendar</div>
+        <div class="bd-months">${monthCards}</div></div>
+      <div class="card" style="align-self:start"><div class="card-head"><h3>🎁 Plan a gift</h3></div><div class="card-pad">
+        <div class="ai-asst-note" style="margin-bottom:10px">Birthday dates come from the staff profile automatically — here you only plan the gift.</div>
+        <div class="grid2">
         <div class="field full"><label>Staff</label>${staffPick('bd-staff','','','Search staff…')}</div>
-        <div class="field"><label>Birthday</label><input type="date" id="bd-date"></div>
         <div class="field"><label>Gift status</label><select id="bd-status"><option>Planned</option><option>Given</option></select></div>
         <div class="field full"><label>Favourite gift</label><input id="bd-gift" placeholder="e.g. Coffee hamper"></div>
-      </div><button class="btn primary block" style="margin-top:12px" onclick="bdSubmit()">🎂 Save birthday</button></div></div>
+      </div><button class="btn primary block" style="margin-top:12px" onclick="bdSubmit()">🎁 Save gift plan</button></div></div>
     </div>`;
 }
-function bdSubmit(){ const staff=$('#bd-staff').value.trim(), date=$('#bd-date').value; if(!staff||staff.startsWith('—')||!date){toast('Pick staff and birthday');return;}
-  const recStore=storeForWrite((DB.staff.find(x=>x.name===staff)||{}).store||State.branch);
-  const ex=DB.modules.birthday.records.find(r=>r.staffName===staff && r.store===recStore);
-  const rec={id:ex?ex.id:makeRecordId('BDY',recStore),staffName:staff,store:recStore,birthday:date,favoriteGift:$('#bd-gift').value,status:$('#bd-status').value,created:new Date().toISOString().slice(0,10)};
+function bdPick(name){ const el=document.getElementById('bd-staff'); if(el){ el.value=name; el.dispatchEvent(new Event('input')); }
+  const p=DB.staff.find(x=>x.name===name)||{};
+  const g=bdGiftRec({name,store:p.store,id:p.id});
+  if(g){ const gi=document.getElementById('bd-gift'); if(gi) gi.value=g.favoriteGift||''; const st=document.getElementById('bd-status'); if(st) st.value=g.status||'Planned'; }
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+window.bdPick=bdPick;
+function bdSubmit(){ const staff=$('#bd-staff').value.trim(); if(!staff||staff.startsWith('—')){toast('Pick a staff member');return;}
+  const person=DB.staff.find(x=>x.name===staff);
+  if(!person){ toast('Staff member not found'); return; }
+  if(!person.dob){ toast('This person has no date of birth — add it in Staff Members first'); return; }
+  const recStore=storeForWrite(person.store||State.branch);
+  const ex=DB.modules.birthday.records.find(r=>(r.staffId&&String(r.staffId)===String(person.id))||(r.staffName===staff&&r.store===recStore));
+  const rec={id:ex?ex.id:makeRecordId('BDY',recStore),staffId:person.id,staffName:staff,store:recStore,birthday:person.dob,favoriteGift:$('#bd-gift').value,status:$('#bd-status').value,created:new Date().toISOString().slice(0,10)};
   if(ex){ const before=JSON.parse(JSON.stringify(ex)); Object.assign(ex,rec); auditLog('update','birthday',ex.id,ex.store,before,ex); }
   else { auditLog('create','birthday',rec.id,rec.store,null,rec); DB.modules.birthday.records.unshift(rec); }
   if(window.persist) window.persist();
-  toast('🎂 Birthday saved'); buildSidebar(); renderBirthday();
+  toast('🎁 Gift plan saved'); renderBirthday();
 }
 
 /* ============================================================ PERFORMANCE & SCORING

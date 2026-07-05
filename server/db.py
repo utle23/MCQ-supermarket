@@ -280,28 +280,39 @@ def init_db():
 # ---- auth ----
 def verify_login(mode, store, pw, login_id=None):
     """Returns (role, store_id[, meta]) on success or None. store_id is 'ALL' for super.
-    For mode 'employee' the 3rd element is {staff_id, staff_name}.
-    When an ID is supplied → unified-account login (ID + own password) for EVERY tab;
-    the legacy store/master passwords keep working when no ID is given."""
+    The login form has NO role tabs any more — credentials are self-identifying:
+      * ID given → unified-account login; the account's ASSIGNED access decides the role.
+      * no ID    → the password itself identifies the person: a staff numeric password
+                   (globally unique, never colliding with the master passwords — see
+                   _gen_staff_pw), the Super master password, or Chú Ba's.
+    A legacy `mode` from an old cached client is still honoured for its master paths."""
     if str(login_id or '').strip():
-        return account_login(login_id, pw, mode)
+        return account_login(login_id, pw, mode if mode not in (None, '', 'auto') else None)
     conn = connect()
     try:
+        p = str(pw or '').strip()
+        if not p: return None
+        if mode in (None, '', 'auto'):
+            # password IS the identity — try staff numeric first (most common), then masters
+            row = conn.execute('SELECT store_id, staff_id, staff_name FROM staff_accounts WHERE password=?', (p,)).fetchone()
+            if row and row['store_id'] in STORES:
+                return ('employee', row['store_id'], {'staff_id': row['staff_id'], 'staff_name': row['staff_name']})
+            row = conn.execute("SELECT password_hash FROM users WHERE role='super'").fetchone()
+            if row and row['password_hash'] == hash_pw(p): return ('super', 'ALL')
+            row = conn.execute("SELECT password_hash FROM users WHERE role='ba'").fetchone()
+            if row and row['password_hash'] == hash_pw(p): return ('ba', 'ALL')
+            return None
+        # ---- legacy tab modes (old cached clients) ----
         if mode == 'super':
             row = conn.execute("SELECT password_hash FROM users WHERE role='super'").fetchone()
-            return ('super', 'ALL') if row and row['password_hash'] == hash_pw(pw) else None
+            return ('super', 'ALL') if row and row['password_hash'] == hash_pw(p) else None
         if mode == 'ba':
             row = conn.execute("SELECT password_hash FROM users WHERE role='ba'").fetchone()
-            return ('ba', 'ALL') if row and row['password_hash'] == hash_pw(pw) else None
+            return ('ba', 'ALL') if row and row['password_hash'] == hash_pw(p) else None
         if mode == 'employee':
-            # individual staff account — numeric password only (globally unique)
-            row = conn.execute('SELECT store_id, staff_id, staff_name FROM staff_accounts WHERE password=?',
-                               (str(pw or '').strip(),)).fetchone()
+            row = conn.execute('SELECT store_id, staff_id, staff_name FROM staff_accounts WHERE password=?', (p,)).fetchone()
             if not row or row['store_id'] not in STORES: return None
             return ('employee', row['store_id'], {'staff_id': row['staff_id'], 'staff_name': row['staff_name']})
-        # Manager & Department Lead no longer use a shared per-store password —
-        # each person signs in with their personal ID + password (which also enforces
-        # that they can only enter the access level assigned to them).
         if mode in ('admin', 'staff'):
             return {'need_id': True}
         return None
@@ -572,13 +583,14 @@ def reset_password(email, code, new_password):
     finally:
         conn.close()
 
-def account_login(login_id, pw, mode):
-    """ID + password login (all tabs). The chosen tab must match the account's assigned role."""
+def account_login(login_id, pw, mode=None):
+    """ID + password login. The account's ASSIGNED access decides the role — no tab needed.
+    (A legacy `mode` from an old cached client is still validated against the assigned role.)"""
     conn = connect()
     try:
         a = conn.execute('SELECT * FROM accounts WHERE id=? AND activated=1', (str(login_id or '').strip(),)).fetchone()
         if not a or a['password'] != str(pw or ''): return None
-        if a['role'] != mode:
+        if mode and a['role'] != mode:
             return {'wrong_tab': ACCT_TABS.get(a['role'], 'Staff')}
         meta = {'staff_id': a['staff_id'] or a['id'], 'staff_name': a['name'], 'account_id': a['id'],
                 'needs_profile': bool(a['needs_profile'])}

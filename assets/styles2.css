@@ -1593,3 +1593,14 @@ html,body{max-width:100%}
   color:#fff;box-shadow:0 8px 22px rgba(6,95,70,.4)}
 .ann-team.active .ann-team-n{background:rgba(255,255,255,.28);color:#fff}
 .ann-team .ann-team-n{background:#eef2f7;color:#475569}
+
+/* ============================================================ BIRTHDAYS — year calendar */
+.bd-months{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:12px}
+.bd-month .card-head{padding:10px 14px}
+.bd-month.bd-now{border:1.6px solid #f9a825;box-shadow:0 6px 18px rgba(249,168,37,.15)}
+.bd-row{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px dashed var(--line)}
+.bd-row:last-child{border-bottom:0}
+.bd-d{min-width:30px;height:30px;border-radius:9px;background:#fef4e0;color:#b45309;font-weight:800;display:grid;place-items:center;font-size:13px}
+.bd-who{flex:1;min-width:0}
+.bd-who b{font-size:12.5px;display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bd-who small{color:var(--muted);font-size:11px}

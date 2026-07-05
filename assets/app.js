@@ -113,14 +113,7 @@ function showLogin(notice){
       <h1 class="login-h">Welcome back</h1>
       <p class="login-p">Sign in to your store operations workspace.</p>
       ${notice?`<div class="login-note"><i>⏱️</i> ${esc(notice)}</div>`:''}
-      <div class="seg" id="login-mode">
-        <button class="seg-btn active" data-mode="employee"><i class="fas fa-user"></i><span>Staff</span></button>
-        <button class="seg-btn" data-mode="staff"><i class="fas fa-user-tie"></i><span>Dept Lead</span></button>
-        <button class="seg-btn" data-mode="admin"><i class="fas fa-user-shield"></i><span>Manager</span></button>
-        <button class="seg-btn" data-mode="super"><i class="fas fa-crown"></i><span>Super</span></button>
-        <button class="seg-btn" data-mode="ba"><span>Chú Ba</span></button>
-      </div>
-      <label class="login-lbl">ID <span class="login-opt" id="login-id-opt">· your 4-digit personal ID</span></label>
+      <label class="login-lbl">ID <span class="login-opt" id="login-id-opt">· your 4-digit personal ID (skip it if your password alone signs you in)</span></label>
       <input id="login-id" class="login-input" inputmode="numeric" maxlength="4" placeholder="e.g. 2345" autocomplete="off">
       <label class="login-lbl">Password</label>
       <div class="login-pw">
@@ -147,15 +140,10 @@ function showLogin(notice){
       <div class="fid-sub" id="fid-sub">Look at the camera</div>
       <button class="btn" onclick="closeFid()">Cancel</button>
     </div></div>`;
-  $$('#login-mode .seg-btn').forEach(b=>b.onclick=()=>{
-    $$('#login-mode .seg-btn').forEach(x=>x.classList.toggle('active',x===b));
-    updateLoginHint();
-  });
   $('#login-id').addEventListener('keydown',e=>{ if(e.key==='Enter') doLogin(); });
   $('#login-pw').addEventListener('keydown',e=>{ if(e.key==='Enter') doLogin(); });
   updateLoginHint();
 }
-function loginMode(){ return $('#login-mode .seg-btn.active').dataset.mode; }
 function togglePw(){ const p=$('#login-pw'); p.type=p.type==='password'?'text':'password'; }
 
 /* ============================================================ ACCOUNT ACTIVATION WIZARD */
@@ -196,7 +184,7 @@ async function actLookup(){
       <h2 class="act-h">Already activated</h2>
       <p class="act-p">This email already has an account.</p>
       <div class="act-id-box"><span class="act-id-lbl">Your ID</span><span class="act-id">${esc(r.id)}</span></div>
-      <p class="act-p">Sign in on the <span class="act-tab">${esc(r.tab)}</span> tab with your ID and password.<br>Forgot your password? Use <b>Forgot password?</b> on the sign-in screen.</p>
+      <p class="act-p">Sign in with this ID and your password — your access: <span class="act-tab">${esc(r.tab)}</span>.<br>Forgot your password? Use <b>Forgot password?</b> on the sign-in screen.</p>
       <button class="login-btn act-cta" onclick="actPrefill('${esc(r.id)}','${esc(r.role)}')">Go to sign in →</button>`);
     return;
   }
@@ -239,13 +227,11 @@ async function actCreate(){
     <p class="act-p">Your account is ready. This is your permanent ID — save it:</p>
     <div class="act-id-box"><span class="act-id-lbl">Your ID</span><span class="act-id">${esc(r.id)}</span></div>
     <div class="act-access"><span class="act-chip">${esc(roleName)}</span>${r.store?`<span class="act-chip act-chip-store">🏪 ${esc(r.store)}</span>`:''}</div>
-    <p class="act-p">Sign in on the <span class="act-tab">${esc(r.tab)}</span> tab with this ID and your new password.${r.needs_profile?'<br>📋 After signing in, please complete <b>My Profile</b> first.':''}</p>
+    <p class="act-p">Sign in with this ID and your new password — your access: <span class="act-tab">${esc(r.tab)}</span>.${r.needs_profile?'<br>📋 After signing in, please complete <b>My Profile</b> first.':''}</p>
     <button class="login-btn act-cta" onclick="actPrefill('${esc(r.id)}','${esc(r.role)}')">Sign in now →</button>`);
 }
-function actPrefill(id,role){
+function actPrefill(id){
   actClose();
-  const map={employee:'employee',staff:'staff',admin:'admin',super:'super'};
-  const btn=document.querySelector(`#login-mode .seg-btn[data-mode="${map[role]||'employee'}"]`); if(btn) btn.click();
   const idEl=document.getElementById('login-id'); if(idEl) idEl.value=id;
   document.getElementById('login-pw')?.focus();
 }
@@ -308,7 +294,7 @@ async function fpReset(){
     <div class="act-badge act-ok act-pop">🎉</div>
     <h2 class="act-h">Password updated!</h2>
     <div class="act-id-box"><span class="act-id-lbl">Your ID</span><span class="act-id">${esc(r.id)}</span></div>
-    <p class="act-p">Sign in on the <span class="act-tab">${esc(r.tab)}</span> tab with your ID and new password.</p>
+    <p class="act-p">Sign in with your ID and new password — your access: <span class="act-tab">${esc(r.tab)}</span>.</p>
     <button class="login-btn act-cta" onclick="actPrefill('${esc(r.id)}','${esc(r.role)}')">Sign in now →</button>`);
 }
 window.fpOpen=fpOpen; window.fpRequest=fpRequest; window.fpReset=fpReset;
@@ -337,7 +323,7 @@ async function idLookup(){
       <div class="act-badge act-ok">🪪</div>
       <h2 class="act-h">Here's your ID</h2>
       <div class="act-id-box"><span class="act-id-lbl">Your ID</span><span class="act-id">${esc(r.id)}</span></div>
-      <p class="act-p">Sign in on the <span class="act-tab">${esc(r.tab)}</span> tab with this ID and your password.<br>Forgot the password too? Use <b>Forgot password?</b> — same Gmail.</p>
+      <p class="act-p">Sign in with this ID and your password — your access: <span class="act-tab">${esc(r.tab)}</span>.<br>Forgot the password too? Use <b>Forgot password?</b> — same Gmail.</p>
       <button class="login-btn act-cta" onclick="actPrefill('${esc(r.id)}','${esc(r.role)}')">Go to sign in →</button>`);
     return;
   }
@@ -357,41 +343,27 @@ async function idLookup(){
 }
 window.idOpen=idOpen; window.idLookup=idLookup;
 function loginFail(m){ const e=$('#login-err'); if(e) e.textContent='❌ '+m; const c=$('.login-card'); if(c){ c.classList.add('shake'); setTimeout(()=>c.classList.remove('shake'),450); } }
-function updateLoginHint(){ const el=$('#login-hint'); if(!el) return; const mode=loginMode();
-  // ID is required for Manager/Dept Lead (personal login); optional for the others
-  const opt=$('#login-id-opt'); if(opt) opt.textContent=(mode==='admin'||mode==='staff')?'· your 4-digit personal ID (required)':'· 4-digit personal ID (optional)';
-  el.innerHTML = mode==='super' ? `👑 Super Admin — enter the master password (all stores)`
-    : mode==='ba' ? `👓 Chú Ba — enter the master password (read-only, all stores)`
-    : mode==='admin' ? `🛡️ Manager — sign in with your personal ID + password`
-    : mode==='employee' ? `🧑‍🏭 Staff — enter your numeric password`
-    : `🧑‍💼 Department Lead — sign in with your personal ID + password`; }
+function updateLoginHint(){ const el=$('#login-hint'); if(!el) return;
+  // one unified form — the server derives WHO you are and WHAT access you have from the
+  // credentials themselves (ID+password, a unique staff numeric password, or a master password)
+  el.innerHTML=`🔐 One sign-in for every role — your account decides your access &amp; store automatically`; }
 function doLogin(){
-  const pw=$('#login-pw').value.trim(), mode=loginMode();
+  const pw=$('#login-pw').value.trim();
   const loginId=($('#login-id')?.value||'').trim();
   $('#login-err').textContent='';
-  // Manager & Dept Lead must use their personal ID (store is derived from the account)
-  if((mode==='admin'||mode==='staff') && !loginId){
-    return loginFail('Enter your 4-digit personal ID. No account yet? Ask Head Office to set up your access.');
-  }
+  if(!pw) return loginFail('Enter your password.');
   // server-checked login when the API backend is active (passwords live on the server)
   if(window.MCQDB && MCQDB._api && MCQDB.login){
     const btn=$('.login-btn'); if(btn){ btn.disabled=true; btn.textContent='Signing in…'; }
-    MCQDB.login(mode, '', pw, loginId).then(res=>{
+    MCQDB.login('auto', '', pw, loginId).then(res=>{
       if(res && res.ok){ loginAs(res.role, (res.role==='super'||res.role==='ba')?'All stores':res.store, {staffId:res.staff_id, name:res.staff_name, accountId:res.account_id, needsProfile:res.needs_profile, acctAdmin:res.acct_admin}); }
-      else { if(btn){ btn.disabled=false; btn.textContent='Sign In →'; } loginFail(res&&res.error?res.error:'Incorrect password.'); }
+      else { if(btn){ btn.disabled=false; btn.textContent='Sign In →'; } loginFail(res&&res.error?res.error:(loginId?'Incorrect ID or password.':'Incorrect password — or enter your ID above if you have one.')); }
     }).catch(()=>{ if(btn){ btn.disabled=false; btn.textContent='Sign In →'; } loginFail('Cannot reach the server.'); });
     return;
   }
-  // offline fallback (only when the server API is unavailable): shared master passwords still work
-  if(mode==='super'){
-    if(pw===DB.auth.superAdminPassword) return loginAs('super','All stores');
-    return loginFail('Incorrect super admin password.');
-  }
-  if(mode==='ba'){
-    if(pw===(DB.auth.baPassword||'19')) return loginAs('ba','All stores');
-    return loginFail('Incorrect Chú Ba password.');
-  }
-  // Manager / Dept Lead / Staff logins live on the server — no offline fallback
+  // offline fallback (only when the server API is unavailable): master passwords still work
+  if(pw===DB.auth.superAdminPassword) return loginAs('super','All stores');
+  if(pw===(DB.auth.baPassword||'19')) return loginAs('ba','All stores');
   return loginFail('This account needs an internet connection. Please try again when online.');
 }
 let dataSyncRun = 0;
