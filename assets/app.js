@@ -127,7 +127,7 @@ function showLogin(notice){
         <input id="login-pw" class="login-input" type="password" placeholder="Enter password" autocomplete="off">
         <button class="pw-eye" onclick="togglePw()">👁️</button>
       </div>
-      <button class="login-forgot" onclick="fpOpen()">Forgot password?</button>
+      <div class="login-links"><button class="login-forgot" onclick="idOpen()">Forgot ID?</button><button class="login-forgot" onclick="fpOpen()">Forgot password?</button></div>
       <div id="login-err" class="login-err"></div>
       <button class="login-btn" onclick="doLogin()">Sign In →</button>
       <div class="login-or"><span>or</span></div>
@@ -312,6 +312,50 @@ async function fpReset(){
     <button class="login-btn act-cta" onclick="actPrefill('${esc(r.id)}','${esc(r.role)}')">Sign in now →</button>`);
 }
 window.fpOpen=fpOpen; window.fpRequest=fpRequest; window.fpReset=fpReset;
+
+/* ============================================================ FORGOT ID (same lookup as activation — one source of truth) */
+function idOpen(){
+  actShell(`
+    <h2 class="act-h">Find your ID</h2>
+    <p class="act-p">Enter your <b>Gmail</b> and we'll show the ID linked to it.</p>
+    <label class="login-lbl">Your Gmail</label>
+    <input id="fid-email" class="login-input" type="email" placeholder="name@gmail.com" autocomplete="email">
+    <div id="fid-err" class="login-err"></div>
+    <button class="login-btn act-cta" onclick="idLookup()">Find my ID →</button>`);
+  setTimeout(()=>document.getElementById('fid-email')?.focus(),80);
+}
+async function idLookup(){
+  const email=(document.getElementById('fid-email')?.value||'').trim();
+  const err=document.getElementById('fid-err');
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)){ if(err) err.textContent='Please enter a valid email address.'; return; }
+  const btn=document.querySelector('.act-cta'); if(btn){ btn.disabled=true; btn.textContent='Looking…'; }
+  let r=null;
+  try{ r=await fetch('/api/activate/lookup',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({email})}).then(x=>x.json()); }catch(e){}
+  if(!r||!r.ok){ if(btn){ btn.disabled=false; btn.textContent='Find my ID →'; } if(err) err.textContent='Cannot reach the server — please try again.'; return; }
+  if(r.already){
+    actShell(`
+      <div class="act-badge act-ok">🪪</div>
+      <h2 class="act-h">Here's your ID</h2>
+      <div class="act-id-box"><span class="act-id-lbl">Your ID</span><span class="act-id">${esc(r.id)}</span></div>
+      <p class="act-p">Sign in on the <span class="act-tab">${esc(r.tab)}</span> tab with this ID and your password.<br>Forgot the password too? Use <b>Forgot password?</b> — same Gmail.</p>
+      <button class="login-btn act-cta" onclick="actPrefill('${esc(r.id)}','${esc(r.role)}')">Go to sign in →</button>`);
+    return;
+  }
+  if(r.match){
+    actShell(`
+      <div class="act-badge act-new">✨</div>
+      <h2 class="act-h">No ID yet</h2>
+      <p class="act-p">We found <b>${esc(r.name)}</b>${r.store?` · MCQ ${esc(r.store)}`:''}, but this account hasn't been activated — activate it now and you'll get your ID.</p>
+      <button class="login-btn act-cta" onclick="actOpen()">Activate my account →</button>`);
+    return;
+  }
+  actShell(`
+    <div class="act-badge act-new">✋</div>
+    <h2 class="act-h">Email not registered</h2>
+    <p class="act-p">We couldn't find <b>${esc(email)}</b> in the staff system.<br>Please ask <b>Head Office</b> to add you first.</p>
+    <button class="login-btn act-cta" onclick="actClose()">Got it</button>`);
+}
+window.idOpen=idOpen; window.idLookup=idLookup;
 function loginFail(m){ const e=$('#login-err'); if(e) e.textContent='❌ '+m; const c=$('.login-card'); if(c){ c.classList.add('shake'); setTimeout(()=>c.classList.remove('shake'),450); } }
 function updateLoginHint(){ const el=$('#login-hint'); if(!el) return; const mode=loginMode();
   // ID is required for Manager/Dept Lead (personal login); optional for the others

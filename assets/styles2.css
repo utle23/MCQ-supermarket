@@ -1430,8 +1430,9 @@ html,body{max-width:100%}
 /* secondary link inside the activation / reset cards (e.g. "Resend code") */
 .act-link{display:block;width:100%;margin-top:10px;background:none;border:0;font:inherit;font-size:13px;font-weight:700;color:#0e9f6e;cursor:pointer;text-align:center}
 .act-link:hover{text-decoration:underline}
-/* "Forgot password?" link on the login screen */
-.login-forgot{display:block;margin:8px 2px 0 auto;background:none;border:0;font:inherit;font-size:12.5px;font-weight:700;color:#b05e1f;cursor:pointer}
+/* "Forgot ID?" / "Forgot password?" links on the login screen */
+.login-links{display:flex;justify-content:space-between;margin:8px 2px 0}
+.login-forgot{background:none;border:0;font:inherit;font-size:12.5px;font-weight:700;color:#b05e1f;cursor:pointer;padding:0}
 .login-forgot:hover{text-decoration:underline;color:#c2570f}
 .act-badge{width:54px;height:54px;border-radius:18px;display:grid;place-items:center;font-size:24px;font-weight:900;margin-bottom:12px}
 .act-badge.act-ok{background:linear-gradient(135deg,#d1fae5,#cffafe);color:#059669}

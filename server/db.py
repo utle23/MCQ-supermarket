@@ -450,15 +450,20 @@ def _store_staff_by_email(conn, store, email):
     return None
 
 def _staff_by_email_any(conn, email):
-    """Find a staff member by email across ALL stores (store is no longer picked at activation)."""
+    """Find a staff member by email across ALL stores (store is no longer picked at activation).
+    Real stores win over 'Demo' (Demo mirrors real staff as sample data)."""
     e = str(email or '').strip().lower()
     if not e: return None
+    demo_hit = None
     for r in conn.execute('SELECT id,store_id,data_json FROM staff').fetchall():
         try: d = json.loads(r['data_json'] or '{}')
         except Exception: d = {}
         if str(d.get('email') or '').strip().lower() == e:
-            return {'staff_id': r['id'], 'name': d.get('name') or '', 'store': r['store_id'], 'data': d}
-    return None
+            if d.get('archived'): continue   # archived staff must be restored before activating
+            hit = {'staff_id': r['id'], 'name': d.get('name') or '', 'store': r['store_id'], 'data': d}
+            if r['store_id'] == 'Demo': demo_hit = hit
+            else: return hit
+    return demo_hit
 
 def activate_lookup(email, store=None):
     """Step 1 of activation: is this Gmail known? (store is derived from the match, not picked)."""
@@ -593,11 +598,14 @@ def list_accounts(q=''):
             out.append(d)
         for r in conn.execute('SELECT id,store_id,data_json FROM staff ORDER BY store_id').fetchall():
             if str(r['id']) in have_staff: continue
+            if r['store_id'] == 'Demo': continue           # Demo mirrors real staff (sample data) → would double people
             try: d = json.loads(r['data_json'] or '{}')
             except Exception: d = {}
             if d.get('active') == 0: continue
+            if d.get('archived'): continue                  # archived staff are hidden until restored
             email = str(d.get('email') or '').strip()
             if email and email.lower() in have_email: continue
+            if email: have_email.add(email.lower())         # dedupe: one row per unique gmail
             out.append({'id': '', 'password': '', 'role': 'employee', 'store_id': r['store_id'],
                         'staff_id': r['id'], 'name': d.get('name') or r['id'], 'email': email,
                         'department': d.get('dept') or '', 'activated': 0, 'acct_admin': 0,

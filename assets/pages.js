@@ -181,7 +181,7 @@ function renderChecklist(){
   const areaChips=ckAreaChips();
   $('#content').innerHTML=`
    <div class="page-head"><div class="ph-ic">✅</div>
-     <div><h2>Store Operation Checklist</h2><p>Every photo task needs evidence before submit. Temperature checks must be read by AI Vision or marked defrosting.</p></div>
+     <div><h2>Store Operation Checklist</h2><p>Every photo task needs evidence before submit. Temperatures can be typed manually — AI photo reading is optional.</p></div>
      <div class="ph-actions">${checklistExportMenu()}</div></div>
    <div class="ck-sessionbar card">
      <div class="seg ck-seg">
@@ -411,6 +411,10 @@ async function empProfileSave(){
   const g=id=>(document.getElementById(id)?.value||'');
   const s=myStaff(); if(!s.id && State.account&&State.account.staffId) s.id=State.account.staffId;   // fresh account: row not synced yet — the server upserts it
   if(!s.id){ toast('Your profile is not linked to a staff record — ask your manager.'); return; }
+  // gmail must be unique — one email per person (Demo sample rows excluded)
+  const _em=g('ep-email').trim().toLowerCase();
+  if(_em){ const dup=(DB.staff||[]).find(x=>String(x.id)!==String(s.id) && x.store!=='Demo' && String(x.email||'').trim().toLowerCase()===_em);
+    if(dup){ toast('❌ This email is already used by '+dup.name+' — each person needs their own gmail'); return; } }
   const patch={ name:g('ep-name').trim()||s.name, phone:g('ep-phone'), email:g('ep-email'), gender:g('ep-gender'),
     dept:g('ep-dept'), role:g('ep-role'), classification:g('ep-role'),
     dob:g('ep-dob'), cardId:g('ep-cardid'), address:g('ep-address'), suburb:g('ep-suburb'), country:g('ep-country') };
@@ -1104,8 +1108,8 @@ function ckProgress(){
 function ckTaskIssue(r,st){
   st=st||{};
   if(st.done){
-    if(r.meta&&r.meta.temp && !st.defrosting && (!st.temp || st.aiStatus==='scanning')) return 'temperature not recorded yet';
-    // temperature tasks: photo is OPTIONAL (a manual °C entry is enough); other photo tasks still need a photo
+    // temperature is OPTIONAL (AI scan / manual °C are helpers, never a requirement);
+    // temp tasks also don't require a photo — other photo tasks still need one
     if(r.photo && !(r.meta&&r.meta.temp) && (st.photos||[]).length<1) return 'photo missing';
     return null;   // satisfied
   }
@@ -1151,14 +1155,7 @@ function ckTick(i){
   const r=ckItem(DB.checklist.items[i],i);
   const ps=r.photo;
   const skipPhoto=r.meta.temp&&st.defrosting;
-  if(!st.done && r.meta.temp && !st.defrosting && st.aiStatus==='scanning'){
-    toast('AI Vision is still reading the temperature');
-    return;
-  }
-  if(!st.done && r.meta.temp && !st.defrosting && !st.temp){
-    toast('Enter a temperature (type it or take a photo) first');
-    return;
-  }
+  // temperature reading (AI or manual) is OPTIONAL — never blocks ticking done
   // non-temperature photo tasks still need a photo before ticking done
   if(!st.done && ps && !r.meta.temp && (st.photos||[]).length<1){
     toast('📷 Attach at least 1 photo before marking this done');
@@ -1180,7 +1177,7 @@ async function ckPhoto(input,i){
   st.photos=st.photos||[];
   const preview=URL.createObjectURL(f);     // show the photo INSTANTLY (no wait for compression)
   st.photos.push(preview);
-  if(r.meta.temp){ st.aiStatus='scanning'; st.aiError=''; st.aiSuggestion=null; st.aiManualAllowed=false; st.temp=null; st.done=false; ckDraw();
+  if(r.meta.temp){ st.aiStatus='scanning'; st.aiError=''; st.aiSuggestion=null; st.aiManualAllowed=false; st.temp=null; ckDraw();   // done stays — AI reading is optional
     setTimeout(()=>ckAiTemp(i,f.name,f),250);
   }else{ ckDraw(); }
   // compress + persist in the background, then swap the preview for the stored ref
@@ -1340,8 +1337,7 @@ async function ckAiTemp(i,fileName,file){
     st.aiQuality=result&&result.quality?result.quality:null;
     st.aiSuggestion=Number.isFinite(suggestion)?{value:suggestion,confidence:result.confidence||null,source:result.source||'AI Vision OCR',text:result.text||'',rawReading:result.rawReading||result.text||''}:null;
     st.aiManualAllowed=true;   // always let the user type/confirm the value, even if AI couldn't read it
-    st.temp=null;
-    st.done=false;
+    st.temp=null;              // (done is untouched — AI reading is optional)
     ckDraw();
     toast(st.aiError);
     return;
@@ -1352,7 +1348,7 @@ async function ckAiTemp(i,fileName,file){
   st.aiStatus='confirm';
   st.aiError=ckTempConfirmMessage(result,r.meta.type);
   st.aiSuggestion={value:result.value,confidence:result.confidence||null,source:result.source||'AI Vision',text:result.text||'',rawReading:result.rawReading||result.text||''};
-  st.aiManualAllowed=true; st.aiQuality=result.quality||null; st.temp=null; st.done=false;
+  st.aiManualAllowed=true; st.aiQuality=result.quality||null; st.temp=null;   // done untouched — AI is optional
   ckDraw(); toast(st.aiError);
 }
 function ckTempConfirmMessage(result,type){
@@ -1926,7 +1922,10 @@ function renderStructure(){
 /* ============================================================ STAFF MEMBERS */
 function renderStaff(){
   setAccent('#0e9f6e'); setCrumb('🧑‍🤝‍🧑','Staff Members',`${DB.staff.length} people`);
-  const allRows=DB.staff.filter(s=> isSuper() ? (!State.superStore||State.superStore==='ALL'||s.store===State.superStore) : s.store===State.branch);
+  const scoped=DB.staff.filter(s=> isSuper() ? (!State.superStore||State.superStore==='ALL'||s.store===State.superStore) : s.store===State.branch);
+  const archivedRows=scoped.filter(s=>s.archived);
+  const showArchived=State.staffView==='archived';
+  const allRows=showArchived ? archivedRows : scoped.filter(s=>!s.archived);
   const q=(State.staffQ||'').trim().toLowerCase();
   const rows=q ? allRows.filter(s=>[s.name,s.role,s.classification,s.dept,s.store].some(v=>String(v||'').toLowerCase().includes(q))) : allRows;
   const active=allRows.filter(s=>s.active).length;
@@ -1964,7 +1963,7 @@ function renderStaff(){
         <div class="field"><label>Employment type</label><select id="st-estatus"><option value=""></option>${sel(s.estatus,['FullTime','PartTime','Casual'])}</select></div>
         <div class="field"><label>Status</label><select id="st-active"><option value="1" ${s.active?'selected':''}>Active</option><option value="0" ${!s.active?'selected':''}>Inactive</option></select></div>
       </div>
-      <div style="display:flex;gap:10px;margin-top:14px"><button class="btn primary" onclick="staffSave('${ed}')">💾 Save</button>${ed!=='new'?`<button class="btn" style="color:var(--bad);border-color:#f3c9c9" onclick="staffDelete('${esc(ed)}')"><i class="fas fa-trash"></i>&nbsp; Delete</button>`:''}</div>
+      <div style="display:flex;gap:10px;margin-top:14px;flex-wrap:wrap"><button class="btn primary" onclick="staffSave('${ed}')">💾 Save</button>${ed!=='new'?(s.archived?`<button class="btn" style="color:#0e9f6e;border-color:#b6ecd6" onclick="staffRestore('${esc(ed)}')">↩️ Restore</button>`:`<button class="btn" style="color:#b45309;border-color:#fde1bd" onclick="staffArchive('${esc(ed)}')" title="Hide this person but keep everything — restore them any time">🗄 Archive</button>`)+`<button class="btn" style="color:var(--bad);border-color:#f3c9c9" onclick="staffDelete('${esc(ed)}')"><i class="fas fa-trash"></i>&nbsp; Delete</button>`:''}</div>
       </div></div>
       ${ed!=='new'?`<div class="card" id="att-card" style="margin-bottom:16px"><div class="card-head"><h3>⏱ Attendance & punctuality</h3><span class="ch-sub">From Deputy clock-in / clock-out</span></div>
         <div class="card-pad" id="att-body"><div class="fhint">Loading attendance…</div></div></div>`:''}`;
@@ -1977,10 +1976,11 @@ function renderStaff(){
       <div class="kpi tone-warn"><div class="k-top"><div class="k-ic">🏪</div></div><div class="k-val">${new Set(allRows.map(s=>s.store)).size}</div><div class="k-lbl">Stores</div></div>
       <div class="kpi tone-mute"><div class="k-top"><div class="k-ic">🧰</div></div><div class="k-val">${new Set(allRows.map(s=>s.role)).size}</div><div class="k-lbl">Roles</div></div></div>
     ${editForm}
-    <div class="card" style="margin-top:16px"><div class="card-head"><h3>Directory · ${rows.length}${q?` of ${allRows.length}`:''}</h3>
+    <div class="card" style="margin-top:16px"><div class="card-head"><h3>${showArchived?'🗄 Archived':'Directory'} · ${rows.length}${q?` of ${allRows.length}`:''}</h3>
+        <button class="btn sm" onclick="staffViewToggle()" style="${showArchived?'color:#0e9f6e;border-color:#b6ecd6':archivedRows.length?'color:#b45309;border-color:#fde1bd':''}">${showArchived?'← Back to directory':`🗄 Archived (${archivedRows.length})`}</button>
         <input class="staff-search" id="staff-search" type="search" placeholder="🔍  Search staff by name…" value="${esc(State.staffQ||'')}" oninput="staffSearch(this.value)" style="flex:1;min-width:180px;max-width:340px;margin:0 12px;border:1px solid var(--line);border-radius:9px;padding:7px 12px;font-size:13px;font-family:inherit">
         <span class="ch-sub">${exportBtns('staff-table','Staff Directory — '+(isSuper()?'All stores':State.branch))}</span></div><div class="table-wrap"><table class="grid" id="staff-table"><thead><tr><th>Name</th><th>Dept</th><th>Role</th><th>Store</th><th>Phone</th><th>Email</th><th>DOB</th><th>Started</th><th>Type</th><th>Status</th>${canAcct?'<th>Account</th>':''}<th></th></tr></thead><tbody>
-      ${rows.length?rows.map(s=>`<tr><td><b>${esc(s.name)}</b></td><td>${s.admin?'<span class="badge ok">ADMIN · all</span>':((Array.isArray(s.roles)&&s.roles.length)?s.roles.map(r=>`<span class="badge mute">${esc(r)}</span>`).join(' '):(s.dept?`<span class="badge mute">${esc(s.dept)}</span>`:'—'))}</td><td>${esc(s.role||s.classification||'')}</td><td>${s.store?esc(s.store):'<span class="badge warn">No store added</span>'}</td><td>${esc(s.phone||'')}</td><td>${esc(s.email||'')}</td><td>${esc(s.dob||'—')}</td><td>${esc(s.start||'')}</td><td>${esc(s.estatus||s.category||'')}</td><td>${s.active?'<span class="badge ok"><span class="bdot"></span>Active</span>':'<span class="badge mute"><span class="bdot"></span>Inactive</span>'}</td>${canAcct?`<td class="acct-cell" data-sid="${esc(s.id)}" data-store="${esc(s.store)}"><span class="muted">…</span></td>`:''}<td><span class="ck-task-admin"><button onclick="staffEditOpen('${esc(s.id)}')" title="Edit">✎</button><button onclick="staffDelete('${esc(s.id)}')" title="Delete">🗑</button></span></td></tr>`).join(''):`<tr><td colspan="${canAcct?12:11}" style="text-align:center;padding:26px;color:var(--muted)">No staff match “${esc(State.staffQ||'')}”.</td></tr>`}
+      ${rows.length?rows.map(s=>`<tr><td><b>${esc(s.name)}</b></td><td>${s.admin?'<span class="badge ok">ADMIN · all</span>':((Array.isArray(s.roles)&&s.roles.length)?s.roles.map(r=>`<span class="badge mute">${esc(r)}</span>`).join(' '):(s.dept?`<span class="badge mute">${esc(s.dept)}</span>`:'—'))}</td><td>${esc(s.role||s.classification||'')}</td><td>${s.store?esc(s.store):'<span class="badge warn">No store added</span>'}</td><td>${esc(s.phone||'')}</td><td>${esc(s.email||'')}</td><td>${esc(s.dob||'—')}</td><td>${esc(s.start||'')}</td><td>${esc(s.estatus||s.category||'')}</td><td>${s.active?'<span class="badge ok"><span class="bdot"></span>Active</span>':'<span class="badge mute"><span class="bdot"></span>Inactive</span>'}</td>${canAcct?`<td class="acct-cell" data-sid="${esc(s.id)}" data-store="${esc(s.store)}"><span class="muted">…</span></td>`:''}<td><span class="ck-task-admin">${showArchived?`<button onclick="staffRestore('${esc(s.id)}')" title="Restore — bring this person back">↩️</button>`:`<button onclick="staffEditOpen('${esc(s.id)}')" title="Edit">✎</button><button onclick="staffArchive('${esc(s.id)}')" title="Archive — hide but keep everything">🗄</button>`}<button onclick="staffDelete('${esc(s.id)}')" title="Delete permanently">🗑</button></span></td></tr>`).join(''):`<tr><td colspan="${canAcct?12:11}" style="text-align:center;padding:26px;color:var(--muted)">No staff match “${esc(State.staffQ||'')}”.</td></tr>`}
       </tbody></table></div></div>`;
   if(canAcct) staffAcctFill();
 }
@@ -2037,6 +2037,12 @@ function staffSave(ed){
   const g=id=>(document.getElementById(id)?.value||'');
   const name=g('st-name').trim(); if(!name){ toast('Enter a name'); return; }
   const store=isSuper()?g('st-store'):State.branch;
+  // every gmail must be UNIQUE (Demo store is sample data — excluded from the check)
+  const email=g('st-email').trim().toLowerCase();
+  if(email && store!=='Demo'){
+    const dup=DB.staff.find(x=>x.id!==ed && x.store!=='Demo' && String(x.email||'').trim().toLowerCase()===email);
+    if(dup){ toast(`❌ This email is already used by ${dup.name} (${dup.store}) — each person needs a unique gmail`); return; }
+  }
   const role=g('st-role');
   const adminRole=document.getElementById('st-admin')?.checked||false;
   const roles=[...document.querySelectorAll('.st-role-cb:checked')].map(c=>c.value);
@@ -2048,7 +2054,27 @@ function staffSave(ed){
   if(window.persist) window.persist();
   State.staffEdit=null; toast('✓ Staff saved'); renderStaff();
 }
-function staffDelete(id){ if(!confirm('Delete this staff member permanently?')) return; const i=DB.staff.findIndex(x=>x.id===id); if(i>=0 && !recordInScope(DB.staff[i])){ toast('This staff member belongs to another store'); return; } if(i>=0){ const before=JSON.parse(JSON.stringify(DB.staff[i])); auditLog('delete','staff',before.id,before.store,before,null); DB.staff.splice(i,1); if(window.mcqDeleteRecords) mcqDeleteRecords('staff',[before.id],isSuper()?{store:before.store}:null); } if(window.persist) window.persist(); State.staffEdit=null; toast('🗑 Staff deleted'); renderStaff(); }
+function staffDelete(id){ if(!confirm('Delete this staff member permanently?\n\nTip: use 🗄 Archive instead if they might come back — everything is kept and one click restores them.')) return; const i=DB.staff.findIndex(x=>x.id===id); if(i>=0 && !recordInScope(DB.staff[i])){ toast('This staff member belongs to another store'); return; } if(i>=0){ const before=JSON.parse(JSON.stringify(DB.staff[i])); auditLog('delete','staff',before.id,before.store,before,null); DB.staff.splice(i,1); if(window.mcqDeleteRecords) mcqDeleteRecords('staff',[before.id],isSuper()?{store:before.store}:null); } if(window.persist) window.persist(); State.staffEdit=null; toast('🗑 Staff deleted'); renderStaff(); }
+// archive = hide the person everywhere but KEEP the record — restore brings them straight back
+function staffArchive(id){
+  const s=DB.staff.find(x=>x.id===id); if(!s) return;
+  if(!recordInScope(s)){ toast('This staff member belongs to another store'); return; }
+  if(!confirm(`Archive ${s.name}?\n\nThey disappear from the directory and all pickers, but everything is kept. If they come back, open 🗄 Archived and press Restore.`)) return;
+  const before=JSON.parse(JSON.stringify(s));
+  s.archived=1; s.archivedAt=new Date().toISOString().slice(0,10); s.active=0;
+  auditLog('archive','staff',s.id,s.store,before,s);
+  if(window.persist) window.persist(); State.staffEdit=null; toast('🗄 '+s.name+' archived — restore any time'); renderStaff();
+}
+function staffRestore(id){
+  const s=DB.staff.find(x=>x.id===id); if(!s) return;
+  if(!recordInScope(s)){ toast('This staff member belongs to another store'); return; }
+  const before=JSON.parse(JSON.stringify(s));
+  s.archived=0; delete s.archivedAt; s.active=1;
+  auditLog('restore','staff',s.id,s.store,before,s);
+  if(window.persist) window.persist(); State.staffEdit=null; toast('↩️ '+s.name+' is back in the team'); renderStaff();
+}
+function staffViewToggle(){ State.staffView=State.staffView==='archived'?'':'archived'; State.staffEdit=null; renderStaff(); }
+window.staffArchive=staffArchive; window.staffRestore=staffRestore; window.staffViewToggle=staffViewToggle;
 
 /* ============================================================ JOB SCHEDULE — duties per department + weekly roster */
 const JOB_DUTIES={
