@@ -13,6 +13,12 @@ import os, sys, json, time, secrets, base64, re, hmac, hashlib, urllib.request, 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # so `import db` works when imported as server.app too
 import db
 import cloudstore
+import ssl as _ssl
+try:
+    import certifi as _certifi
+    _TLS = _ssl.create_default_context(cafile=_certifi.where())
+except Exception:
+    _TLS = _ssl.create_default_context()
 from flask import Blueprint, Flask, request, jsonify, send_file, abort, Response
 
 api = Blueprint('api', __name__)
@@ -94,7 +100,7 @@ def _deputy_norm(topic, d):
             req = urllib.request.Request(
                 os.environ['DEPUTY_HOST'].rstrip('/') + '/api/v1/resource/Roster/' + str(roster_id),
                 headers={'Authorization': 'OAuth ' + os.environ['DEPUTY_TOKEN'], 'Accept': 'application/json'})
-            ro = json.loads(urllib.request.urlopen(req, timeout=8).read().decode())
+            ro = json.loads(urllib.request.urlopen(req, timeout=8, context=_TLS).read().decode())
             sched_start = db._to_epoch(ro.get('StartTime')); sched_end = db._to_epoch(ro.get('EndTime'))
         except Exception:
             pass
@@ -217,6 +223,32 @@ def activate_lookup():
     if not d.get('email'): abort(400)
     return jsonify(ok=True, **db.activate_lookup(d.get('email')))
 
+def _welcome_email_html(name, aid, password, access, store, app_url):
+    first = (str(name or '').split(' ') or [''])[0].title() or 'there'
+    chip = ('<span style="display:inline-block;background:#e7f7f0;color:#0e7a56;border:1px solid #b6ecd6;'
+            'border-radius:999px;padding:4px 14px;font-weight:700;font-size:13px;margin:2px">%s</span>')
+    chips = chip % ('🔑 ' + (access or 'Staff')) + ((chip % ('🏪 MCQ ' + store)) if store else '')
+    return ('<div style="font-family:Arial,Helvetica,sans-serif;max-width:480px;margin:auto;color:#1f2937">'
+            '<div style="background:linear-gradient(135deg,#f97316,#f59e0b);color:#fff;padding:26px 26px 22px;border-radius:16px 16px 0 0">'
+            '<div style="font-size:20px;font-weight:800;letter-spacing:.02em">MCQ Supermarket</div>'
+            '<div style="opacity:.92;font-size:14px;margin-top:3px">Your account is ready 🎉</div></div>'
+            '<div style="border:1px solid #f1e3d4;border-top:none;border-radius:0 0 16px 16px;padding:26px;background:#fffdfa">'
+            '<p style="font-size:15px;margin:0 0 6px"><b>Hi %s,</b> welcome aboard! 👋</p>'
+            '<p style="color:#57534e;font-size:13.5px;margin:0 0 18px">Your MCQ Supermarket account has been activated. '
+            'Here are your sign-in details — keep this email safe.</p>'
+            '<div style="background:#fff7ed;border:1.6px dashed #fdba74;border-radius:14px;padding:18px;text-align:center;margin-bottom:10px">'
+            '<div style="font-size:10px;font-weight:800;letter-spacing:.16em;color:#c2570f;text-transform:uppercase">Your ID</div>'
+            '<div style="font-family:ui-monospace,Menlo,monospace;font-size:38px;font-weight:800;letter-spacing:.3em;color:#7c2d12;text-indent:.3em">%s</div></div>'
+            '<div style="background:#fafaf9;border:1px solid #e7e5e4;border-radius:12px;padding:12px 16px;margin-bottom:14px">'
+            '<span style="color:#78716c;font-size:12.5px;font-weight:700;margin-right:10px">PASSWORD</span>'
+            '<span style="font-family:ui-monospace,Menlo,monospace;font-size:16px;font-weight:700;color:#1c1917">%s</span></div>'
+            '<div style="text-align:center;margin-bottom:18px">%s</div>'
+            '<a href="%s" style="display:block;text-align:center;background:linear-gradient(135deg,#f97316,#ea580c);color:#fff;'
+            'text-decoration:none;font-weight:800;font-size:15px;padding:13px;border-radius:12px">Open the app →</a>'
+            '<p style="color:#a8a29e;font-size:11.5px;margin:16px 0 0;text-align:center">Sign in with your ID + password. '
+            'Keep this email private — anyone with these details can access your account.</p></div></div>'
+            % (first, aid, password, chips, app_url))
+
 @api.route('/api/activate', methods=['POST'])
 def activate():
     d = request.get_json(force=True, silent=True) or {}
@@ -225,7 +257,18 @@ def activate():
     if res.get('error'):
         return jsonify(ok=False, error=res['error']), 400
     db.write_audit('activation', res.get('store') or '', 'create', 'account', res.get('id'), None, {'matched': res.get('matched')})
-    return jsonify(ok=True, **res)
+    # email the credentials to the person (nice to have — never blocks activation)
+    emailed = False
+    try:
+        app_url = (request.url_root or '').rstrip('/') or 'https://mcq-supermarket.onrender.com'
+        ok, _ = _brevo_send([{'email': d.get('email'), 'name': res.get('name') or d.get('email')}],
+                            '🎉 Your MCQ Supermarket account — ID ' + str(res.get('id')),
+                            _welcome_email_html(res.get('name'), res.get('id'), d.get('password'),
+                                                res.get('tab'), res.get('store'), app_url))
+        emailed = bool(ok)
+    except Exception:
+        pass
+    return jsonify(ok=True, emailed=emailed, **res)
 
 # ---------- central account management (account admin — Khoi Nguyen — only) ----------
 def require_acct_admin():
@@ -724,7 +767,7 @@ def _brevo_send(recipients, subject, html, attachment=None, from_email=None, fro
         data=json.dumps(payload).encode('utf-8'),
         headers={'api-key': key, 'content-type': 'application/json', 'accept': 'application/json'}, method='POST')
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
+        with urllib.request.urlopen(req, timeout=15, context=_TLS) as resp:
             return (200 <= resp.status < 300), 'sent'
     except urllib.error.HTTPError as e:
         return False, 'brevo ' + str(e.code) + ' ' + e.read().decode('utf-8', 'ignore')[:200]
@@ -796,7 +839,7 @@ def _openai_vision(image_bytes, mime, prompt, max_tokens=220):
         data=json.dumps(payload).encode('utf-8'),
         headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'}, method='POST')
     try:
-        with urllib.request.urlopen(req, timeout=40) as resp:
+        with urllib.request.urlopen(req, timeout=40, context=_TLS) as resp:
             out = json.loads(resp.read().decode('utf-8'))
         return out['choices'][0]['message']['content'], None
     except urllib.error.HTTPError as e:
@@ -813,7 +856,7 @@ def _openai_chat(messages, max_tokens=700):
         data=json.dumps(payload).encode('utf-8'),
         headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'}, method='POST')
     try:
-        with urllib.request.urlopen(req, timeout=40) as resp:
+        with urllib.request.urlopen(req, timeout=40, context=_TLS) as resp:
             out = json.loads(resp.read().decode('utf-8'))
         return out['choices'][0]['message']['content'], None
     except urllib.error.HTTPError as e:

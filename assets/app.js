@@ -200,8 +200,10 @@ async function actLookup(){
   _act={email,name:r.name||''};
   actShell(`
     <div class="act-step-dots"><span class="on"></span><span class="on"></span><span></span></div>
-    <div class="act-badge act-ok">✓</div><h2 class="act-h">We found you!</h2>
-    <p class="act-p"><b>${esc(r.name)}</b>${r.store?` · MCQ ${esc(r.store)}`:''}<br>Now create your own password to finish.</p>
+    <div class="act-badge act-ok">👋</div><h2 class="act-h">We found you, ${esc((r.name||'').split(' ')[0].toLowerCase().replace(/^./,c=>c.toUpperCase())||'friend')}!</h2>
+    <p class="act-p"><b>${esc(r.name)}</b>${r.store?` · 🏪 MCQ ${esc(r.store)}`:''}</p>
+    ${r.id?`<div class="act-id-box"><span class="act-id-lbl">Your ID</span><span class="act-id">${esc(r.id)}</span></div>
+    <p class="act-p" style="margin-top:-6px">This is your permanent sign-in ID. Now create your password to finish:</p>`:'<p class="act-p">Now create your own password to finish.</p>'}
     <label class="login-lbl">Create a password</label>
     <input id="act-pw1" class="login-input" type="password" placeholder="At least 6 characters">
     <label class="login-lbl">Confirm password</label>
@@ -227,7 +229,7 @@ async function actCreate(){
     <p class="act-p">Your account is ready. This is your permanent ID — save it:</p>
     <div class="act-id-box"><span class="act-id-lbl">Your ID</span><span class="act-id">${esc(r.id)}</span></div>
     <div class="act-access"><span class="act-chip">${esc(roleName)}</span>${r.store?`<span class="act-chip act-chip-store">🏪 ${esc(r.store)}</span>`:''}</div>
-    <p class="act-p">Sign in with this ID and your new password — your access: <span class="act-tab">${esc(r.tab)}</span>.${r.needs_profile?'<br>📋 After signing in, please complete <b>My Profile</b> first.':''}</p>
+    <p class="act-p">Sign in with this ID and your new password — your access: <span class="act-tab">${esc(r.tab)}</span>.${r.emailed?`<br>📧 We've also emailed your ID &amp; password to <b>${esc(_act.email||'your Gmail')}</b>.`:''}${r.needs_profile?'<br>📋 After signing in, please complete <b>My Profile</b> first.':''}</p>
     <button class="login-btn act-cta" onclick="actPrefill('${esc(r.id)}','${esc(r.role)}')">Sign in now →</button>`);
 }
 function actPrefill(id){

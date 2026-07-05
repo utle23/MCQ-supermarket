@@ -495,19 +495,31 @@ def _staff_by_email_any(conn, email):
     return demo_hit
 
 def activate_lookup(email, store=None):
-    """Step 1 of activation: is this Gmail known? (store is derived from the match, not picked)."""
+    """Step 1 of activation: is this Gmail known? (store is derived from the match, not picked).
+    A staff-directory match RESERVES the account right away (activated=0, no password) so the
+    person sees their permanent ID on the create-password screen. Idempotent — the same email
+    always comes back to the same reserved ID."""
     conn = connect()
     try:
-        acc = conn.execute('SELECT id,role,store_id,activated FROM accounts WHERE lower(email)=lower(?)',
+        acc = conn.execute('SELECT id,role,store_id,activated,name FROM accounts WHERE lower(email)=lower(?)',
                            (str(email or '').strip(),)).fetchone()
         if acc and acc['activated']:
             return {'already': True, 'id': acc['id'], 'role': acc['role'], 'tab': ACCT_TABS.get(acc['role'], 'Staff')}
-        # matched if the account admin pre-assigned an account OR the email is in any store's staff list
+        if acc:   # pre-assigned by the account admin (or reserved by an earlier lookup)
+            return {'already': False, 'match': True, 'found': True, 'id': acc['id'],
+                    'role': acc['role'], 'tab': ACCT_TABS.get(acc['role'], 'Staff'),
+                    'name': acc['name'] or '', 'store': acc['store_id'] or ''}
         hit = _staff_by_email_any(conn, email)
-        match = bool(acc or hit)
-        return {'already': False, 'match': match, 'found': match,
-                'name': (dict(acc).get('name') if acc else None) or (hit or {}).get('name', ''),
-                'store': (acc['store_id'] if acc else None) or (hit or {}).get('store', '')}
+        if hit:   # reserve the account NOW so the ID can be shown before the password is set
+            aid = _gen_account_id(conn, hit['store'])
+            conn.execute('''INSERT INTO accounts(id,password,role,store_id,staff_id,name,email,activated,needs_profile,created_at,updated_at)
+                            VALUES(?,?,?,?,?,?,?,0,0,?,?)''',
+                         (aid, '', 'employee', hit['store'], hit['staff_id'], hit['name'],
+                          str(email or '').strip(), now(), now()))
+            conn.commit()
+            return {'already': False, 'match': True, 'found': True, 'id': aid,
+                    'role': 'employee', 'tab': 'Staff', 'name': hit['name'], 'store': hit['store']}
+        return {'already': False, 'match': False, 'found': False, 'name': '', 'store': ''}
     finally:
         conn.close()
 
