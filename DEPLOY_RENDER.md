@@ -45,3 +45,15 @@ re-upload through the app). Verify a few logins on the Render URL before going l
 - Postgres on Render is UTF-8 by default (Vietnamese names + emoji migrate cleanly).
 - Free Postgres expires after 30 days and the free Web Service sleeps after 15 min idle —
   use paid plans for production.
+
+## Cloudinary storage (chosen instead of a persistent disk)
+Photos and message/announcement attachments are stored on **Cloudinary** when the
+`CLOUDINARY_URL` env var is set (format: `cloudinary://API_KEY:API_SECRET@CLOUD_NAME`
+— from https://console.cloudinary.com/app/settings/api-keys).
+- Assets are uploaded as **authenticated** (not public); the app checks its own ACLs
+  and proxies bytes through the existing /api endpoints with server-signed URLs.
+- **Free-plan 10 MB cap handled automatically**: oversize images are recompressed
+  server-side (≤3000px JPEG); any other oversize file (e.g. a 25 MB PDF) is split
+  losslessly into <10 MB parts and re-joined on download — invisible to users.
+- No persistent disk is needed. Do NOT set DATA_DIR on Render when using Cloudinary.
+- Never commit the Cloudinary secret; it lives only in the Render env var.

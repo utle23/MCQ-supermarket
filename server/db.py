@@ -229,6 +229,12 @@ def init_db():
     except Exception: pass
     try: conn.execute('ALTER TABLE announcements ADD COLUMN department TEXT')   # department-group announcements
     except Exception: pass
+    try: conn.execute('ALTER TABLE photos ADD COLUMN cloud TEXT')                # Cloudinary asset id
+    except Exception: pass
+    try: conn.execute('ALTER TABLE files ADD COLUMN cloud TEXT')                 # Cloudinary base id
+    except Exception: pass
+    try: conn.execute('ALTER TABLE files ADD COLUMN chunks INTEGER DEFAULT 0')   # >10MB files are split
+    except Exception: pass
     try: conn.execute("ALTER TABLE announcements ADD COLUMN attachments_json TEXT DEFAULT '[]'")   # announcement files
     except Exception: pass
     # seed stores
@@ -737,8 +743,14 @@ def cleanup_old(store, before, kinds):
     try:
         cut = str(before) + ' 00:00:00'
         if 'photos' in kinds:
-            rows = conn.execute('SELECT id,store_id,filename FROM photos WHERE store_id=? AND created_at<?', (store, cut)).fetchall()
+            rows = conn.execute('SELECT * FROM photos WHERE store_id=? AND created_at<?', (store, cut)).fetchall()
             for r in rows:
+                try:
+                    cloud = r['cloud'] if 'cloud' in r.keys() else None
+                    if cloud:
+                        import cloudstore
+                        if cloudstore.ENABLED: cloudstore.delete_photo(cloud)
+                except Exception: pass
                 try: os.remove(os.path.join(UPLOADS, ''.join(c if c.isalnum() else '-' for c in r['store_id'].lower()), r['filename']))
                 except Exception: pass
             conn.execute('DELETE FROM photos WHERE store_id=? AND created_at<?', (store, cut))

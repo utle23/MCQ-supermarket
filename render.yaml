@@ -8,13 +8,9 @@ services:
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn flask_app:app --workers 4 --threads 4 --timeout 120 --bind 0.0.0.0:$PORT
     healthCheckPath: /api/health
-    disk:                       # photos/files (uploads) live here so they survive deploys
-      name: mcq-uploads
-      mountPath: /var/data
-      sizeGB: 5
     envVars:
-      - key: DATA_DIR           # uploads dir → the persistent disk
-        value: /var/data
+      - key: CLOUDINARY_URL     # photos + attachments live on Cloudinary (set in dashboard, secret)
+        sync: false
       - key: DATABASE_URL       # auto-filled from the Postgres instance below
         fromDatabase:
           name: mcq-postgres

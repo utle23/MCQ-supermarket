@@ -12,7 +12,8 @@ Run standalone (local API only):
 import os, sys, json, time, secrets, base64, re, hmac, hashlib, urllib.request, urllib.error
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # so `import db` works when imported as server.app too
 import db
-from flask import Blueprint, Flask, request, jsonify, send_file, abort
+import cloudstore
+from flask import Blueprint, Flask, request, jsonify, send_file, abort, Response
 
 api = Blueprint('api', __name__)
 
@@ -518,14 +519,22 @@ def post_file():
     store_id = au['store_id'] if au['role'] not in ('super', 'ba') else 'ALL'
     fid = 'f_' + time.strftime('%Y%m%d') + '_' + secrets.token_hex(9)
     name = (f.filename or 'file').replace('/', '_').replace('\\', '_')[-120:]
-    folder = os.path.join(db.UPLOADS, '_files'); os.makedirs(folder, exist_ok=True)
-    f.save(os.path.join(folder, fid + '.bin'))
+    mime = f.mimetype or 'application/octet-stream'
+    cloud = None; chunks = 0
+    if cloudstore.ENABLED:
+        data = f.read()
+        # free-plan cap is 10MB/file: oversize images get recompressed, other oversize
+        # files are split losslessly into parts and re-joined on download
+        cloud, chunks, size, mime = cloudstore.put_file(fid, data, mime)
+    else:
+        folder = os.path.join(db.UPLOADS, '_files'); os.makedirs(folder, exist_ok=True)
+        f.save(os.path.join(folder, fid + '.bin'))
     conn = db.connect()
-    conn.execute('INSERT INTO files(id,store_id,name,mime,size,filename,created_at) VALUES(?,?,?,?,?,?,?)',
-                 (fid, store_id, name, f.mimetype or 'application/octet-stream', size, fid + '.bin', db.now()))
+    conn.execute('INSERT INTO files(id,store_id,name,mime,size,filename,created_at,cloud,chunks) VALUES(?,?,?,?,?,?,?,?,?)',
+                 (fid, store_id, name, mime, size, fid + '.bin', db.now(), cloud, chunks))
     conn.commit(); conn.close()
-    db.write_audit(uid(au), store_id, 'create', 'file', fid, None, {'name': name, 'size': size})
-    return jsonify(ok=True, id=fid, name=name, size=size, mime=f.mimetype or 'application/octet-stream')
+    db.write_audit(uid(au), store_id, 'create', 'file', fid, None, {'name': name, 'size': size, 'chunks': chunks})
+    return jsonify(ok=True, id=fid, name=name, size=size, mime=mime)
 
 @api.route('/api/file/<fid>', methods=['GET'])
 def get_file(fid):
@@ -533,10 +542,17 @@ def get_file(fid):
     row = db.file_meta(fid)
     if not row: abort(404)
     if not db.can_download_file(au, fid): abort(403)
-    path = os.path.join(db.UPLOADS, '_files', row['filename'])
-    if not os.path.isfile(path): abort(404)
-    resp = send_file(path, mimetype=row['mime'] or 'application/octet-stream',
-                     as_attachment=True, download_name=row['name'] or 'file')
+    cloud = row['cloud'] if 'cloud' in row.keys() else None
+    if cloud and cloudstore.ENABLED:
+        try: data = cloudstore.get_file(cloud, row['chunks'] if 'chunks' in row.keys() else 1)
+        except Exception: abort(404)
+        resp = Response(data, mimetype=row['mime'] or 'application/octet-stream')
+        resp.headers['Content-Disposition'] = 'attachment; filename="%s"' % (row['name'] or 'file').replace('"', '')
+    else:
+        path = os.path.join(db.UPLOADS, '_files', row['filename'])
+        if not os.path.isfile(path): abort(404)
+        resp = send_file(path, mimetype=row['mime'] or 'application/octet-stream',
+                         as_attachment=True, download_name=row['name'] or 'file')
     resp.headers['Cache-Control'] = 'private, max-age=31536000, immutable'   # ids are unique → cache hard
     return resp
 
@@ -551,23 +567,27 @@ def post_photo():
     data_url = request.form.get('dataUrl')
     pid = request.form.get('id') or ('p_' + time.strftime('%Y%m%d') + '_' + secrets.token_hex(5))
     pid = ''.join(c for c in pid if c.isalnum() or c in '_-')[:40] or ('p_' + secrets.token_hex(5))
-    folder = os.path.join(db.UPLOADS, db_safe(store_id)); os.makedirs(folder, exist_ok=True)
-    mime = 'image/jpeg'; ext = 'jpg'
+    mime = 'image/jpeg'; ext = 'jpg'; data = None
     if f:
         mime = f.mimetype or mime; ext = (f.filename.rsplit('.', 1)[-1] if '.' in (f.filename or '') else 'jpg')[:5]
-        f.save(os.path.join(folder, pid + '.' + ext))
+        data = f.read()
     elif data_url and ',' in data_url:
         import base64
         head, b64 = data_url.split(',', 1)
         if 'png' in head: mime, ext = 'image/png', 'png'
-        with open(os.path.join(folder, pid + '.' + ext), 'wb') as out:
-            out.write(base64.b64decode(b64))
+        data = base64.b64decode(b64)
     else:
         abort(400)
+    cloud = None
+    if cloudstore.ENABLED:
+        cloud = cloudstore.put_photo(pid, data)
+    else:
+        folder = os.path.join(db.UPLOADS, db_safe(store_id)); os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, pid + '.' + ext), 'wb') as out: out.write(data)
     meta = {'area': request.form.get('area', ''), 'equipment': request.form.get('equipment', '')}
     conn = db.connect()
-    conn.execute('INSERT INTO photos(id,store_id,filename,mime,meta_json,created_at) VALUES(?,?,?,?,?,?) ON CONFLICT (id) DO UPDATE SET filename=excluded.filename, mime=excluded.mime, meta_json=excluded.meta_json, created_at=excluded.created_at',
-                 (pid, store_id, pid + '.' + ext, mime, json.dumps(meta), db.now()))
+    conn.execute('INSERT INTO photos(id,store_id,filename,mime,meta_json,created_at,cloud) VALUES(?,?,?,?,?,?,?) ON CONFLICT (id) DO UPDATE SET filename=excluded.filename, mime=excluded.mime, meta_json=excluded.meta_json, created_at=excluded.created_at, cloud=excluded.cloud',
+                 (pid, store_id, pid + '.' + ext, mime, json.dumps(meta), db.now(), cloud))
     conn.commit(); conn.close()
     db.write_audit(uid(au), store_id, 'create', 'photo', pid, None, None)
     return jsonify(ok=True, id=pid)
@@ -576,7 +596,7 @@ def post_photo():
 def get_photo(photo_id):
     au = require_auth()
     conn = db.connect()
-    row = conn.execute('SELECT store_id,filename,mime FROM photos WHERE id=?', (photo_id,)).fetchone()
+    row = conn.execute('SELECT store_id,filename,mime,cloud FROM photos WHERE id=?', (photo_id,)).fetchone()
     allowed = False
     if row:
         allowed = db.can_access(au, row['store_id'])
@@ -589,9 +609,15 @@ def get_photo(photo_id):
     conn.close()
     if not row: abort(404)
     if not allowed: abort(403)
-    path = os.path.join(db.UPLOADS, db_safe(row['store_id']), row['filename'])
-    if not os.path.isfile(path): abort(404)
-    resp = send_file(path, mimetype=row['mime'])
+    cloud = row['cloud'] if 'cloud' in row.keys() else None
+    if cloud and cloudstore.ENABLED:
+        try: data = cloudstore.get_photo(cloud)
+        except Exception: abort(404)
+        resp = Response(data, mimetype=row['mime'] or 'image/jpeg')
+    else:
+        path = os.path.join(db.UPLOADS, db_safe(row['store_id']), row['filename'])
+        if not os.path.isfile(path): abort(404)
+        resp = send_file(path, mimetype=row['mime'])
     resp.headers['Cache-Control'] = 'private, max-age=31536000, immutable'   # photo ids are unique → cache hard so images don't re-download
     return resp
 

@@ -2,3 +2,6 @@ Flask>=2.3
 fpdf2>=2.7
 gunicorn>=21.2
 psycopg2-binary>=2.9
+cloudinary>=1.40
+Pillow>=10.0
+certifi
