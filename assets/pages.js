@@ -4078,7 +4078,8 @@ function accLoad(q){
         <option value="">— assign access —</option><option value="employee">Member (Staff)</option><option value="staff">Dept Lead</option><option value="admin">Manager</option><option value="super">Super Admin</option></select>`:'<span class="muted" style="font-size:11px">add their email first</span>'}</td>
       <td>${esc(a.store_id||'—')}</td><td>${esc(a.department||'—')}</td>
       <td><span class="muted">—</span></td>
-      <td><span class="badge mute">No account yet</span></td><td></td>
+      <td><span class="badge mute">No account yet</span></td>
+      <td><button class="btn xs" style="color:var(--bad);border-color:#f3c9c9" onclick="accDelStaff('${ckJS(a.store_id||'')}','${ckJS(a.staff_id||'')}','${ckJS(a.name||'')}')" title="Remove this person from the list">🗑</button></td>
     </tr>`:`<tr class="${a.acct_admin?'acc-row-admin':''}">
       <td><b style="font-family:ui-monospace,Menlo,monospace">${esc(a.id)}</b>${a.acct_admin?' <span class="badge info" title="Account admin">👑</span>':''}</td>
       <td><b>${esc(a.name||'')}</b></td><td style="font-size:12px">${esc(a.email||'')}</td>
@@ -4110,8 +4111,18 @@ function accDel(id,name){
   if(!confirm('Delete account '+id+(name?(' ('+name+')'):'')+'? They will no longer be able to sign in with this ID.')) return;
   mcqAccountDelete(id).then(r=>{ if(r&&r.ok){ toast('🗑 Account deleted'); accLoad(); } else toast('Could not delete'); });
 }
+// "No account yet" rows come from the STAFF directory — removing one archives the staff
+// member (they vanish from this list & every picker; restorable in Staff Members → Archived)
+function accDelStaff(store,staffId,name){
+  if(!store||!staffId){ toast('Missing staff reference'); return; }
+  if(!confirm('Remove '+(name||'this person')+' ('+store+') from the list?\n\nTheir staff profile is archived — you can restore it any time in Staff Members → 🗄 Archived.')) return;
+  mcqStaffProfile(store,staffId,{archived:1,active:0}).then(r=>{
+    if(r&&r.ok){ toast('🗄 '+(name||'Staff')+' removed — restorable in Staff Members'); const s=(DB.staff||[]).find(x=>String(x.id)===String(staffId)&&x.store===store); if(s){ s.archived=1; s.active=0; } accLoad(); }
+    else toast('Could not remove');
+  });
+}
 window.renderAccounts=renderAccounts; window.accSearch=accSearch; window.accLoad=accLoad;
-window.accSet=accSet; window.accPwToggle=accPwToggle; window.accPwEdit=accPwEdit; window.accDel=accDel;
+window.accSet=accSet; window.accPwToggle=accPwToggle; window.accPwEdit=accPwEdit; window.accDel=accDel; window.accDelStaff=accDelStaff;
 
 /* ============================================================ PAPER CHECKLIST TEMPLATE (print-ready PDF) */
 function _ckLogoData(){

@@ -113,7 +113,7 @@ function showLogin(notice){
       <h1 class="login-h">Welcome back</h1>
       <p class="login-p">Sign in to your store operations workspace.</p>
       ${notice?`<div class="login-note"><i>⏱️</i> ${esc(notice)}</div>`:''}
-      <label class="login-lbl">ID <span class="login-opt" id="login-id-opt">· your 4-digit personal ID (skip it if your password alone signs you in)</span></label>
+      <label class="login-lbl">ID <span class="login-opt" id="login-id-opt">· your 4-digit personal ID</span></label>
       <input id="login-id" class="login-input" inputmode="numeric" maxlength="4" placeholder="e.g. 2345" autocomplete="off">
       <label class="login-lbl">Password</label>
       <div class="login-pw">
