@@ -229,7 +229,10 @@ async function actCreate(){
     <p class="act-p">Your account is ready. This is your permanent ID — save it:</p>
     <div class="act-id-box"><span class="act-id-lbl">Your ID</span><span class="act-id">${esc(r.id)}</span></div>
     <div class="act-access"><span class="act-chip">${esc(roleName)}</span>${r.store?`<span class="act-chip act-chip-store">🏪 ${esc(r.store)}</span>`:''}</div>
-    <p class="act-p">Sign in with this ID and your new password — your access: <span class="act-tab">${esc(r.tab)}</span>.${r.emailed?`<br>📧 We've also emailed your ID &amp; password to <b>${esc(_act.email||'your Gmail')}</b>.`:''}${r.needs_profile?'<br>📋 After signing in, please complete <b>My Profile</b> first.':''}</p>
+    ${r.emailed
+      ? `<div class="act-mail-note">📧 Your <b>ID</b> &amp; <b>password</b> have been sent to <b>${esc(_act.email||'your Gmail')}</b> — check your inbox.</div>`
+      : `<div class="act-mail-note warn">⚠️ We couldn't email your details — please save your ID &amp; password somewhere safe now.</div>`}
+    <p class="act-p">Sign in with this ID and your new password — your access: <span class="act-tab">${esc(r.tab)}</span>.${r.needs_profile?'<br>📋 After signing in, please complete <b>My Profile</b> first.':''}</p>
     <button class="login-btn act-cta" onclick="actPrefill('${esc(r.id)}','${esc(r.role)}')">Sign in now →</button>`);
 }
 function actPrefill(id){
