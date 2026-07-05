@@ -309,6 +309,18 @@ def accounts_list():
     require_acct_admin()
     return jsonify(ok=True, accounts=db.list_accounts(request.args.get('q', '')))
 
+@api.route('/api/staff/import', methods=['POST'])
+def staff_import():
+    au = require_auth(); require_write(au)
+    if au['role'] not in ('super', 'admin'): abort(403)   # Super any store; Manager own store only
+    d = request.get_json(force=True, silent=True) or {}
+    rows = d.get('rows') or []
+    allowed = None if au['role'] == 'super' else [au['store_id']]
+    res = db.bulk_import_staff(rows, allowed_stores=allowed)
+    db.write_audit(uid(au), au.get('store_id') or 'ALL', 'import', 'staff', 'csv', None,
+                   {'added': len(res['added']), 'skipped': len(res['skipped']), 'errors': len(res['errors'])})
+    return jsonify(ok=True, **res)
+
 @api.route('/api/account/create', methods=['POST'])
 def account_create():
     au = require_acct_admin()

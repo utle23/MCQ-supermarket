@@ -2015,7 +2015,7 @@ function renderStaff(){
     if(ed!=='new') setTimeout(()=>attLoad(s.store||State.branch, ed),60);
   }
   $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🧑‍🤝‍🧑</div><div><h2>Staff Members</h2><p>Team directory${isSuper()?' · all stores':' · '+esc(State.branch)}.</p></div>
-      <div class="ph-actions"><button class="btn primary" onclick="staffNew()"><i class="fas fa-user-plus"></i>&nbsp; Add member</button></div></div>
+      <div class="ph-actions">${canAcct?`<button class="btn" onclick="staffImportOpen()"><i class="fas fa-file-csv"></i>&nbsp; Import CSV</button>`:''}<button class="btn primary" onclick="staffNew()"><i class="fas fa-user-plus"></i>&nbsp; Add member</button></div></div>
     <div class="kpi-grid"><div class="kpi tone-info"><div class="k-top"><div class="k-ic">👥</div></div><div class="k-val">${allRows.length}</div><div class="k-lbl">Total staff</div></div>
       <div class="kpi tone-ok"><div class="k-top"><div class="k-ic">✅</div></div><div class="k-val">${active}</div><div class="k-lbl">Active</div></div>
       <div class="kpi tone-warn"><div class="k-top"><div class="k-ic">🏪</div></div><div class="k-val">${new Set(allRows.map(s=>s.store)).size}</div><div class="k-lbl">Stores</div></div>
@@ -2120,6 +2120,86 @@ function staffRestore(id){
 }
 function staffViewToggle(){ State.staffView=State.staffView==='archived'?'':'archived'; State.staffEdit=null; renderStaff(); }
 window.staffArchive=staffArchive; window.staffRestore=staffRestore; window.staffViewToggle=staffViewToggle;
+
+/* ============================================================ STAFF CSV IMPORT
+   Paste or upload a CSV (header row auto-detected). Columns understood: name, store,
+   email, role, dept, dob. Preview dedupes by email (against the directory + within the
+   file) and flags bad rows BEFORE anything is saved. Server re-checks on import. */
+function staffImportOpen(){
+  const stores=(DB.stores||[]).join(', ');
+  mcqModal('📥 Import staff from CSV', `
+    <div class="ai-asst-note" style="margin-bottom:10px">Paste rows (or choose a .csv file). First line can be a header.
+      Columns: <b>name, store, email</b> (required) and optional <b>role, dept, dob</b>. Stores: ${esc(stores)}.</div>
+    <label class="btn sm" style="margin-bottom:8px"><input type="file" accept=".csv,text/csv,text/plain" style="display:none" onchange="staffImportFile(this)"><i class="fas fa-file-arrow-up"></i>&nbsp; Choose CSV file</label>
+    <textarea id="imp-csv" rows="7" placeholder="name, store, email, role, dept, dob&#10;Nguyen Van A, Morley, vana@gmail.com, CASHIER, Cashier, 1998-05-20" style="width:100%;font-family:ui-monospace,Menlo,monospace;font-size:12px"></textarea>
+    <div id="imp-err" class="login-err"></div>
+    <div id="imp-preview"></div>
+    <div style="display:flex;gap:10px;margin-top:12px"><button class="btn primary" onclick="staffImportPreview()"><i class="fas fa-eye"></i>&nbsp; Preview</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>`, {wide:true});
+}
+function staffImportFile(inp){
+  const f=inp.files&&inp.files[0]; if(!f) return;
+  const r=new FileReader(); r.onload=()=>{ const t=document.getElementById('imp-csv'); if(t){ t.value=r.result; staffImportPreview(); } }; r.readAsText(f);
+}
+function _csvParse(text){
+  // minimal CSV: handles quoted fields + commas inside quotes
+  const rows=[]; let i=0, field='', row=[], q=false, s=String(text||'');
+  const push=()=>{ row.push(field); field=''; }; const endr=()=>{ push(); if(row.some(c=>c.trim()!=='')) rows.push(row); row=[]; };
+  while(i<s.length){ const c=s[i];
+    if(q){ if(c==='"'){ if(s[i+1]==='"'){field+='"';i++;} else q=false; } else field+=c; }
+    else { if(c==='"') q=true; else if(c===',') push(); else if(c==='\n') endr(); else if(c==='\r'){} else field+=c; }
+    i++; }
+  if(field!==''||row.length) endr();
+  return rows;
+}
+function _impRows(){
+  const raw=_csvParse(document.getElementById('imp-csv')?.value||'');
+  if(!raw.length) return [];
+  const HEAD={name:['name','fullname','full name','staff','ho ten','tên'],store:['store','branch','chi nhanh','cửa hàng'],
+    email:['email','gmail','e-mail'],role:['role','position','classification','chuc vu'],dept:['dept','department','bo phan','phòng ban'],dob:['dob','birthday','date of birth','ngay sinh','ngày sinh']};
+  const norm=s=>String(s||'').trim().toLowerCase();
+  let cols=null, start=0;
+  const first=raw[0].map(norm);
+  const looksHeader=first.some(c=>HEAD.name.includes(c)||HEAD.email.includes(c)||HEAD.store.includes(c));
+  if(looksHeader){ cols={}; first.forEach((c,idx)=>{ for(const k in HEAD){ if(HEAD[k].includes(c)) cols[k]=idx; } }); start=1; }
+  else { cols={name:0,store:1,email:2,role:3,dept:4,dob:5}; }   // positional fallback
+  const out=[];
+  for(let r=start;r<raw.length;r++){ const c=raw[r];
+    const get=k=>cols[k]!=null&&c[cols[k]]!=null?String(c[cols[k]]).trim():'';
+    out.push({name:get('name'),store:get('store'),email:get('email'),role:get('role'),dept:get('dept'),dob:get('dob')}); }
+  return out;
+}
+let _impReady=[];
+function staffImportPreview(){
+  const err=document.getElementById('imp-err'); if(err) err.textContent='';
+  let rows; try{ rows=_impRows(); }catch(e){ if(err) err.textContent='Could not read the CSV.'; return; }
+  if(!rows.length){ if(err) err.textContent='Nothing to preview — paste some rows first.'; return; }
+  const haveEmail=new Set((DB.staff||[]).filter(s=>!s.archived).map(s=>String(s.email||'').trim().toLowerCase()).filter(Boolean));
+  const stores=new Set(DB.stores||[]); const seen=new Set(); _impReady=[];
+  let nNew=0,nDup=0,nErr=0;
+  const body=rows.map(r=>{
+    const el=r.email.toLowerCase(); let st,cls;
+    if(!r.name||!r.email||!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(r.email)){ st='Missing name/email'; cls='bad'; nErr++; }
+    else if(!stores.has(r.store)){ st='Unknown store'; cls='bad'; nErr++; }
+    else if(haveEmail.has(el)||seen.has(el)){ st='Already exists'; cls='mute'; nDup++; }
+    else { st='New'; cls='ok'; seen.add(el); _impReady.push(r); nNew++; }
+    return `<tr><td>${esc(r.name||'—')}</td><td>${esc(r.store||'—')}</td><td style="font-size:11px">${esc(r.email||'—')}</td><td>${esc(r.role||'')}</td><td><span class="badge ${cls}">${st}</span></td></tr>`;
+  }).join('');
+  document.getElementById('imp-preview').innerHTML=`
+    <div style="margin:12px 0 6px;font-weight:700">Preview · <span class="badge ok">${nNew} new</span> <span class="badge mute">${nDup} already there</span> ${nErr?`<span class="badge bad">${nErr} error</span>`:''}</div>
+    <div class="table-wrap" style="max-height:34vh;overflow:auto"><table class="grid"><thead><tr><th>Name</th><th>Store</th><th>Email</th><th>Role</th><th>Status</th></tr></thead><tbody>${body}</tbody></table></div>
+    <button class="btn primary block" style="margin-top:10px" ${nNew?'':'disabled'} onclick="staffImportRun()"><i class="fas fa-cloud-arrow-up"></i>&nbsp; Import ${nNew} new staff</button>`;
+}
+async function staffImportRun(){
+  if(!_impReady.length||!window.mcqStaffImport) return;
+  const btn=document.querySelector('#imp-preview .btn.primary'); if(btn){ if(btn.disabled) return; btn.disabled=true; btn.innerHTML='⏳ Importing…'; }
+  const r=await mcqStaffImport(_impReady);
+  if(!r||!r.ok){ if(btn){ btn.disabled=false; btn.innerHTML='Import failed — retry'; } toast('Could not import'); return; }
+  toast(`✓ Imported ${(r.added||[]).length} · skipped ${(r.skipped||[]).length} · errors ${(r.errors||[]).length}`);
+  mcqModalClose();
+  if(window.MCQDB&&MCQDB.loadForAccount&&State.account){ await MCQDB.loadForAccount(State.account).catch(()=>{}); }
+  renderStaff();
+}
+window.staffImportOpen=staffImportOpen; window.staffImportFile=staffImportFile; window.staffImportPreview=staffImportPreview; window.staffImportRun=staffImportRun;
 
 /* ============================================================ JOB SCHEDULE — duties per department + weekly roster */
 const JOB_DUTIES={

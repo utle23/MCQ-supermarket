@@ -538,6 +538,50 @@ def _store_staff_by_email(conn, store, email):
             return {'staff_id': r['id'], 'name': d.get('name') or '', 'store': store, 'data': d}
     return None
 
+def bulk_import_staff(rows, allowed_stores=None):
+    """Import staff from a parsed CSV. rows = [{name,store,email,role,dept,dob}].
+    Dedupe by email (existing DB + within the batch); skip rows for stores not allowed.
+    Returns {added:[...], skipped:[...], errors:[...]} — the server is the source of truth."""
+    conn = connect()
+    try:
+        # existing emails + the current max E#### id (staff ids continue that series)
+        have = set(); maxE = 0
+        for r in conn.execute('SELECT id,data_json FROM staff').fetchall():
+            try: d = json.loads(r['data_json'] or '{}')
+            except Exception: d = {}
+            e = str(d.get('email') or '').strip().lower()
+            if e: have.add(e)
+            rid = str(r['id'] or '')
+            if rid.startswith('E') and rid[1:].isdigit(): maxE = max(maxE, int(rid[1:]))
+        added, skipped, errors = [], [], []
+        seen_batch = set()
+        for raw in (rows or []):
+            name = str(raw.get('name') or '').strip()
+            store = str(raw.get('store') or '').strip()
+            email = str(raw.get('email') or '').strip()
+            el = email.lower()
+            if not name or not email or '@' not in email:
+                errors.append({'name': name, 'email': email, 'reason': 'missing name or valid email'}); continue
+            if store not in STORES:
+                errors.append({'name': name, 'email': email, 'reason': 'unknown store "%s"' % store}); continue
+            if allowed_stores is not None and store not in allowed_stores:
+                errors.append({'name': name, 'email': email, 'reason': 'not allowed to import into %s' % store}); continue
+            if el in have or el in seen_batch:
+                skipped.append({'name': name, 'email': email, 'store': store, 'reason': 'email already exists'}); continue
+            maxE += 1; sid = 'E%04d' % maxE
+            rec = {'id': sid, 'name': name, 'email': email, 'store': store, 'active': 1,
+                   'role': str(raw.get('role') or '').strip(), 'classification': str(raw.get('role') or '').strip(),
+                   'dept': str(raw.get('dept') or '').strip(), 'dob': str(raw.get('dob') or '').strip(),
+                   'start': now()[:10], 'basis': 'Individual', 'category': '', 'estatus': ''}
+            conn.execute('INSERT INTO staff(id,store_id,data_json) VALUES(?,?,?) ON CONFLICT (store_id,id) DO UPDATE SET data_json=excluded.data_json',
+                         (sid, store, json.dumps(rec)))
+            have.add(el); seen_batch.add(el)
+            added.append({'id': sid, 'name': name, 'email': email, 'store': store})
+        conn.commit()
+        return {'added': added, 'skipped': skipped, 'errors': errors}
+    finally:
+        conn.close()
+
 def _staff_by_email_any(conn, email):
     """Find a staff member by email across ALL stores (store is no longer picked at activation).
     Real stores win over 'Demo' (Demo mirrors real staff as sample data)."""
