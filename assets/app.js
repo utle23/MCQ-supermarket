@@ -113,7 +113,7 @@ function showLogin(notice){
       <h1 class="login-h">Welcome back</h1>
       <p class="login-p">Sign in to your store operations workspace.</p>
       ${notice?`<div class="login-note"><i>⏱️</i> ${esc(notice)}</div>`:''}
-      <label class="login-lbl">ID <span class="login-opt" id="login-id-opt">· your 4-digit personal ID</span></label>
+      <label class="login-lbl">ID <span class="login-opt" id="login-id-opt">· your 4-digit Staff ID</span></label>
       <input id="login-id" class="login-input" inputmode="numeric" maxlength="4" placeholder="e.g. 2345" autocomplete="off">
       <label class="login-lbl">Password</label>
       <div class="login-pw">
@@ -202,6 +202,11 @@ async function actLookup(){
     <div class="act-step-dots"><span class="on"></span><span class="on"></span><span></span></div>
     <div class="act-badge act-ok">👋</div><h2 class="act-h">We found you, ${esc((r.name||'').split(' ')[0].toLowerCase().replace(/^./,c=>c.toUpperCase())||'friend')}!</h2>
     <p class="act-p"><b>${esc(r.name)}</b>${r.store?` · 🏪 MCQ ${esc(r.store)}`:''}</p>
+    <div class="act-access">
+      <span class="act-chip">${esc(({employee:'Staff',staff:'Department Lead',admin:'Manager',super:'Super Admin'})[r.role]||'Staff')}</span>
+      ${r.role==='staff'&&r.department?`<span class="act-chip" style="background:#7c3aed">👥 Lead of ${esc(r.department)}</span>`:''}
+      ${r.store?`<span class="act-chip act-chip-store">🏪 ${esc(r.store)}</span>`:''}
+    </div>
     ${r.id?`<div class="act-id-box"><span class="act-id-lbl">Your ID</span><span class="act-id">${esc(r.id)}</span></div>
     <p class="act-p" style="margin-top:-6px">This is your permanent sign-in ID. Now create your password to finish:</p>`:'<p class="act-p">Now create your own password to finish.</p>'}
     <label class="login-lbl">Create a password</label>

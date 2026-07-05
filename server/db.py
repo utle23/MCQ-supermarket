@@ -501,14 +501,15 @@ def activate_lookup(email, store=None):
     always comes back to the same reserved ID."""
     conn = connect()
     try:
-        acc = conn.execute('SELECT id,role,store_id,activated,name FROM accounts WHERE lower(email)=lower(?)',
+        acc = conn.execute('SELECT id,role,store_id,activated,name,department FROM accounts WHERE lower(email)=lower(?)',
                            (str(email or '').strip(),)).fetchone()
         if acc and acc['activated']:
             return {'already': True, 'id': acc['id'], 'role': acc['role'], 'tab': ACCT_TABS.get(acc['role'], 'Staff')}
         if acc:   # pre-assigned by the account admin (or reserved by an earlier lookup)
             return {'already': False, 'match': True, 'found': True, 'id': acc['id'],
                     'role': acc['role'], 'tab': ACCT_TABS.get(acc['role'], 'Staff'),
-                    'name': acc['name'] or '', 'store': acc['store_id'] or ''}
+                    'name': acc['name'] or '', 'store': acc['store_id'] or '',
+                    'department': acc['department'] or ''}
         hit = _staff_by_email_any(conn, email)
         if hit:   # reserve the account NOW so the ID can be shown before the password is set
             aid = _gen_account_id(conn, hit['store'])
@@ -518,7 +519,8 @@ def activate_lookup(email, store=None):
                           str(email or '').strip(), now(), now()))
             conn.commit()
             return {'already': False, 'match': True, 'found': True, 'id': aid,
-                    'role': 'employee', 'tab': 'Staff', 'name': hit['name'], 'store': hit['store']}
+                    'role': 'employee', 'tab': 'Staff', 'name': hit['name'], 'store': hit['store'],
+                    'department': ''}
         return {'already': False, 'match': False, 'found': False, 'name': '', 'store': ''}
     finally:
         conn.close()
