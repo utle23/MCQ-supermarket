@@ -51,7 +51,9 @@ def db_safe(s):
 @api.route('/api/health')
 def health():
     size = os.path.getsize(db.DB_PATH) if os.path.exists(db.DB_PATH) else 0
-    return jsonify(ok=True, time=db.now(), db_bytes=size, stores=len(db.STORES))
+    # rev: which commit is live (Render sets RENDER_GIT_COMMIT) — lets deploys be confirmed
+    return jsonify(ok=True, time=db.now(), db_bytes=size, stores=len(db.STORES),
+                   rev=(os.environ.get('RENDER_GIT_COMMIT') or '')[:8] or None)
 
 # ---------- 9:30 PM daily digest, triggerable by an external cron (cron-job.org) ----------
 # Protect with a shared secret in the URL: /api/cron/daily-digest?key=<CRON_SECRET>
