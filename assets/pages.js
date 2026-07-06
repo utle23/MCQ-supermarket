@@ -3853,6 +3853,9 @@ function renderEmail(){
   const chkDepts=(DB.checklist&&DB.checklist.depts)||[], dm=(DB.checklist&&DB.checklist.deptMeta)||{};
   DB.checklistEmailRoutes=DB.checklistEmailRoutes||{}; DB.issueEmailRoutes=DB.issueEmailRoutes||{};
   const relayOn=!!window.MCQ_EMAIL_RELAY;
+  // Super: one store selector drives the whole page (department leads + add-staff list) so Khoi
+  // can pick any store and set up that store's per-department notification names + emails.
+  const leadStore=isSuper()?(State.emailLeadStore||DB.stores[0]):State.branch;
   // ONE unified recipient list — each person: name/email + a Customise panel covering
   // Violation + Report-Issue categories + Checklist departments (no more split sections).
   const unifiedList=recips.map(r=>{
@@ -3876,11 +3879,10 @@ function renderEmail(){
         <button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="recipDel('${r.key}')" title="Delete recipient">🗑</button>
       </div>${dd}</div>`;
   }).join('');
-  // staff (with an email) you can add as recipients — default to violation alerts only
-  const staffWithEmail=(DB.staff||[]).filter(s=>s.email && (isSuper()?(!State.superStore||State.superStore==='ALL'||s.store===State.superStore):s.store===State.branch));
+  // staff (with an email) you can add as recipients — scoped to the store Khoi is viewing
+  const staffWithEmail=(DB.staff||[]).filter(s=>s.email && (isSuper()?s.store===leadStore:s.store===State.branch));
   const staffAdd=`<span class="recip-staff-add"><input class="login-input" list="recip-staff-dl" placeholder="＋ Add staff by name…" onchange="recipAddStaffPick(this.value);this.value='';" style="min-width:230px"><datalist id="recip-staff-dl">${staffWithEmail.map(s=>`<option value="${esc(s.name)}" label="${esc(s.email)}${isSuper()&&s.store?' · '+esc(s.store):''}"></option>`).join('')}</datalist></span>`;
-  // department-lead block (per store)
-  const leadStore=isSuper()?(State.emailLeadStore||DB.stores[0]):State.branch;
+  // department-lead block (per store) — store chosen by the top selector
   const leadStorePicker=isSuper()?`<select class="login-input" style="max-width:220px" onchange="emailLeadStore(this.value)">${(DB.stores||[]).map(s=>`<option ${s===leadStore?'selected':''}>${esc(s)}</option>`).join('')}</select>`:'';
   // leads assigned through Account access (role Dept Lead + department) — synced automatically
   window.__deptLeads=window.__deptLeads||{};
@@ -3911,6 +3913,9 @@ function renderEmail(){
   const digestCard=isSuper()?`<div class="card" style="margin-bottom:16px"><div class="card-head"><h3><i class="fas fa-clock"></i>&nbsp; Daily summary recipients (Super Admin)</h3><span class="ch-sub">Automatic 9 PM all-store PDF digest is emailed to these addresses</span></div>
       <div class="card-pad" id="digest-recips"><div class="fhint">Loading…</div></div></div>`:'';
   $('#content').innerHTML=`<div class="page-head"><div class="ph-ic" style="background:#e8f1fe">✉️</div><div><h2>Email Notifications</h2><p>Emails send automatically in the background via Brevo. Set who receives what below.</p></div><div class="ph-actions">${isSuper()?`<button class="btn sm primary" onclick="storeEmailCompose()"><i class="fas fa-envelope-open-text"></i>&nbsp; Email a store</button>`:''}<button class="btn sm" onclick="emailHistoryOpen()"><i class="fas fa-clock-rotate-left"></i>&nbsp; Sent history</button><button class="btn sm primary" onclick="emailTest()"><i class="fas fa-paper-plane"></i>&nbsp; Send test</button></div></div>
+    ${isSuper()?`<div class="email-storebar"><span class="esb-label"><i class="fas fa-store"></i> Set up notifications for store</span>
+        <select class="esb-select" onchange="emailLeadStore(this.value)">${(DB.stores||[]).map(s=>`<option ${s===leadStore?'selected':''}>${esc(s)}</option>`).join('')}</select>
+        <span class="esb-hint">Pick a store to view &amp; set its department leaders, names and emails</span></div>`:''}
     <div class="card" style="margin-bottom:16px"><div class="card-head"><h3><i class="fas fa-paper-plane"></i>&nbsp; Sending</h3><span class="ch-sub">Automatic · Brevo (server-side key)</span></div>
       <div class="card-pad"><div class="grid2">
         <div class="field"><label>From name</label><input value="${esc(cfg.fromName||'')}" oninput="emailCfgSet('fromName',this.value)" placeholder="MCQ Supermarket Notification"></div>
@@ -3925,8 +3930,8 @@ function renderEmail(){
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px"><button class="btn sm primary" onclick="recipAdd()">＋ Add recipient</button>${staffAdd}</div>
         <div class="fhint" style="margin-top:10px">New recipients start with <b>no alerts</b> — tap <b>Customise</b> to choose exactly what they get (<b>Violation</b>, Report-Issue categories, Checklist departments), or use <b>Select all</b> inside to enable everything at once. Changes sync automatically to every device.</div>
       </div></div>
-    <div class="section-title" style="margin-top:24px">Department leaders · verified-note recipients ${leadStorePicker}</div>
-    <p class="fhint" style="margin:-4px 0 12px">When a manager verifies a checklist with an assessment note, the leader(s) below for that department receive a branded PDF report. ${isSuper()?'Pick a store above — each store has its own leaders.':'These are for <b>'+esc(State.branch)+'</b>.'}</p>
+    <div class="section-title" style="margin-top:24px">👥 Department leaders — ${isSuper()?`🏪 <b style="color:var(--accent)">${esc(leadStore)}</b>`:('MCQ '+esc(State.branch))} ${leadStorePicker}</div>
+    <p class="fhint" style="margin:-4px 0 12px">Set a name + email for each department here — they receive the branded verified-checklist PDF for that department. Anyone granted <b>Dept Lead</b> access is added automatically (🔗 from access). ${isSuper()?'Switch store using the selector at the top or here — each store is independent.':'These are for <b>'+esc(State.branch)+'</b>.'}</p>
     ${leadBlocks||'<div class="empty">No checklist departments.</div>'}
     <div id="email-log-modal" class="lb-overlay" style="display:none" onclick="if(event.target===this)emailHistoryClose()"><div class="lb-panel" onclick="event.stopPropagation()"><div class="card-head" style="padding:14px 16px"><h3>📜 Sent history</h3><button class="x-btn" onclick="emailHistoryClose()">✕</button></div><div id="email-log-body" class="card-pad" style="max-height:60vh;overflow:auto"></div></div></div>`;
   if(isSuper()) digestRender();

@@ -1655,3 +1655,15 @@ html,body{max-width:100%}
 .mr-task.has-mnote{border-left:3px solid #0f766e}
 .mr-mnote-ro{margin-top:8px;background:#e7f7f0;border:1px solid #b6ecd6;border-radius:9px;padding:7px 11px;font-size:12.5px;color:#065f46}
 @media(prefers-color-scheme:dark){.mr-mnote-ro{background:#12241a;border-color:#1f3a2a;color:#7fdcae}}
+
+/* ============================================================ EMAIL NOTIFICATIONS — store selector bar */
+.email-storebar{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:0 0 16px;padding:14px 18px;border-radius:14px;
+  background:linear-gradient(135deg,#e8f1fe,#eef7f2);border:1.5px solid #c3ddf7}
+.esb-label{font-weight:800;font-size:14px;color:#1565c0;display:inline-flex;align-items:center;gap:8px}
+.esb-select{border:1.5px solid #90c2f0;background:#fff;border-radius:11px;padding:9px 15px;font:inherit;font-size:15px;font-weight:800;color:#0b3f74;cursor:pointer;min-width:190px}
+.esb-select:focus{outline:none;border-color:#1565c0;box-shadow:0 0 0 3px rgba(21,101,192,.16)}
+.esb-hint{font-size:12.5px;color:#3e6ea5;opacity:.9}
+@media(prefers-color-scheme:dark){
+  .email-storebar{background:linear-gradient(135deg,#141d2e,#12241a);border-color:#274c6e}
+  .esb-label{color:#7ca9f8}.esb-select{background:#1f1913;border-color:#3a5878;color:#cfe0f5}.esb-hint{color:#8fb0d8}
+}
