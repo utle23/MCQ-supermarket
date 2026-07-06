@@ -1647,3 +1647,11 @@ html,body{max-width:100%}
 .seen-dot{width:9px;height:9px;border-radius:50%;background:var(--line-strong);flex:none}
 .seen-dot.ok{background:#0e9f6e}
 @media(max-width:560px){.seen-grid{grid-template-columns:1fr}}
+
+/* ============================================================ VERIFY: per-task manager note */
+.mr-tnote{width:100%;margin-top:8px;border:1.3px solid var(--line,#e4e2df);border-radius:9px;padding:8px 11px;font:inherit;font-size:12.5px;background:var(--surface,#fff);color:var(--ink,#241d17)}
+.mr-tnote:focus{outline:none;border-color:#0f766e;box-shadow:0 0 0 3px rgba(15,118,110,.14)}
+.mr-tnote::placeholder{color:var(--ink-faint,#9a8b7d)}
+.mr-task.has-mnote{border-left:3px solid #0f766e}
+.mr-mnote-ro{margin-top:8px;background:#e7f7f0;border:1px solid #b6ecd6;border-radius:9px;padding:7px 11px;font-size:12.5px;color:#065f46}
+@media(prefers-color-scheme:dark){.mr-mnote-ro{background:#12241a;border-color:#1f3a2a;color:#7fdcae}}

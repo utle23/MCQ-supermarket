@@ -3258,26 +3258,32 @@ function mgrDrawVerifyPhotos(){ const el=document.getElementById('mgr-vphotos');
   el.innerHTML=(State.mgrV.photos||[]).map(p=>`<span style="position:relative;display:inline-block"><img src="${imgSrc(p)}" onclick="openLightbox('${ckJS(imgSrc(p))}')" style="cursor:zoom-in"><span class="ck-rm" onclick="mgrRmVerifyPhoto('${ckJS(p)}')">✕</span></span>`).join(''); }
 /* ---- verify-note DRAFT: survives closing the drawer; cleared only when Verified ---- */
 function mgrVfKey(s){ const store=(s&&s.store)||State.branch; return 'mcq_vfdraft_'+dataStoreId(store)+'_'+((s&&s.id)||State.mgrV&&State.mgrV.id||''); }
+// manager's per-task note (beside each task in the verify drawer)
+function mgrTaskNote(idx,val){ State.mgrV=State.mgrV||{}; State.mgrV.taskNotes=State.mgrV.taskNotes||{};
+  if(String(val||'').trim()) State.mgrV.taskNotes[idx]=String(val); else delete State.mgrV.taskNotes[idx];
+  if(State.mgrV.id) mgrSaveVerifyDraft(State.mgrV.id); }
+window.mgrTaskNote=mgrTaskNote;
 function mgrSaveVerifyDraft(id){
   const s=mgrSubs().find(x=>x.id===id); if(!s||s.status==='Verified') return;
   const a=mgrAssessment();
-  try{ localStorage.setItem(mgrVfKey(s), JSON.stringify({verifiedBy:a.verifiedBy,overallResult:a.overallResult,issuesFound:a.issuesFound,actionResponsible:a.actionResponsible,verifyNote:a.verifyNote,photos:a.verifyPhotos,ts:Date.now()})); }catch(e){}
+  try{ localStorage.setItem(mgrVfKey(s), JSON.stringify({verifiedBy:a.verifiedBy,overallResult:a.overallResult,issuesFound:a.issuesFound,actionResponsible:a.actionResponsible,verifyNote:a.verifyNote,photos:a.verifyPhotos,taskNotes:a.taskNotes,ts:Date.now()})); }catch(e){}
 }
 function mgrLoadVerifyDraft(s){ try{ const raw=localStorage.getItem(mgrVfKey(s)); if(!raw) return null; const d=JSON.parse(raw);
     // only treat as a draft if it actually has content
-    if(d&&(d.verifyNote||d.issuesFound||d.actionResponsible||(d.overallResult&&d.overallResult!=='')||(d.photos&&d.photos.length))) return d; }catch(e){} return null; }
+    if(d&&(d.verifyNote||d.issuesFound||d.actionResponsible||(d.overallResult&&d.overallResult!=='')||(d.photos&&d.photos.length)||(d.taskNotes&&Object.keys(d.taskNotes).length))) return d; }catch(e){} return null; }
 function mgrClearVerifyDraft(s){ try{ localStorage.removeItem(mgrVfKey(s)); }catch(e){} }
 function mgrAssessment(){
   const g=id=>{ const el=document.getElementById(id); return el?String(el.value||'').trim():''; };
   return { verifiedBy:g('mgr-by')||((State.account&&State.account.name)||'Manager'), overallResult:g('mgr-overall'),
     issuesFound:g('mgr-issues'), actionResponsible:g('mgr-action'), verifyNote:g('mgr-note'),
-    verifyPhotos:((State.mgrV&&State.mgrV.photos)||[]).slice() };
+    verifyPhotos:((State.mgrV&&State.mgrV.photos)||[]).slice(),
+    taskNotes:Object.assign({}, (State.mgrV&&State.mgrV.taskNotes)||{}) };
 }
 function mgrVerify(id){
   const a=mgrAssessment();
   const s=mgrSubs().find(x=>x.id===id);
   if(!mgrSubInScope(s)){ toast('This checklist belongs to another store'); return; }
-  const apply=(o)=>{ o.status='Verified'; o.verifyNote=a.verifyNote; o.verifiedBy=a.verifiedBy; o.overallResult=a.overallResult; o.issuesFound=a.issuesFound; o.actionResponsible=a.actionResponsible; o.verifyPhotos=a.verifyPhotos; o.verifiedAt=new Date().toISOString(); };
+  const apply=(o)=>{ o.status='Verified'; o.verifyNote=a.verifyNote; o.verifiedBy=a.verifiedBy; o.overallResult=a.overallResult; o.issuesFound=a.issuesFound; o.actionResponsible=a.actionResponsible; o.verifyPhotos=a.verifyPhotos; o.taskNotes=a.taskNotes; o.verifiedAt=new Date().toISOString(); };
   if(s) apply(s);
   const real=(DB.checklistSubs||[]).find(x=>x.id===id && x.store===s.store);
   if(real){ const before=JSON.parse(JSON.stringify(real)); apply(real); auditLog('verify','checklistSubmission',real.id,real.store,before,real,a.verifyNote); if(window.persist) window.persist(); }
@@ -3319,9 +3325,17 @@ ${a.actionResponsible||'—'}
 ${a.verifyNote?('Manager note:\n'+a.verifyNote):''}`.trim();
 }
 function mgrTaskNotes(s){
-  // every task the staff wrote a note on — the "look here" list for the department lead
-  return mgrSubTasks(s).filter(t=>String(t.note||'').trim())
-    .map(t=>({task:t.task, area:t.area, done:t.done, note:String(t.note).trim()}));
+  // the "look here" list for the department lead: every task that carries a note — either the
+  // staff's note OR the manager's per-task note added during verification (or both).
+  const mn=(State.mgrV&&State.mgrV.id===s.id?State.mgrV.taskNotes:null)||s.taskNotes||{};
+  const out=[];
+  mgrSubTasks(s).forEach((t,idx)=>{
+    const staff=String(t.note||'').trim(), mgr=String(mn[idx]||'').trim();
+    if(!staff && !mgr) return;
+    const parts=[]; if(staff) parts.push('staff: '+staff); if(mgr) parts.push('manager: '+mgr);
+    out.push({task:t.task, area:t.area, done:t.done, note:parts.join(' · ')});
+  });
+  return out;
 }
 async function mgrSendLeadPDF(s,a,leads){
   const notes=mgrTaskNotes(s);
@@ -3401,7 +3415,8 @@ function mgrReview(id){
   // restore an in-progress draft (saved if the manager closed the drawer without verifying)
   const draft=s.status==='Verified'?null:mgrLoadVerifyDraft(s);
   const existingNote=(draft&&draft.verifyNote)||s.verifyNote||'';
-  State.mgrV={id:s.id, photos:((draft&&draft.photos)||s.verifyPhotos||[]).slice()};
+  State.mgrV={id:s.id, photos:((draft&&draft.photos)||s.verifyPhotos||[]).slice(),
+    taskNotes:Object.assign({}, (draft&&draft.taskNotes)||s.taskNotes||{})};
   // managers/admins for this store to populate "Verified by"
   const mgrNames=[]; const seenN={};
   (DB.staff||[]).filter(x=>x.store===s.store && (staffIsAdmin(x)||/manager|supervisor/i.test(x.role||''))).forEach(x=>{ if(x.name&&!seenN[x.name]){seenN[x.name]=1;mgrNames.push(x.name);} });
@@ -3409,16 +3424,22 @@ function mgrReview(id){
   const verifiedBy=(draft&&draft.verifiedBy)||s.verifiedBy||curName, overall=(draft&&draft.overallResult)||s.overallResult||'', issues=(draft&&draft.issuesFound)||s.issuesFound||'', action=(draft&&draft.actionResponsible)||s.actionResponsible||'';
   const disabled=s.status==='Verified'?'disabled':'';
   if(draft) setTimeout(()=>toast('📝 Draft restored — your unsaved notes are back'),300);
-  const rows=tasks.map(t=>{
-    // photos + note SIDE-BY-SIDE: when a task has evidence photos, the staff note sits right
-    // next to them so the manager reads both at a glance
+  const mnotes=(State.mgrV&&State.mgrV.taskNotes)||{};
+  const rows=tasks.map((t,idx)=>{
+    // staff note (read-only) sits beside its photos; the manager gets an editable note box on
+    // EVERY task to jot a comment right next to it — collected into the PDF/inbox on Verify.
     const noteHtml=t.note?`<div class="mr-note">📝 ${esc(t.note)}</div>`:'';
     const photoHtml=t.photos.length?`<div class="mr-photos">${t.photos.map(p=>`<img src="${imgSrc(p)}" onclick="openLightbox('${ckJS(imgSrc(p))}')" style="cursor:zoom-in">`).join('')}</div>`:'';
-    const body=t.photos.length?`<div class="mr-body">${photoHtml}${noteHtml}</div>`
+    const evidence=t.photos.length?`<div class="mr-body">${photoHtml}${noteHtml}</div>`
       :(noteHtml||(t.photoReq&&!t.done?`<div class="mr-nophoto">📷 Photo required — not attached</div>`:''));
-    return `<div class="mr-task ${t.done?'done':'todo'}">
+    const mnote=mnotes[idx]||'';
+    const noteInput=s.status==='Verified'
+      ? (mnote?`<div class="mr-mnote-ro">🗒️ ${esc(mnote)}</div>`:'')
+      : `<input class="mr-tnote" value="${esc(mnote)}" placeholder="🗒️ Add your note for this task…" oninput="mgrTaskNote(${idx},this.value)">`;
+    return `<div class="mr-task ${t.done?'done':'todo'}${mnote?' has-mnote':''}">
       <div class="mr-tk"><span class="mr-check">${t.done?'✓':'○'}</span><div class="mr-name">${esc(t.task)}<small>${esc(t.area)}</small></div>${t.temp?`<span class="badge ${t.temp.ok?'ok':'warn'}">${esc(t.temp.label)}</span>`:''}</div>
-      ${body}
+      ${evidence}
+      ${noteInput}
     </div>`; }).join('');
   const subTime=String(s.created||'').slice(11,16);
   $('#drawer').innerHTML=`<div class="drawer-head"><div class="dh-ic" style="background:${meta.color}1f;color:${meta.color}">✅</div>
