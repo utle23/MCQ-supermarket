@@ -9,10 +9,11 @@ function photoSpec(p){
   if(p[0]==='O'){ const n=p.slice(1); return {req:false,max:n?+n:null}; }
   return null;
 }
-function photoChip(ps){
+function photoChip(ps, isTemp){
   if(!ps) return '';
+  if(isTemp) return `<span class="ev-chip ev-opt">📷 Optional · photo to auto-read, or just type °C</span>`;
   if(ps.req) return `<span class="ev-chip ev-req">📷 Required · ${ps.min}-${ps.max}</span>`;
-  return `<span class="ev-chip ev-req">📷 Required before submit${ps.max?' · max '+ps.max:''}</span>`;
+  return `<span class="ev-chip ev-opt">📷 Optional${ps.max?' · up to '+ps.max:''}</span>`;
 }
 
 /* ============================================================ STAFF HOME (simplified, mobile-first) */
@@ -1165,11 +1166,13 @@ function ckDraw(){
           if(r.meta.temp && st.defrosting){
             photoHtml=`<div class="ck-photos locked"><div class="ck-photos-h"><span class="ev-chip ev-opt">Defrosting</span><span class="ck-lock">Photo capture locked while defrosting</span></div></div>`;
           }else{
-            const need=r.photo.req?r.photo.min:1, have=(st.photos||[]).length;
+            // temperature photo is OPTIONAL (type °C instead) — only a truly required photo task shows a x/need counter
+            const need=(r.meta.temp||!r.photo.req)?0:r.photo.min, have=(st.photos||[]).length;
             const cap=r.meta.temp?(r.photo.max||1):Math.max(r.photo.max||5,5);   // allow up to 5 photos for normal tasks
             let slots=(st.photos||[]).map(u=>`<span class="ck-slot filled"><img class="ck-slot-img" src="${imgSrc(u)}"><span class="ck-rm" onclick="ckRmPhoto(event,${r.i},'${u}')">✕</span></span>`).join('');
-            if(have<cap) slots+=`<label class="ck-slot"><input type="file" accept="image/*" onchange="ckPhoto(this,${r.i})"><span class="ck-slot-empty">📷<small>${r.meta.temp?'AI read':'Photo'}</small></span></label>`;
-            photoHtml=`<div class="ck-photos" id="ck-photo-${r.i}"><div class="ck-photos-h">${photoChip(r.photo)} <span class="ck-pc ${have>=need?'ok':''}">${have}/${need}</span></div><div class="ck-slots">${slots}</div></div>`;
+            if(have<cap) slots+=`<label class="ck-slot"><input type="file" accept="image/*" onchange="ckPhoto(this,${r.i})"><span class="ck-slot-empty">📷<small>${r.meta.temp?'Temp':'Photo'}</small></span></label>`;
+            const counter=need>0?`<span class="ck-pc ${have>=need?'ok':''}">${have}/${need}</span>`:(have?`<span class="ck-pc ok">${have} 📷</span>`:'');
+            photoHtml=`<div class="ck-photos" id="ck-photo-${r.i}"><div class="ck-photos-h">${photoChip(r.photo, r.meta.temp)} ${counter}</div><div class="ck-slots">${slots}</div></div>`;
           }
         }
         html+=`<div class="ck-task ${done?'done':''}" id="ck-row-${r.i}" ${ckCanBuild()?`ondblclick="ckEditTask(${r.i})" title="Double-click to edit / delete"`:''}>
@@ -1224,8 +1227,8 @@ function ckProgress(){
   const rows=ckList(); let done=0,total=rows.length,preq=0,pdone=0,tok=0,tbad=0,tscan=0;
   rows.forEach(r=>{
     const st=State.chk.state[r.i]||{}; if(st.done)done++;
-    const skipPhoto=r.meta.temp&&st.defrosting;
-    if(r.photo&&!skipPhoto){preq++; if((st.photos||[]).length>=1)pdone++;}
+    // only truly-required photo tasks count toward "photo tasks" (temp photos are optional)
+    if(r.photo&&r.photo.req&&!r.meta.temp){preq++; if((st.photos||[]).length>=1)pdone++;}
     if(r.meta.temp&&st.temp){ if(st.temp.inRange) tok++; else tbad++; }
     if(r.meta.temp&&st.aiStatus==='scanning') tscan++;
   });
