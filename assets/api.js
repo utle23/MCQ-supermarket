@@ -313,8 +313,30 @@
       .then(function(j){ return (j&&j.ok)?{ok:true,id:j.id||id}:{ok:false}; })
       .catch(function(){ return {ok:false}; });
   };
-  // batch photo-driven re-renders: many images loading in a burst → ONE re-render, not N (smooth)
-  var _photoRR; function photoRerenderSoon(){ clearTimeout(_photoRR); _photoRR=setTimeout(function(){ if(FB.rerenderApp) FB.rerenderApp(); }, 180); }
+  // A photo arriving must NEVER rebuild the page or an open overlay — rebuilds reset the
+  // scroll position and feel like violent jank. Instead every waiting <img data-pref="…">
+  // is patched IN PLACE the moment its photo lands; a full repaint happens at most every
+  // 1.2s and never while a full-screen overlay (verify studio / history detail) is open.
+  var _SVG_PLACEHOLDER=/^data:image\/svg/;
+  window.patchPendingImgs=function(){
+    try{
+      var imgs=document.querySelectorAll('img[data-pref]');
+      for(var i=0;i<imgs.length;i++){
+        var el=imgs[i], ref=el.getAttribute('data-pref'), v=PS[ref];
+        if(v && v!==PHOTO_WAIT_IMG && _SVG_PLACEHOLDER.test(el.getAttribute('src')||'')) el.src=v;
+      }
+    }catch(e){}
+  };
+  var _photoRR;
+  function photoRerenderSoon(){
+    try{ window.patchPendingImgs(); }catch(e){}
+    clearTimeout(_photoRR);
+    _photoRR=setTimeout(function(){
+      try{ window.patchPendingImgs(); }catch(e){}
+      if(document.getElementById('mv-ov')) return;      // overlay open → in-place patching only
+      if(FB.rerenderApp) FB.rerenderApp();
+    }, 1200);
+  }
   // photos that keep failing (e.g. the upload from another device hasn't landed yet) are
   // paused for a while instead of re-fetching on every render — the UI shows a clean
   // "photo syncing" tile instead of an eternal "loading…" box, and retries later.

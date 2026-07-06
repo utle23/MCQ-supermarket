@@ -308,10 +308,8 @@
   }
   function rerenderApp(){
     try{ if(window.State && State.account && typeof render==='function'){ render(); if(typeof buildSidebar==='function') buildSidebar(); if(typeof buildTopbar==='function') buildTopbar();
-      // refresh an open overlay (verify studio / history detail) so newly-downloaded photos
-      // replace their loading tiles — but never while someone is typing inside it
-      const ov=document.getElementById('mv-ov');
-      if(State._overlayRefresh && ov && !ov.contains(document.activeElement)){ try{ State._overlayRefresh(); }catch(e){} }
+      // photos inside an open overlay are patched in place — never rebuilt (scroll stays put)
+      if(window.patchPendingImgs) window.patchPendingImgs();
     } }catch(e){}
   }
   function subscribeStore(store){

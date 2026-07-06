@@ -585,7 +585,7 @@ function startLiveRefresh(){
   _liveTimer=setInterval(()=>{
     if(!State.account || !(isSuper()||isBa()) || !(window.MCQDB&&MCQDB.loadForAccount)) return;
     const ae=document.activeElement, typing=ae&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName||'');
-    const busy=$('.drawer.open') || [...document.querySelectorAll('.lb-overlay,.ck-block-ov,.ck-success-ov,#email-log-modal,#mgr-rec-modal')].some(e=>e && e.style.display && e.style.display!=='none');
+    const busy=$('.drawer.open') || document.getElementById('mv-ov') || [...document.querySelectorAll('.lb-overlay,.ck-block-ov,.ck-success-ov,#email-log-modal,#mgr-rec-modal')].some(e=>e && e.style.display && e.style.display!=='none');
     if(typing||busy) return;   // never interrupt active editing / an open dialog
     MCQDB.loadForAccount(State.account).then(()=>{
       if(!State.account || !(isSuper()||isBa())) return;
@@ -789,7 +789,11 @@ function render(){
   // (photo arrivals, live refresh, WS events) must not yank an open drawer / verify
   // screen / history detail away (that was the "opens then closes itself" bug)
   const _rt=(State.route.mod||'')+'/'+(State.route.tab||'');
-  if(State._renderedRoute!==_rt){ closeDrawer(); State._renderedRoute=_rt; }
+  const _sameRoute=State._renderedRoute===_rt;
+  if(!_sameRoute){ closeDrawer(); State._renderedRoute=_rt; }
+  // background repaint of the SAME page → put the scroll back where the user was
+  if(_sameRoute){ const _se=document.scrollingElement; const _sy=_se?_se.scrollTop:0;
+    if(_sy>0) requestAnimationFrame(()=>{ try{ document.scrollingElement.scrollTop=_sy; }catch(e){} }); }
   const mod=State.route.mod;
   buildSidebar();
   refreshBell();
@@ -835,6 +839,7 @@ function renderHome(){
   const feed = recentFeed().map(f=>`<div class="feed-row"><div class="feed-ic" style="background:${soft(f.accent)};color:${f.accent}">${f.icon}</div>
     <div class="feed-main"><div class="fm-t">${esc(f.title)}</div><div class="fm-s">${esc(f.sub)}</div></div><div class="feed-time">${esc(f.time)}</div></div>`).join('');
   $('#content').innerHTML = `
+    ${!isSuper()&&window.todoFlowHTML?todoFlowHTML():''}
     <div class="hero"><div class="glow">${isAdmin()?'🏢':'🧑‍💼'}</div>
       <h2>Hi, ${esc(u.name.split(' ')[0])} 👋</h2>
       <p>${isSuper()?'Cross-store command centre — operations, staff, compliance and people risk in real time.':isAdmin()?`MCQ ${esc(State.branch)} command centre — store operations, staff and compliance in real time.`:'Your store workspace — run checklists and log issues fast.'}</p>

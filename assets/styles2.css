@@ -1818,3 +1818,86 @@ html,body{max-width:100%}
   .hv-ro.bad{background:#450a0a;color:#fca5a5}
   .hv-bar{background:#0f1726}
 }
+
+/* smooth, contained scrolling inside the full-screen overlays (verify studio / history detail) */
+.mv-list,.mv-side{-webkit-overflow-scrolling:touch;overscroll-behavior:contain}
+.mv-body{min-height:0}
+
+/* ===================== History v2: toolbar, tabs, badges, rings ===================== */
+.hv-tool{position:sticky;top:0;z-index:5;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:10px 12px;display:flex;flex-direction:column;gap:9px;box-shadow:0 6px 18px rgba(15,23,42,.06);margin-bottom:8px}
+.hv-tabs{display:flex;gap:6px;flex-wrap:wrap}
+.hv-tab{display:flex;align-items:center;gap:7px;border:1.5px solid var(--line);background:var(--bg,#f4f6fa);color:var(--muted);border-radius:12px;padding:7px 13px;font-size:12.5px;font-weight:700;cursor:pointer;transition:.13s}
+.hv-tab .hv-tab-ic{font-size:15px}
+.hv-tab b{background:var(--surface);border:1px solid var(--line);border-radius:99px;padding:1px 8px;font-size:11px;color:var(--muted);font-variant-numeric:tabular-nums}
+.hv-tab.on{background:#0e9f6e;border-color:#0e9f6e;color:#fff}
+.hv-tab.on b{background:rgba(255,255,255,.2);border-color:transparent;color:#fff}
+.hv-tab:not(.on):hover{border-color:#94d8c3;transform:translateY(-1px)}
+.hv-filters{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
+.hv-f{display:flex;align-items:center;gap:6px;border:1px solid var(--line);background:var(--bg,#f4f6fa);border-radius:11px;padding:5px 10px}
+.hv-f span{font-size:13px;opacity:.8}
+.hv-f select,.hv-f input{border:0;background:transparent;font-size:12.5px;color:inherit;outline:none;min-width:0}
+.hv-f input[type=date]{width:125px}
+.hv-fsearch{flex:1;min-width:160px}
+.hv-fsearch input{width:100%}
+.hv-clear{border:1px solid #fca5a5;background:#fef2f2;color:#b91c1c;border-radius:11px;padding:5px 11px;font-size:12px;font-weight:700;cursor:pointer}
+.hv-badge{display:inline-flex;align-items:center;gap:4px;border-radius:99px;padding:2.5px 10px;font-size:10.5px;font-weight:800;white-space:nowrap}
+.hv-badge.ok{background:#dcfce7;color:#15803d}
+.hv-badge.wait{background:#fef3c7;color:#92400e}
+.hv-sess{width:34px;height:34px;flex:none;border-radius:11px;display:grid;place-items:center;font-size:17px;background:#f1f5f9}
+.hv-sess.am{background:#fef9c3}.hv-sess.md{background:#e0f2fe}.hv-sess.pm{background:#e0e7ff}
+.hv-sess.bin{background:#f1f5f9}.hv-sess.dlv{background:#dbeafe}.hv-sess.cln{background:#cffafe}
+.hv-ring{width:44px;height:44px}
+.hv-ring svg{width:44px;height:44px}
+.hv-ring circle{stroke-width:5}
+.hv-ring .fg{stroke-linecap:round}
+.hv-ring.g .fg{stroke:#16a34a}.hv-ring.g b{color:#15803d}
+.hv-ring.a .fg{stroke:#d97706}.hv-ring.a b{color:#b45309}
+.hv-ring.r .fg{stroke:#dc2626}.hv-ring.r b{color:#b91c1c}
+.hv-ring b{font-size:10.5px;font-weight:800}
+.hv-count{flex:none;text-align:center;background:var(--bg,#f4f6fa);border:1px solid var(--line);border-radius:12px;padding:5px 11px;min-width:52px}
+.hv-count b{display:block;font-size:15px;font-variant-numeric:tabular-nums}
+.hv-count small{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.5px}
+@media(max-width:640px){ .hv-tool{position:static;border-radius:14px} .hv-tab{flex:1;justify-content:center;padding:7px 8px} .hv-tab .hv-tab-lb{font-size:11px} }
+@media(prefers-color-scheme:dark){
+  .hv-badge.ok{background:rgba(34,197,94,.18);color:#4ade80}
+  .hv-badge.wait{background:rgba(245,158,11,.16);color:#fbbf24}
+  .hv-sess,.hv-sess.am,.hv-sess.md,.hv-sess.pm,.hv-sess.bin,.hv-sess.dlv,.hv-sess.cln{background:#1e293b}
+  .hv-clear{background:#450a0a;border-color:#7f1d1d;color:#fca5a5}
+  .hv-ring.g b{color:#4ade80}.hv-ring.a b{color:#fbbf24}.hv-ring.r b{color:#f87171}
+}
+
+/* ===================== "What to do today" flow (Dept Lead / Manager home) ===================== */
+.tf-wrap{background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:14px 16px;margin-bottom:16px;box-shadow:0 8px 22px rgba(15,23,42,.06)}
+.tf-head{font-weight:800;font-size:14px;margin-bottom:11px;display:flex;align-items:center;gap:8px}
+.tf-head small{color:var(--muted);font-weight:600;font-size:11.5px}
+.tf-flow{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap}
+.tf-step{flex:1;min-width:200px;display:flex;align-items:center;gap:10px;text-align:left;border:1.5px solid var(--line);background:var(--bg,#f4f6fa);border-radius:14px;padding:10px 12px;cursor:pointer;transition:.14s;position:relative}
+.tf-step:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(15,23,42,.1)}
+.tf-step.done{border-color:#86efac;background:#f0fdf4}
+.tf-step.pend{border-color:#fcd34d;background:#fffbeb}
+.tf-step.over{border-color:#fca5a5;background:#fef2f2}
+.tf-step.off{opacity:.6}
+.tf-ic{font-size:21px;flex:none}
+.tf-t{flex:1;min-width:0}
+.tf-t b{display:block;font-size:12.8px;line-height:1.2}
+.tf-t small{color:var(--muted);font-size:10.8px;line-height:1.35;display:block;margin-top:2px}
+.tf-st{flex:none;width:26px;height:26px;border-radius:99px;display:grid;place-items:center;font-weight:900;font-size:13px;background:var(--surface);border:1.5px solid var(--line);color:var(--muted)}
+.tf-step.done .tf-st{background:#16a34a;border-color:#16a34a;color:#fff}
+.tf-step.over .tf-st{background:#dc2626;border-color:#dc2626;color:#fff}
+.tf-step.pend .tf-st{background:#f59e0b;border-color:#f59e0b;color:#fff}
+.tf-arrow{align-self:center;color:var(--muted);font-weight:800;opacity:.55}
+.tf-pills{display:flex;gap:4px;flex-wrap:wrap;margin-top:2px}
+.tf-pill{background:var(--surface);border:1px solid var(--line);border-radius:99px;padding:1px 7px;font-size:9.8px;font-weight:700;color:var(--muted);white-space:nowrap}
+.tf-pill.d{background:#dcfce7;border-color:#86efac;color:#15803d}
+.tf-pill.o{background:#fee2e2;border-color:#fca5a5;color:#b91c1c}
+@media(max-width:760px){ .tf-flow{flex-direction:column} .tf-step{min-width:0} .tf-arrow{display:none} }
+@media(prefers-color-scheme:dark){
+  .tf-step.done{background:rgba(34,197,94,.1);border-color:#166534}
+  .tf-step.pend{background:rgba(245,158,11,.1);border-color:#92400e}
+  .tf-step.over{background:rgba(220,38,38,.12);border-color:#991b1b}
+  .tf-pill.d{background:rgba(34,197,94,.15);border-color:#166534;color:#4ade80}
+  .tf-pill.o{background:rgba(220,38,38,.15);border-color:#991b1b;color:#fca5a5}
+}
+/* grid children must be allowed to SHRINK, or the task list blows out past the panel and
+   gets clipped by overflow:hidden — that was the "cannot scroll to see the rest" bug */
+.mv-tasks,.mv-side{min-height:0}
