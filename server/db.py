@@ -485,6 +485,11 @@ def update_staff_profile(store, staff_id, patch):
             for k in patch: cur[k] = patch[k]
         new_store = str((patch or {}).get('store') or '') if isinstance(patch, dict) else ''
         target = new_store if (new_store and new_store in STORES and new_store != store) else store
+        # one profile per gmail per store — refuse an email another (live) profile already owns
+        if isinstance(patch, dict) and str(patch.get('email') or '').strip():
+            hit = _store_staff_by_email(conn, target, patch['email'])
+            if hit and str(hit['staff_id']) != sid and not (hit['data'].get('archived') or hit['data'].get('active') == 0):
+                return {'error': 'Another staff member in %s already uses this email' % target}
         cur['store'] = target; cur['id'] = sid
         conn.execute('INSERT INTO staff(id,store_id,data_json) VALUES(?,?,?) ON CONFLICT (store_id,id) DO UPDATE SET data_json=excluded.data_json', (sid, target, json.dumps(cur)))
         if target != store:
@@ -545,6 +550,30 @@ def _store_staff_by_email(conn, store, email):
 
 # job title shown in Staff Management for a NEW profile created from an account's access level
 STAFF_TITLE = {'admin': 'Store Manager', 'staff': 'Department Lead', 'employee': 'Team Member'}
+
+def _sync_accounts_from_staff(conn, store_id):
+    """Staff Management → Account Management (the reverse direction): after staff rows for a
+    store are written, re-link each of the store's accounts to its profile by email when the
+    link is missing/dangling, and follow profile renames into the account. The account EMAIL
+    is deliberately never auto-changed — it is the activation/login key."""
+    idx_id, idx_email = {}, {}
+    for r in conn.execute('SELECT id,data_json FROM staff WHERE store_id=?', (store_id,)).fetchall():
+        try: d = json.loads(r['data_json'] or '{}')
+        except Exception: d = {}
+        idx_id[str(r['id'])] = d
+        e = str(d.get('email') or '').strip().lower()
+        if e and e not in idx_email: idx_email[e] = (str(r['id']), d)
+    for a in conn.execute('SELECT id,staff_id,name,email FROM accounts WHERE store_id=?', (store_id,)).fetchall():
+        sid = str(a['staff_id'] or ''); d = idx_id.get(sid)
+        if d is None:
+            hit = idx_email.get(str(a['email'] or '').strip().lower())
+            if hit:
+                sid, d = hit
+                conn.execute('UPDATE accounts SET staff_id=?, updated_at=? WHERE id=?', (sid, now(), a['id']))
+        if d:
+            n = str(d.get('name') or '').strip()
+            if n and n != str(a['name'] or '').strip():
+                conn.execute('UPDATE accounts SET name=?, updated_at=? WHERE id=?', (n, now(), a['id']))
 
 def _next_staff_id(conn):
     """Next E#### staff id — continues the same global series bulk_import_staff uses."""
@@ -1797,12 +1826,31 @@ def save_state(store_id, state, user):
                     rid = str((isinstance(r, dict) and r.get('id')) or (str(m) + '#' + str(i)))
                     conn.execute('INSERT INTO records(id,store_id,module,data_json,created_at) VALUES(?,?,?,?,?) ON CONFLICT (store_id,module,id) DO UPDATE SET data_json=excluded.data_json, created_at=excluded.created_at',
                                  (rid, store_id, str(m), json.dumps(r), now()))
-        # staff (merge/upsert)
+        # staff (merge/upsert) — ONE profile per gmail per store: a second row with an email
+        # that another profile in this store already owns is dropped (or, if the owner was
+        # archived, merged onto the owner so the person is restored instead of duplicated).
         staff = state.get('staff') or []
         if isinstance(staff, list):
+            email_owner = {}
+            for r0 in conn.execute('SELECT id,data_json FROM staff WHERE store_id=?', (store_id,)).fetchall():
+                try: d0 = json.loads(r0['data_json'] or '{}')
+                except Exception: d0 = {}
+                e0 = str(d0.get('email') or '').strip().lower()
+                if e0 and e0 not in email_owner:
+                    email_owner[e0] = (str(r0['id']), bool(d0.get('archived') or d0.get('active') == 0))
             for i, s in enumerate(staff):
                 sid = str((isinstance(s, dict) and (s.get('id') or s.get('code'))) or ('s#' + str(i)))
+                e = str((s.get('email') if isinstance(s, dict) else '') or '').strip().lower()
+                if e:
+                    own = email_owner.get(e)
+                    if own and own[0] != sid:
+                        if not own[1]: continue                # live owner → duplicate gmail, skip
+                        sid = own[0]                           # archived owner → restore onto it
+                        s = dict(s); s['id'] = sid; s['archived'] = 0; s['active'] = 1
+                    arch = bool(isinstance(s, dict) and (s.get('archived') or s.get('active') == 0))
+                    email_owner[e] = (sid, arch)
                 conn.execute('INSERT INTO staff(id,store_id,data_json) VALUES(?,?,?) ON CONFLICT (store_id,id) DO UPDATE SET data_json=excluded.data_json', (sid, store_id, json.dumps(s)))
+            _sync_accounts_from_staff(conn, store_id)   # staff edits flow back to Account Management
         # checklist submissions (merge/upsert)
         subs = _parse(state.get('checklistSubs'))
         if isinstance(subs, list):

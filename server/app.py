@@ -452,6 +452,8 @@ def staff_profile():
     if au['role'] not in ('employee', 'staff', 'admin', 'super'): abort(403)
     patch = d.get('patch') or {}
     cur = db.update_staff_profile(store, sid, patch)
+    if isinstance(cur, dict) and set(cur.keys()) == {'error'}:   # e.g. duplicate email in this store
+        return jsonify(ok=False, error=cur['error']), 400
     db.write_audit(uid(au), store, 'profile', 'staff', sid, None, {'fields': list(patch.keys()) if isinstance(patch, dict) else []})
     return jsonify(ok=True, staff=cur)
 
