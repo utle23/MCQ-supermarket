@@ -632,6 +632,21 @@ def _send_overdue_alert(conn, store, session, deadline_txt, missing):
             seen.add(sid); _insert(sid, False)
     conn.commit()
 
+def get_dept_leads(store):
+    """Department leads by ACCESS: accounts with role='staff' (Dept Lead) assigned to this
+    store, with their department + email — the single source of truth for lead routing."""
+    conn = connect()
+    try:
+        out = []
+        for r in conn.execute("""SELECT name,email,department FROM accounts
+                                 WHERE role='staff' AND store_id=? AND activated=1""", (store,)).fetchall():
+            if (r['email'] or '').strip():
+                out.append({'name': r['name'] or '', 'email': r['email'].strip(),
+                            'department': (r['department'] or '').strip()})
+        return out
+    finally:
+        conn.close()
+
 def save_checklist_submission(store, sub):
     """Append/replace ONE checklist submission immediately (upsert by id), independent of the
     big store blob — so a submission can never be lost to a concurrent whole-store save."""

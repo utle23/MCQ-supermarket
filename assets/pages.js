@@ -1137,7 +1137,7 @@ function ckDraw(){
             const need=r.photo.req?r.photo.min:1, have=(st.photos||[]).length;
             const cap=r.meta.temp?(r.photo.max||1):Math.max(r.photo.max||5,5);   // allow up to 5 photos for normal tasks
             let slots=(st.photos||[]).map(u=>`<span class="ck-slot filled"><img class="ck-slot-img" src="${imgSrc(u)}"><span class="ck-rm" onclick="ckRmPhoto(event,${r.i},'${u}')">✕</span></span>`).join('');
-            if(have<cap) slots+=`<label class="ck-slot"><input type="file" accept="image/*" capture="environment" onchange="ckPhoto(this,${r.i})"><span class="ck-slot-empty">📷<small>${r.meta.temp?'AI read':'Photo'}</small></span></label>`;
+            if(have<cap) slots+=`<label class="ck-slot"><input type="file" accept="image/*" onchange="ckPhoto(this,${r.i})"><span class="ck-slot-empty">📷<small>${r.meta.temp?'AI read':'Photo'}</small></span></label>`;
             photoHtml=`<div class="ck-photos" id="ck-photo-${r.i}"><div class="ck-photos-h">${photoChip(r.photo)} <span class="ck-pc ${have>=need?'ok':''}">${have}/${need}</span></div><div class="ck-slots">${slots}</div></div>`;
           }
         }
@@ -1659,7 +1659,7 @@ function ckDoSubmit(){
   const ymd=todayISO();
   const sub={ id:makeRecordId('CKS',State.branch),
     store:State.branch, dept:State.chk.dept, session:State.chk.session, date:ymd, dayName:new Date().toLocaleDateString(undefined,{weekday:'long'}),
-    by:myIdentityName(), responsible:resp.p1||'', created:new Date().toISOString().slice(0,16).replace('T',' '),
+    by:myIdentityName(), responsible:resp.p1||'', created:dISO()+' '+new Date().toTimeString().slice(0,5),
     progress: totalN?Math.round(doneN/totalN*100):0, done:doneN, total:totalN, status:'Submitted', tempAlerts:out, items };
   DB.checklistSubs=DB.checklistSubs||[]; DB.checklistSubs.unshift(sub);
   auditLog('create','checklistSubmission',sub.id,sub.store,null,sub,`${sub.dept} ${sub.session}`);
@@ -1872,7 +1872,7 @@ function issSubmit(){
     if(empty){ e.classList.add('invalid','shake'); setTimeout(()=>e.classList.remove('shake'),450); bad=bad||e; }});
   if(bad){ toast('Please complete the required fields'); bad.scrollIntoView({behavior:'smooth',block:'center'}); return; }
   const name=val('iss-name'), desc=val('iss-desc'), store=storeForWrite($('#iss-store')?.value), prio=State.iss.prio||'Normal';
-  const now=new Date().toISOString().slice(0,16).replace('T',' ');
+  const now=dISO()+' '+new Date().toTimeString().slice(0,5);
   const sev=DB.prioToSeverity[prio]; const photo=State.iss.photo||''; let modOut=mod, ref, rec;
   if(mod==='maintenance'){
     const dept=val('iss-dept'), loc=val('iss-loc'), equip=val('iss-equip');
@@ -3075,7 +3075,7 @@ function mcqDemoMode(){ try{ return localStorage.getItem('mcq_demo')==='1'; }cat
 /* REAL submitted checklists only (demo history is opt-in via localStorage.mcq_demo='1') */
 function mgrSubs(){
   const real=(DB.checklistSubs||[]).map(s=>({ id:s.id, date:s.date, dayName:s.dayName||new Date(s.date+'T00:00').toLocaleDateString(undefined,{weekday:'long'}),
-    store:s.store, department:s.dept, session:s.session, by:s.by||s.responsible||'Staff',
+    store:s.store, department:s.dept, session:s.session, by:s.by||s.responsible||'Staff', created:s.created||'',
     total:s.total, done:s.done, progress:s.progress, status:s.status||'Submitted', real:true, items:s.items,
     verifyNote:s.verifyNote||'', verifiedAt:s.verifiedAt||'', verifiedBy:s.verifiedBy||'',
     overallResult:s.overallResult||'', issuesFound:s.issuesFound||'', actionResponsible:s.actionResponsible||'', verifyPhotos:s.verifyPhotos||[] }));
@@ -3254,13 +3254,24 @@ function mgrVerify(id){
   // notify store admin (existing behaviour) when there's any written assessment
   const hasContent=a.verifyNote||a.issuesFound||a.actionResponsible||a.overallResult;
   const sent=hasContent&&s&&mgrEmailVerifyNote(s,mgrAssessmentText(a));
-  // notify department lead(s) for this store+dept with a branded PDF
+  // notify department lead(s): manual list + leads synced from Account access (role Dept Lead
+  // + department) — merged & deduped by email, then one branded PDF to all of them
   let leadSent=false;
-  try{ const leads=leadList(s.store,s.department).filter(l=>l.email); if(leads.length){ mgrSendLeadPDF(s,a,leads); leadSent=true; } }catch(err){}
-  // → ALSO into the Store Inbox (with the manager photos), so the lead sees it in-app too
-  try{ if(hasContent && window.mcqMsgSend) mcqMsgSend({kind:'message', store:s.store,
-    subject:`✅ Verified · ${s.department} ${s.session} · ${s.date||''}`,
-    body_html:`<p>${esc(mgrAssessmentText(a)).replace(/\n/g,'<br>')}</p>${inlinePhotoHtml(a.verifyPhotos)}`}); }catch(e){}
+  const manualLeads=leadList(s.store,s.department).filter(l=>l.email);
+  if(manualLeads.length) leadSent=true;
+  (async()=>{
+    let synced=[];
+    try{ if(window.mcqDeptLeads){ const r=await mcqDeptLeads(s.store);
+      synced=((r&&r.leads)||[]).filter(l=>l.email && staffNorm(l.department)===staffNorm(s.department)); } }catch(e){}
+    const seen={}; const leads=[...manualLeads,...synced].filter(l=>{ const e=String(l.email).toLowerCase(); if(seen[e]) return false; seen[e]=1; return true; });
+    if(leads.length){ try{ mgrSendLeadPDF(s,a,leads); }catch(err){} }
+  })();
+  // → ALSO into the Store Inbox (assessment + collected task notes + manager photos)
+  try{ const _n=mgrTaskNotes(s);
+    const notesHtml=_n.length?('<p><b>Task notes ('+_n.length+'):</b></p><ul>'+_n.map(n=>`<li>${n.done?'✅':'❌'} <b>${esc(n.task)}</b> — ${esc(n.note)}</li>`).join('')+'</ul>'):'';
+    if((hasContent||_n.length) && window.mcqMsgSend) mcqMsgSend({kind:'message', store:s.store,
+    subject:`✅ Verified · ${s.department} ${s.session} · ${s.date||''}${s.created?(' · '+String(s.created).slice(11,16)):''}`,
+    body_html:`<p>${esc(mgrAssessmentText(a)).replace(/\n/g,'<br>')}</p>${notesHtml}${inlinePhotoHtml(a.verifyPhotos)}`}); }catch(e){}
   closeDrawer&&closeDrawer();
   toast(leadSent?('✓ Verified · PDF sent to '+s.department+' lead'):sent==='silent'?('✓ Verified · note sent to '+s.store+' admin'):'✓ Checklist verified');
   renderManager(); }
@@ -3276,8 +3287,15 @@ ${a.actionResponsible||'—'}
 
 ${a.verifyNote?('Manager note:\n'+a.verifyNote):''}`.trim();
 }
+function mgrTaskNotes(s){
+  // every task the staff wrote a note on — the "look here" list for the department lead
+  return mgrSubTasks(s).filter(t=>String(t.note||'').trim())
+    .map(t=>({task:t.task, area:t.area, done:t.done, note:String(t.note).trim()}));
+}
 async function mgrSendLeadPDF(s,a,leads){
-  const text=mgrAssessmentText(a);
+  const notes=mgrTaskNotes(s);
+  const notesText=notes.length?('\n\nTask notes ('+notes.length+'):\n'+notes.map(n=>`• [${n.done?'done':'NOT done'}] ${n.task} — ${n.note}`).join('\n')):'';
+  const text=mgrAssessmentText(a)+notesText;
   const subject=`MCQ ${s.store} · ${s.department} ${s.session} — verified (${a.overallResult||'reviewed'})`;
   try{
     try{ if(window.ensureJsPDF) await ensureJsPDF(); }catch(e){}
@@ -3289,7 +3307,7 @@ async function mgrSendLeadPDF(s,a,leads){
     doc.setFillColor(14,159,110); doc.rect(0,0,PW,74,'F');
     let tx=M; if(window.MCQ_LOGO_URL){ try{ doc.addImage(MCQ_LOGO_URL,'PNG',M,14,46,46); tx=M+58; }catch(e){} }
     doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(16); doc.text('MCQ Supermarket — Checklist Verification',tx,32);
-    doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.text(`${s.store} · ${s.department} · ${s.session} · ${s.date}`,tx,52);
+    doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.text(`${s.store} · ${s.department} · ${s.session} · ${s.date}${s.created?(' · submitted '+String(s.created).slice(11,16)):''}`,tx,52);
     // assessment summary box
     const col = a.overallResult==='Critical'?[185,28,28]:a.overallResult==='Need improving'?[202,138,4]:[21,128,61];
     ensure(20); doc.setFillColor(col[0],col[1],col[2]); doc.roundedRect(M,y,PW-2*M,24,4,4,'F'); doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(12);
@@ -3300,6 +3318,10 @@ async function mgrSendLeadPDF(s,a,leads){
     block('Issues found', a.issuesFound);
     block('Action / Responsible', a.actionResponsible);
     block('Manager note', a.verifyNote);
+    // staff task notes — collected so the lead sees every flagged task in one place
+    if(notes.length){ ensure(16); doc.setTextColor(2,132,199); doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.text(`Task notes (${notes.length})`,M,y); y+=14;
+      doc.setTextColor(30); doc.setFont('helvetica','normal'); doc.setFontSize(10);
+      notes.forEach(n=>{ const l=doc.splitTextToSize(`- [${n.done?'done':'NOT done'}] ${n.task}${n.area?(' ('+n.area+')'):''} - ${n.note}`,PW-2*M); ensure(l.length*12+2); doc.text(l,M,y); y+=l.length*12+4; }); y+=6; }
     // outstanding tasks list
     const out=tasks.filter(t=>!t.done);
     if(out.length){ ensure(16); doc.setTextColor(185,28,28); doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.text(`Outstanding tasks (${out.length})`,M,y); y+=14;
@@ -3356,14 +3378,21 @@ function mgrReview(id){
   const verifiedBy=(draft&&draft.verifiedBy)||s.verifiedBy||curName, overall=(draft&&draft.overallResult)||s.overallResult||'', issues=(draft&&draft.issuesFound)||s.issuesFound||'', action=(draft&&draft.actionResponsible)||s.actionResponsible||'';
   const disabled=s.status==='Verified'?'disabled':'';
   if(draft) setTimeout(()=>toast('📝 Draft restored — your unsaved notes are back'),300);
-  const rows=tasks.map(t=>`<div class="mr-task ${t.done?'done':'todo'}">
+  const rows=tasks.map(t=>{
+    // photos + note SIDE-BY-SIDE: when a task has evidence photos, the staff note sits right
+    // next to them so the manager reads both at a glance
+    const noteHtml=t.note?`<div class="mr-note">📝 ${esc(t.note)}</div>`:'';
+    const photoHtml=t.photos.length?`<div class="mr-photos">${t.photos.map(p=>`<img src="${imgSrc(p)}" onclick="openLightbox('${ckJS(imgSrc(p))}')" style="cursor:zoom-in">`).join('')}</div>`:'';
+    const body=t.photos.length?`<div class="mr-body">${photoHtml}${noteHtml}</div>`
+      :(noteHtml||(t.photoReq&&!t.done?`<div class="mr-nophoto">📷 Photo required — not attached</div>`:''));
+    return `<div class="mr-task ${t.done?'done':'todo'}">
       <div class="mr-tk"><span class="mr-check">${t.done?'✓':'○'}</span><div class="mr-name">${esc(t.task)}<small>${esc(t.area)}</small></div>${t.temp?`<span class="badge ${t.temp.ok?'ok':'warn'}">${esc(t.temp.label)}</span>`:''}</div>
-      ${t.note?`<div class="mr-note">📝 ${esc(t.note)}</div>`:''}
-      ${t.photos.length?`<div class="mr-photos">${t.photos.map(p=>`<img src="${imgSrc(p)}" onclick="openLightbox('${ckJS(imgSrc(p))}')" style="cursor:zoom-in">`).join('')}</div>`:(t.photoReq&&!t.done?`<div class="mr-nophoto">📷 Photo required — not attached</div>`:'')}
-    </div>`).join('');
+      ${body}
+    </div>`; }).join('');
+  const subTime=String(s.created||'').slice(11,16);
   $('#drawer').innerHTML=`<div class="drawer-head"><div class="dh-ic" style="background:${meta.color}1f;color:${meta.color}">✅</div>
     <div><div style="font-weight:840;font-size:16px">${esc(s.department)} · ${esc(s.session)}</div>
-    <div style="color:var(--muted);font-size:12.5px">${esc(s.store)} · ${esc(s.date)} (${esc(s.dayName)}) · by ${esc(s.by)}</div>
+    <div style="color:var(--muted);font-size:12.5px">${esc(s.store)} · ${esc(s.date)} (${esc(s.dayName)}) · by ${esc(s.by)}${subTime?` · ⏱ submitted ${esc(subTime)}`:''}</div>
     <div style="margin-top:7px;display:flex;gap:6px;flex-wrap:wrap"><span class="badge ok">${doneN} done</span>${outN?`<span class="badge warn">${outN} outstanding</span>`:''}<span class="badge info">📷 ${photoN}</span><span class="badge ${s.status==='Verified'?'ok':'warn'}">${esc(s.status)}</span></div></div>
     <button class="x-btn" onclick="closeDrawer()">✕</button></div>
     <div class="drawer-body">
@@ -3798,18 +3827,29 @@ function renderEmail(){
   // department-lead block (per store)
   const leadStore=isSuper()?(State.emailLeadStore||DB.stores[0]):State.branch;
   const leadStorePicker=isSuper()?`<select class="login-input" style="max-width:220px" onchange="emailLeadStore(this.value)">${(DB.stores||[]).map(s=>`<option ${s===leadStore?'selected':''}>${esc(s)}</option>`).join('')}</select>`:'';
+  // leads assigned through Account access (role Dept Lead + department) — synced automatically
+  window.__deptLeads=window.__deptLeads||{};
+  if(window.mcqDeptLeads && window.__deptLeads[leadStore]===undefined){
+    window.__deptLeads[leadStore]=null;   // fetching
+    mcqDeptLeads(leadStore).then(r=>{ window.__deptLeads[leadStore]=(r&&r.leads)||[]; if(State.route&&State.route.mod==='email') renderEmail(); }).catch(()=>{ window.__deptLeads[leadStore]=[]; });
+  }
+  const syncedAll=window.__deptLeads[leadStore]||[];
   const leadBlocks=chkDepts.map(d=>{ const meta=dm[d]||{}; const list=leadList(leadStore,d); const staffOpts=leadStaffFor(leadStore,d);
+    const dlId='lead-dl-'+String(d).replace(/\W+/g,'');
+    const synced=syncedAll.filter(l=>staffNorm(l.department)===staffNorm(d));
+    const syncedRows=synced.map(l=>`<div class="email-row lead-synced" style="gap:8px;padding:6px 0">
+        <span class="lead-sync-chip" title="Automatically synced from this person's access (Dept Lead · ${esc(d)})">🔗 ${esc(l.name)}<small>${esc(l.email)}</small></span>
+        <span class="badge ok" style="flex:none">from access</span>
+      </div>`).join('');
     const rows=list.map((l,i)=>`<div class="email-row" style="gap:8px;padding:6px 0">
-        <select class="login-input" style="flex:1;min-width:120px" onchange="leadPick('${ckJS(leadStore)}','${ckJS(d)}',${i},this)">
-          <option value="">— Select staff —</option>
-          ${staffOpts.map(sm=>`<option value="${esc(sm.name)}" data-email="${esc(sm.email||'')}" ${sm.name===l.name?'selected':''}>${esc(sm.name)}${sm.role?(' · '+esc(sm.role)):''}</option>`).join('')}
-          ${l.name&&!staffOpts.some(sm=>sm.name===l.name)?`<option value="${esc(l.name)}" selected>${esc(l.name)} (manual)</option>`:''}
-        </select>
+        <input class="login-input" list="${dlId}" style="flex:1;min-width:120px" value="${esc(l.name||'')}" placeholder="🔍 Type to search staff…" onchange="leadPickName('${ckJS(leadStore)}','${ckJS(d)}',${i},this)">
         <input class="login-input" style="flex:1.4;min-width:150px" type="email" value="${esc(l.email||'')}" placeholder="lead@email.com" oninput="leadSet('${ckJS(leadStore)}','${ckJS(d)}',${i},'email',this.value)">
         <button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="leadDel('${ckJS(leadStore)}','${ckJS(d)}',${i})">🗑</button>
       </div>`).join('');
-    return `<div class="card" style="margin-bottom:10px"><div class="card-head"><h3 style="font-size:14px"><i class="fas ${meta.icon||'fa-list-check'}" style="color:${meta.color||'#0e9f6e'}"></i>&nbsp; ${esc(d)}</h3><span class="ch-sub">${list.length} lead(s)</span></div>
-      <div class="card-pad">${rows||'<div class="fhint" style="margin:0 0 8px">No leads yet for this department.</div>'}
+    return `<div class="card" style="margin-bottom:10px"><div class="card-head"><h3 style="font-size:14px"><i class="fas ${meta.icon||'fa-list-check'}" style="color:${meta.color||'#0e9f6e'}"></i>&nbsp; ${esc(d)}</h3><span class="ch-sub">${synced.length+list.length} lead(s)${synced.length?` · ${synced.length} synced`:''}</span></div>
+      <div class="card-pad">
+        <datalist id="${dlId}">${staffOpts.map(sm=>`<option value="${esc(sm.name)}">${esc(sm.role||'')}</option>`).join('')}</datalist>
+        ${syncedRows}${rows||(synced.length?'':'<div class="fhint" style="margin:0 0 8px">No leads yet for this department.</div>')}
         <button class="btn sm" style="margin-top:6px" onclick="leadAdd('${ckJS(leadStore)}','${ckJS(d)}')">＋ Add lead</button></div></div>`;
   }).join('');
   // super: daily-digest recipients (server scheduled 9pm)
@@ -3867,6 +3907,13 @@ function leadPick(store,dept,i,sel){ const a=leadList(store,dept); if(!a[i]) ret
   const opt=sel.options[sel.selectedIndex], email=opt&&opt.getAttribute('data-email');
   if(email) a[i].email=email;   // auto-fill from the staff record (admin can still edit)
   if(window.persist) window.persist(); renderEmail(); }
+// type-to-search picker (datalist): match the typed name to a staff record and auto-fill the email
+function leadPickName(store,dept,i,inp){ const a=leadList(store,dept); if(!a[i]) return;
+  const name=String(inp.value||'').trim(); a[i].name=name;
+  const hit=(DB.staff||[]).find(x=>x.store===store && x.name===name) || (DB.staff||[]).find(x=>x.name===name);
+  if(hit&&hit.email) a[i].email=hit.email;   // auto-fill; admin can still edit
+  if(window.persist) window.persist(); renderEmail(); }
+window.leadPickName=leadPickName;
 function emailLeadStore(s){ State.emailLeadStore=s; renderEmail(); }
 /* ---- super-admin daily-digest recipients (server-side settings) ---- */
 function digestRender(){

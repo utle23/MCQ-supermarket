@@ -318,6 +318,11 @@ def accounts_list():
     require_acct_admin()
     return jsonify(ok=True, accounts=db.list_accounts(request.args.get('q', '')))
 
+@api.route('/api/dept-leads/<store_id>')
+def dept_leads(store_id):
+    au = require_auth(); require_store(au, store_id)
+    return jsonify(ok=True, leads=db.get_dept_leads(store_id))
+
 @api.route('/api/checklist/submit', methods=['POST'])
 def checklist_submit():
     au = require_auth(); require_write(au)
