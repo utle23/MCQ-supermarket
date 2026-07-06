@@ -323,20 +323,6 @@ def dept_leads(store_id):
     au = require_auth(); require_store(au, store_id)
     return jsonify(ok=True, leads=db.get_dept_leads(store_id))
 
-@api.route('/api/dept-lead/assign', methods=['POST'])
-def dept_lead_assign():
-    au = require_auth(); require_write(au)
-    if au['role'] not in ('super', 'admin'): abort(403)
-    d = request.get_json(force=True, silent=True) or {}
-    store = d.get('store'); require_store(au, store)
-    res = db.assign_dept_lead(store, d.get('department'), d.get('email'), d.get('name'),
-                              allow_admin=db.is_account_admin(au))
-    if res.get('error'):
-        return jsonify(ok=False, error=res['error']), 400
-    db.write_audit(uid(au), store, 'assign', 'dept-lead', res.get('id') or res.get('email'), None,
-                   {'email': res.get('email'), 'department': res.get('department'), 'created': bool(res.get('created'))})
-    return jsonify(ok=True, **res)
-
 @api.route('/api/checklist/submit', methods=['POST'])
 def checklist_submit():
     au = require_auth(); require_write(au)

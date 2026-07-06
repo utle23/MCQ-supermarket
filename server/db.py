@@ -951,51 +951,6 @@ def add_account(email, name, role, store, department=''):
     finally:
         conn.close()
 
-def assign_dept_lead(store, department, email, name='', allow_admin=False):
-    """Assign a person as a Dept Lead from the Email Notifications page.
-
-    This is the reverse sync for the existing Access -> Email lead list: a manual
-    lead row with a valid email should also become role='staff' in central accounts.
-    """
-    store = str(store or '').strip()
-    department = str(department or '').strip()
-    email = str(email or '').strip()
-    name = str(name or '').strip()
-    if store not in STORES: return {'error': 'Unknown store'}
-    if not department: return {'error': 'Choose a department'}
-    if not email or '@' not in email: return {'error': 'Enter a valid email address'}
-    conn = connect()
-    try:
-        hit = _store_staff_by_email(conn, store, email)
-        acc = conn.execute('SELECT * FROM accounts WHERE lower(email)=lower(?)', (email,)).fetchone()
-        if acc:
-            if acc['acct_admin'] or acc['role'] == 'super' or (acc['role'] == 'admin' and not allow_admin):
-                return {'error': 'Manager/Super Admin accounts cannot be changed from Email Notifications'}
-            if acc['store_id'] and acc['store_id'] != store:
-                return {'error': 'This email already belongs to another store'}
-            staff_id = (hit or {}).get('staff_id') or acc['staff_id']
-            display_name = name or (hit or {}).get('name') or acc['name'] or email.split('@')[0].replace('.', ' ').title()
-            conn.execute('''UPDATE accounts
-                            SET role='staff', store_id=?, staff_id=?, name=?, email=?, department=?, updated_at=?
-                            WHERE id=?''',
-                         (store, staff_id, display_name, email, department, now(), acc['id']))
-            conn.execute('UPDATE tokens SET role=?, store_id=?, staff_id=?, staff_name=? WHERE account_id=?',
-                         ('staff', store, staff_id, display_name, acc['id']))
-            conn.commit()
-            return {'id': acc['id'], 'created': False, 'matched': bool(hit), 'role': 'staff',
-                    'store': store, 'department': department, 'name': display_name, 'email': email}
-        aid = _gen_account_id(conn, store)
-        display_name = name or (hit or {}).get('name') or email.split('@')[0].replace('.', ' ').title()
-        conn.execute('''INSERT INTO accounts(id,password,role,store_id,staff_id,name,email,department,activated,created_at,updated_at)
-                        VALUES(?,?,?,?,?,?,?,?,0,?,?)''',
-                     (aid, '', 'staff', store, (hit or {}).get('staff_id'),
-                      display_name, email, department, now(), now()))
-        conn.commit()
-        return {'id': aid, 'created': True, 'matched': bool(hit), 'role': 'staff',
-                'store': store, 'department': department, 'name': display_name, 'email': email}
-    finally:
-        conn.close()
-
 def update_account(aid, patch):
     """Account admin edits: role / store / department / password / name."""
     allowed = {'role', 'store_id', 'department', 'password', 'name'}

@@ -4077,18 +4077,16 @@ function renderEmail(){
   const syncedAll=window.__deptLeads[leadStore]||[];
   const leadBlocks=chkDepts.map(d=>{ const meta=dm[d]||{}; const list=leadList(leadStore,d); const staffOpts=leadStaffFor(leadStore,d);
     const dlId='lead-dl-'+String(d).replace(/\W+/g,'');
-    const manualEmails=new Set(list.map(l=>String(l.email||'').trim().toLowerCase()).filter(Boolean));
-    const synced=syncedAll.filter(l=>staffNorm(l.department)===staffNorm(d) && !manualEmails.has(String(l.email||'').trim().toLowerCase()));
+    const synced=syncedAll.filter(l=>staffNorm(l.department)===staffNorm(d));
     const syncedRows=synced.map(l=>`<div class="email-row lead-synced" style="gap:8px;padding:6px 0">
         <span class="lead-sync-chip" title="Automatically synced from this person's access (Dept Lead · ${esc(d)})">🔗 ${esc(l.name)}<small>${esc(l.email)}</small></span>
         <span class="badge ok" style="flex:none">from access</span>
       </div>`).join('');
-    const rows=list.map((l,i)=>{ const accessHit=String(l.email||'').trim() && syncedAll.some(x=>staffNorm(x.department)===staffNorm(d) && String(x.email||'').trim().toLowerCase()===String(l.email||'').trim().toLowerCase()); return `<div class="email-row" style="gap:8px;padding:6px 0">
+    const rows=list.map((l,i)=>`<div class="email-row" style="gap:8px;padding:6px 0">
         <input class="login-input" list="${dlId}" style="flex:1;min-width:120px" value="${esc(l.name||'')}" placeholder="🔍 Type to search staff…" onchange="leadPickName('${ckJS(leadStore)}','${ckJS(d)}',${i},this)">
         <input class="login-input" style="flex:1.4;min-width:150px" type="email" value="${esc(l.email||'')}" placeholder="lead@email.com" oninput="leadSet('${ckJS(leadStore)}','${ckJS(d)}',${i},'email',this.value)">
-        ${accessHit?'<span class="badge ok" style="flex:none">synced to access</span>':''}
         <button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="leadDel('${ckJS(leadStore)}','${ckJS(d)}',${i})">🗑</button>
-      </div>`; }).join('');
+      </div>`).join('');
     return `<div class="card" style="margin-bottom:10px"><div class="card-head"><h3 style="font-size:14px"><i class="fas ${meta.icon||'fa-list-check'}" style="color:${meta.color||'#0e9f6e'}"></i>&nbsp; ${esc(d)}</h3><span class="ch-sub">${synced.length+list.length} lead(s)${synced.length?` · ${synced.length} synced`:''}</span></div>
       <div class="card-pad">
         <datalist id="${dlId}">${staffOpts.map(sm=>`<option value="${esc(sm.name)}">${esc(sm.role||'')}</option>`).join('')}</datalist>
@@ -4136,27 +4134,8 @@ function recipDel(key){ if(!confirm('Remove this recipient?')) return; DB.emailR
 /* ---- per-store department-lead emails ---- */
 function leadList(store,dept){ const m=DB.checklistLeadEmails||(DB.checklistLeadEmails={}); return ((m[store]||{})[dept])||[]; }
 function leadAdd(store,dept){ const m=DB.checklistLeadEmails=DB.checklistLeadEmails||{}; m[store]=m[store]||{}; m[store][dept]=m[store][dept]||[]; m[store][dept].push({name:'',email:''}); if(window.persist) window.persist(); renderEmail(); }
-function leadSet(store,dept,i,field,val){ const a=leadList(store,dept); if(a[i]){ a[i][field]=val; if(window.persist) window.persist(); if(field==='email'||field==='name') leadSyncAccount(store,dept,a[i]); } }
+function leadSet(store,dept,i,field,val){ const a=leadList(store,dept); if(a[i]){ a[i][field]=val; if(window.persist) window.persist(); } }
 function leadDel(store,dept,i){ const a=leadList(store,dept); if(i>=0&&i<a.length){ a.splice(i,1); if(window.persist) window.persist(); renderEmail(); } }
-const _leadSyncTimers={}, _leadSyncSeen={};
-function leadSyncAccount(store,dept,lead,opts){
-  if(!window.mcqDeptLeadAssign||!lead) return;
-  const email=String(lead.email||'').trim(), name=String(lead.name||'').trim();
-  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return;
-  const key=store+'|'+dept+'|'+email.toLowerCase();
-  const sig=key+'|'+name;
-  if(_leadSyncSeen[key]===sig) return;
-  clearTimeout(_leadSyncTimers[key]);
-  _leadSyncTimers[key]=setTimeout(()=>{
-    mcqDeptLeadAssign({store,department:dept,name,email}).then(r=>{
-      if(r&&r.ok){
-        _leadSyncSeen[key]=sig;
-        if(window.__deptLeads) delete window.__deptLeads[store];
-        if(State.route&&State.route.mod==='email') renderEmail();
-      }else if(r&&r.error) toast(r.error);
-    }).catch(()=>toast('Could not update Account Management'));
-  }, opts&&opts.now?80:700);
-}
 // staff that belong to a checklist department, for a SPECIFIC store (super may pick any store)
 function leadStaffFor(store,dept){
   const all=(DB.staff||[]).filter(s=>s.active!==0 && s.store===store && s.name);
@@ -4171,13 +4150,13 @@ function leadPick(store,dept,i,sel){ const a=leadList(store,dept); if(!a[i]) ret
   a[i].name=sel.value;
   const opt=sel.options[sel.selectedIndex], email=opt&&opt.getAttribute('data-email');
   if(email) a[i].email=email;   // auto-fill from the staff record (admin can still edit)
-  if(window.persist) window.persist(); leadSyncAccount(store,dept,a[i],{now:true}); renderEmail(); }
+  if(window.persist) window.persist(); renderEmail(); }
 // type-to-search picker (datalist): match the typed name to a staff record and auto-fill the email
 function leadPickName(store,dept,i,inp){ const a=leadList(store,dept); if(!a[i]) return;
   const name=String(inp.value||'').trim(); a[i].name=name;
   const hit=(DB.staff||[]).find(x=>x.store===store && x.name===name) || (DB.staff||[]).find(x=>x.name===name);
   if(hit&&hit.email) a[i].email=hit.email;   // auto-fill; admin can still edit
-  if(window.persist) window.persist(); leadSyncAccount(store,dept,a[i],{now:true}); renderEmail(); }
+  if(window.persist) window.persist(); renderEmail(); }
 window.leadPickName=leadPickName;
 function emailLeadStore(s){ State.emailLeadStore=s; renderEmail(); }
 /* ---- super-admin daily-digest recipients (server-side settings) ---- */
