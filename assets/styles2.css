@@ -1843,9 +1843,13 @@ html,body{max-width:100%}
 .hv-badge{display:inline-flex;align-items:center;gap:4px;border-radius:99px;padding:2.5px 10px;font-size:10.5px;font-weight:800;white-space:nowrap}
 .hv-badge.ok{background:#dcfce7;color:#15803d}
 .hv-badge.wait{background:#fef3c7;color:#92400e}
-.hv-sess{width:34px;height:34px;flex:none;border-radius:11px;display:grid;place-items:center;font-size:17px;background:#f1f5f9}
-.hv-sess.am{background:#fef9c3}.hv-sess.md{background:#e0f2fe}.hv-sess.pm{background:#e0e7ff}
-.hv-sess.bin{background:#f1f5f9}.hv-sess.dlv{background:#dbeafe}.hv-sess.cln{background:#cffafe}
+.hv-sess{width:34px;height:34px;flex:none;border-radius:11px;display:grid;place-items:center;font-size:17px;background:#f8fafc;border:1px solid #e2e8f0}
+.hv-sess.am{background:linear-gradient(135deg,#fffbeb,#fde68a);border-color:#fcd34d}
+.hv-sess.md{background:linear-gradient(135deg,#f0f9ff,#bae6fd);border-color:#7dd3fc}
+.hv-sess.pm{background:linear-gradient(135deg,#fff7ed,#fed7aa);border-color:#fdba74}
+.hv-sess.bin{background:linear-gradient(135deg,#f8fafc,#e2e8f0);border-color:#cbd5e1}
+.hv-sess.dlv{background:linear-gradient(135deg,#eff6ff,#bfdbfe);border-color:#93c5fd}
+.hv-sess.cln{background:linear-gradient(135deg,#ecfeff,#a5f3fc);border-color:#67e8f9}
 .hv-ring{width:44px;height:44px}
 .hv-ring svg{width:44px;height:44px}
 .hv-ring circle{stroke-width:5}
@@ -1861,7 +1865,13 @@ html,body{max-width:100%}
 @media(prefers-color-scheme:dark){
   .hv-badge.ok{background:rgba(34,197,94,.18);color:#4ade80}
   .hv-badge.wait{background:rgba(245,158,11,.16);color:#fbbf24}
-  .hv-sess,.hv-sess.am,.hv-sess.md,.hv-sess.pm,.hv-sess.bin,.hv-sess.dlv,.hv-sess.cln{background:#1e293b}
+  .hv-sess{background:#f8fafc;border-color:#e2e8f0}
+  .hv-sess.am{background:linear-gradient(135deg,#fffbeb,#fde68a)}
+  .hv-sess.md{background:linear-gradient(135deg,#f0f9ff,#bae6fd)}
+  .hv-sess.pm{background:linear-gradient(135deg,#fff7ed,#fed7aa)}
+  .hv-sess.bin{background:linear-gradient(135deg,#f8fafc,#e2e8f0)}
+  .hv-sess.dlv{background:linear-gradient(135deg,#eff6ff,#bfdbfe)}
+  .hv-sess.cln{background:linear-gradient(135deg,#ecfeff,#a5f3fc)}
   .hv-clear{background:#450a0a;border-color:#7f1d1d;color:#fca5a5}
   .hv-ring.g b{color:#4ade80}.hv-ring.a b{color:#fbbf24}.hv-ring.r b{color:#f87171}
 }
