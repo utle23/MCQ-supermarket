@@ -67,6 +67,15 @@ def cron_daily_digest():
     threading.Thread(target=lambda: daily_digest.run(override), daemon=True).start()
     return jsonify(ok=True, started=True, note='digest is building & emailing in the background')
 
+# Proactive overdue-checklist alerts. Have cron-job.org hit this a few times across store
+# hours (e.g. every 30 min) — it only alerts once per store/session/day after each deadline.
+@api.route('/api/cron/overdue-check', methods=['GET', 'POST'])
+def cron_overdue_check():
+    secret = os.environ.get('CRON_SECRET', '')
+    if not secret or (request.args.get('key') or '') != secret:
+        abort(403)
+    return jsonify(**db.check_overdue_and_alert())
+
 # ---------- auth ----------
 def _client_ip():
     xff = request.headers.get('X-Forwarded-For', '')

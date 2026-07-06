@@ -538,6 +538,100 @@ def _store_staff_by_email(conn, store, email):
             return {'staff_id': r['id'], 'name': d.get('name') or '', 'store': store, 'data': d}
     return None
 
+## ---------- proactive overdue-checklist alerts ----------
+import datetime as _dt
+
+def _perth_now():
+    return _dt.datetime.utcnow() + _dt.timedelta(hours=8)   # Australia/Perth = UTC+8, no DST
+
+def _deadline_minutes(txt):
+    m = _re.search(r'(\d{1,2}):(\d{2})\s*(AM|PM)?', str(txt or ''), _re.I)
+    if not m: return None
+    h = int(m.group(1)); mi = int(m.group(2)); ap = (m.group(3) or '').upper()
+    if ap == 'PM' and h < 12: h += 12
+    if ap == 'AM' and h == 12: h = 0
+    return h * 60 + mi
+
+CK_SESSIONS = ['Opening', 'Mid-afternoon', 'Closing']
+
+def check_overdue_and_alert():
+    """For every store: if a session's deadline has passed (Perth time) and some expected
+    departments still haven't submitted today's checklist, send ONE inbox alert to the store
+    managers + each missing department's lead. Deduped per (store, session, date) so it fires
+    once. Returns a summary. Meant to be hit periodically by the external cron."""
+    now_p = _perth_now(); today = now_p.strftime('%Y-%m-%d'); now_min = now_p.hour * 60 + now_p.minute
+    fired = []
+    conn = connect()
+    try:
+        for store in STORES:
+            row = conn.execute('SELECT state_json FROM store_state WHERE store_id=?', (store,)).fetchone()
+            if not row or not row['state_json']:
+                continue
+            try: st = json.loads(row['state_json'])
+            except Exception: continue
+            deadlines = st.get('checklistDeadlines') or {}
+            items = st.get('checklistItems')
+            if isinstance(items, str):
+                try: items = json.loads(items)
+                except Exception: items = []
+            if not isinstance(items, list): items = []
+            # expected departments per session, from the template
+            expected = {s: set() for s in CK_SESSIONS}
+            for it in items:
+                if isinstance(it, list) and len(it) >= 2 and it[1] in expected and it[0]:
+                    expected[it[1]].add(it[0])
+            # today's submitted (dept,session) for this store
+            submitted = {s: set() for s in CK_SESSIONS}
+            for r in conn.execute('SELECT data_json FROM checklist_submissions WHERE store_id=?', (store,)).fetchall():
+                try: sub = json.loads(r['data_json'])
+                except Exception: continue
+                if sub.get('date') == today and sub.get('session') in submitted:
+                    submitted[sub['session']].add(sub.get('department') or sub.get('dept') or '')
+            for sess in CK_SESSIONS:
+                exp = expected.get(sess) or set()
+                if not exp: continue
+                dl = _deadline_minutes(deadlines.get(sess))
+                if dl is None or now_min <= dl: continue      # deadline not passed yet
+                missing = sorted(d for d in exp if d not in submitted.get(sess, set()))
+                if not missing: continue
+                marker = 'overdue_sent:%s:%s:%s' % (store, today, sess)
+                if get_setting(marker): continue               # already alerted for this session today
+                _send_overdue_alert(conn, store, sess, deadlines.get(sess), missing)
+                set_setting(marker, 1)
+                fired.append({'store': store, 'session': sess, 'missing': missing})
+        if fired:
+            try: emit_event('inbox')
+            except Exception: pass
+        return {'ok': True, 'alerts': fired, 'checked_at': now_p.strftime('%Y-%m-%d %H:%M') + ' Perth'}
+    finally:
+        conn.close()
+
+def _send_overdue_alert(conn, store, session, deadline_txt, missing):
+    """Insert one inbox alert to the store's managers, and one to each missing dept's lead."""
+    subject = 'Overdue: %s checklist not submitted' % session
+    body = ('<p><b>%s checklist is overdue at MCQ %s.</b></p>'
+            '<p>Deadline <b>%s</b> has passed and these departments have not submitted today:</p>'
+            '<ul>%s</ul><p>Please follow up.</p>'
+            % (session, store, deadline_txt or '', ''.join('<li>%s</li>' % d for d in missing)))
+    now_t = now()
+    def _insert(to_staff_id, to_managers):
+        mid = conn.execute('''INSERT INTO messages(store_id,from_role,from_name,from_staff_id,to_staff_id,
+            to_super,to_managers,to_store_all,kind,subject,body_html,thread_id,read_by_json,attachments_json,created_at)
+            VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id''',
+            (store, 'super', 'MCQ System', None, (str(to_staff_id) if to_staff_id else None),
+             0, 1 if to_managers else 0, 0, 'message', subject, body, None, '[]', '[]', now_t)).fetchone()['id']
+        conn.execute('UPDATE messages SET thread_id=? WHERE id=?', ('T' + str(mid), mid))
+    _insert(None, True)                                        # → store managers' mailbox
+    seen = set()
+    for dept in missing:                                       # → each missing department's lead
+        lead = conn.execute("""SELECT staff_id,id FROM accounts WHERE role='staff' AND store_id=?
+                               AND lower(COALESCE(department,''))=lower(?) AND activated=1""",
+                            (store, dept)).fetchone()
+        sid = (lead['staff_id'] or lead['id']) if lead else None
+        if sid and sid not in seen:
+            seen.add(sid); _insert(sid, False)
+    conn.commit()
+
 def bulk_import_staff(rows, allowed_stores=None):
     """Import staff from a parsed CSV. rows = [{name,store,email,role,dept,dob}].
     Dedupe by email (existing DB + within the batch); skip rows for stores not allowed.
