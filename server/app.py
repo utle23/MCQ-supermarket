@@ -381,19 +381,39 @@ def cron_deputy_late():
 
 @api.route('/api/deputy/status', methods=['GET'])
 def deputy_status():
-    """Super only: is the Deputy monitor configured + when did it last poll + today's numbers."""
+    """Deputy attendance monitor health + today's numbers. Super sees every store (plus a
+    per-store breakdown, optionally ?store=X); a store Manager sees ONLY their own store."""
     au = require_auth()
-    if au['role'] != 'super': abort(403)
+    if au['role'] not in ('super', 'admin'): abort(403)
     host, token = db.deputy_cfg()
     last = db.get_setting('deputy_poll_slot')
-    conn = db.connect()
     today = db.now()[:10]
-    n = conn.execute("SELECT COUNT(*) c FROM attendance WHERE created_at LIKE ?", (today + '%',)).fetchone()['c']
-    late = conn.execute("SELECT COUNT(*) c FROM attendance WHERE created_at LIKE ? AND warning!=''", (today + '%',)).fetchone()['c']
+    store = au.get('store_id') if au['role'] == 'admin' else (request.args.get('store') or None)
+    if store and store not in db.STORES: store = None
+    conn = db.connect()
+    if store:
+        rows = conn.execute("SELECT event,warning,over_min,store_id FROM attendance WHERE created_at LIKE ? AND store_id=?",
+                            (today + '%', store)).fetchall()
+    else:
+        rows = conn.execute("SELECT event,warning,over_min,store_id FROM attendance WHERE created_at LIKE ?",
+                            (today + '%',)).fetchall()
     conn.close()
+    per = {}
+    clockins = late = overs = 0
+    for r in rows:
+        s = r['store_id'] or '—'
+        d = per.setdefault(s, {'clockins': 0, 'late': 0, 'over': 0})
+        if r['event'] == 'clockin':
+            clockins += 1; d['clockins'] += 1
+            if (r['warning'] or ''): late += 1; d['late'] += 1
+        elif r['event'] == 'clockout' and (r['over_min'] or 0) > db.LATE_GRACE_MIN:
+            overs += 1; d['over'] += 1
     last_hm = _fmt_hm(float(last)) if last else None
-    return jsonify(ok=True, configured=bool(host and token), host=host or None,
-                   last_poll=last_hm, events_today=n, late_today=late,
+    return jsonify(ok=True, configured=bool(host and token),
+                   host=(host or None) if au['role'] == 'super' else None,
+                   last_poll=last_hm, store=store,
+                   clockins_today=clockins, late_today=late, overtime_today=overs,
+                   stores=(per if au['role'] == 'super' and not store else None),
                    self_polling=not bool(os.environ.get('MCQ_NO_BG_POLL')))
 
 @api.route('/api/deputy/config', methods=['POST'])

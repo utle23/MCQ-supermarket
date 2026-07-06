@@ -840,6 +840,7 @@ function renderHome(){
     <div class="feed-main"><div class="fm-t">${esc(f.title)}</div><div class="fm-s">${esc(f.sub)}</div></div><div class="feed-time">${esc(f.time)}</div></div>`).join('');
   $('#content').innerHTML = `
     ${!isSuper()&&window.todoFlowHTML?todoFlowHTML():''}
+    <div id="dep-status"></div>
     <div class="hero"><div class="glow">${isAdmin()?'🏢':'🧑‍💼'}</div>
       <h2>Hi, ${esc(u.name.split(' ')[0])} 👋</h2>
       <p>${isSuper()?'Cross-store command centre — operations, staff, compliance and people risk in real time.':isAdmin()?`MCQ ${esc(State.branch)} command centre — store operations, staff and compliance in real time.`:'Your store workspace — run checklists and log issues fast.'}</p>
@@ -862,6 +863,7 @@ function renderHome(){
     </div>`;
   const labels=DB.order.map(id=>DB.modules[id].short), data=DB.order.map(id=>openCount(id)), colors=DB.order.map(id=>DB.modules[id].accent);
   mkChart('home-chart',{type:'bar',data:{labels,datasets:[{data,backgroundColor:colors,borderRadius:8,maxBarThickness:38}]},options:baseOpts({legend:false})});
+  if(window.depStatusMount) depStatusMount();
 }
 /* super-admin only: cross-store load & risk comparison */
 function superCrossStore(){

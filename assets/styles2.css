@@ -1901,3 +1901,27 @@ html,body{max-width:100%}
 /* grid children must be allowed to SHRINK, or the task list blows out past the panel and
    gets clipped by overflow:hidden — that was the "cannot scroll to see the rest" bug */
 .mv-tasks,.mv-side{min-height:0}
+
+/* ===================== Deputy attendance monitor card (Dashboard) ===================== */
+.dep-card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:12px 15px;margin-bottom:16px;box-shadow:0 6px 18px rgba(15,23,42,.06)}
+.dep-head{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.dep-head b{font-size:13.5px}
+.dep-head small{color:var(--muted);font-size:11.5px}
+.dep-dot{width:10px;height:10px;border-radius:99px;flex:none}
+.dep-dot.ok{background:#22c55e;box-shadow:0 0 0 4px rgba(34,197,94,.18);animation:depPulse 2.4s infinite}
+.dep-dot.bad{background:#dc2626;box-shadow:0 0 0 4px rgba(220,38,38,.15)}
+.dep-dot.wait{background:#94a3b8}
+@keyframes depPulse{0%,100%{box-shadow:0 0 0 4px rgba(34,197,94,.18)}50%{box-shadow:0 0 0 7px rgba(34,197,94,.08)}}
+.dep-stats{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.dep-stat{background:var(--bg,#f4f6fa);border:1px solid var(--line);border-radius:12px;padding:7px 13px;font-size:10.5px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px}
+.dep-stat b{display:block;font-size:17px;color:var(--ink,#0f172a);letter-spacing:0;font-variant-numeric:tabular-nums}
+.dep-stat.bad{background:#fef2f2;border-color:#fecaca}.dep-stat.bad b{color:#b91c1c}
+.dep-stat.warn{background:#fffbeb;border-color:#fde68a}.dep-stat.warn b{color:#b45309}
+.dep-stores{display:flex;gap:6px;flex-wrap:wrap;margin-top:10px}
+.dep-store{background:var(--bg,#f4f6fa);border:1px solid var(--line);border-radius:99px;padding:3px 11px;font-size:11px;color:var(--muted)}
+.dep-store.bad{background:#fef2f2;border-color:#fecaca;color:#b91c1c;font-weight:700}
+@media(prefers-color-scheme:dark){
+  .dep-stat.bad{background:rgba(220,38,38,.12)}.dep-stat.warn{background:rgba(245,158,11,.1)}
+  .dep-store.bad{background:rgba(220,38,38,.12)}
+}
+@media(max-width:640px){ .dep-stat{flex:1;text-align:center} }

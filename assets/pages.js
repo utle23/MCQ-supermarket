@@ -54,6 +54,39 @@ function todoFlowHTML(){
 }
 window.todoFlowHTML=todoFlowHTML;
 
+/* ---- Deputy attendance monitor card (Dashboard) — Super: all stores + per-store breakdown;
+   store Manager: their own store only. Cached 60s so dashboard repaints don't refetch. ---- */
+function depStatusMount(){
+  const el=document.getElementById('dep-status'); if(!el) return;
+  const acct=State.account||{}; if(!(acct.role==='super'||acct.role==='admin')){ el.innerHTML=''; return; }
+  const c=State._depStat;
+  if(c && Date.now()-c.t<60000){ el.innerHTML=depStatusHTML(c.d); return; }
+  el.innerHTML='<div class="dep-card"><div class="dep-head"><span class="dep-dot wait"></span><b>⏱ Attendance monitor · Deputy</b><small>checking…</small></div></div>';
+  if(!window.mcqDeputyStatus) return;
+  mcqDeputyStatus().then(d=>{
+    const el2=document.getElementById('dep-status'); if(!el2) return;
+    if(!(d&&d.ok)){ el2.innerHTML=''; return; }
+    State._depStat={t:Date.now(), d};
+    el2.innerHTML=depStatusHTML(d);
+  });
+}
+function depStatusHTML(d){
+  const on=!!d.configured;
+  const stores=d.stores?Object.entries(d.stores).sort((a,b)=>a[0].localeCompare(b[0])):null;
+  return `<div class="dep-card">
+    <div class="dep-head"><span class="dep-dot ${on?'ok':'bad'}"></span><b>⏱ Attendance monitor · Deputy</b>
+      <small>${on?('connected · last check '+esc(d.last_poll||'—')+(d.store?' · '+esc(d.store):'')):'not connected — set it up in Deputy config'}</small>
+      <button class="btn xs" style="margin-left:auto" title="Refresh" onclick="State._depStat=null;depStatusMount()">↻</button></div>
+    <div class="dep-stats">
+      <span class="dep-stat"><b>${d.clockins_today||0}</b>clock-ins today</span>
+      <span class="dep-stat ${d.late_today?'bad':''}"><b>${d.late_today||0}</b>late &gt;10 min</span>
+      <span class="dep-stat ${d.overtime_today?'warn':''}"><b>${d.overtime_today||0}</b>clock-out reminders</span>
+    </div>
+    ${stores&&stores.length?`<div class="dep-stores">${stores.map(([sx,v])=>`<span class="dep-store ${v.late?'bad':''}">${esc(sx)} · ${v.clockins} in${v.late?` · ⏰ ${v.late} late`:''}${v.over?` · ⏳ ${v.over}`:''}</span>`).join('')}</div>`:''}
+  </div>`;
+}
+window.depStatusMount=depStatusMount;
+
 /* ============================================================ STAFF HOME (simplified, mobile-first) */
 function renderStaffHome(){
   setAccent('#0e9f6e'); setCrumb('🏠','My Store','MCQ '+State.branch);
