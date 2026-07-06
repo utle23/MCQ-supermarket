@@ -379,6 +379,23 @@ def cron_deputy_late():
     except Exception as e:
         return jsonify(ok=False, error=str(e)[:300]), 500
 
+@api.route('/api/deputy/status', methods=['GET'])
+def deputy_status():
+    """Super only: is the Deputy monitor configured + when did it last poll + today's numbers."""
+    au = require_auth()
+    if au['role'] != 'super': abort(403)
+    host, token = db.deputy_cfg()
+    last = db.get_setting('deputy_poll_slot')
+    conn = db.connect()
+    today = db.now()[:10]
+    n = conn.execute("SELECT COUNT(*) c FROM attendance WHERE created_at LIKE ?", (today + '%',)).fetchone()['c']
+    late = conn.execute("SELECT COUNT(*) c FROM attendance WHERE created_at LIKE ? AND warning!=''", (today + '%',)).fetchone()['c']
+    conn.close()
+    last_hm = _fmt_hm(float(last)) if last else None
+    return jsonify(ok=True, configured=bool(host and token), host=host or None,
+                   last_poll=last_hm, events_today=n, late_today=late,
+                   self_polling=not bool(os.environ.get('MCQ_NO_BG_POLL')))
+
 @api.route('/api/deputy/config', methods=['POST'])
 def deputy_config():
     """Super only: store the Deputy install URL + permanent token in the settings table
@@ -1273,7 +1290,31 @@ def create_app():
     db.init_db()
     app.register_blueprint(api)
     add_cors(app)
+    _start_deputy_self_poll()
     return app
+
+# ---------- Deputy SELF-polling: no external cron needed ----------
+# Every worker runs this loop, but db.try_claim_poll_slot lets exactly ONE of them
+# poll per ~10-minute window; per-(timesheet,event) dedupe makes any race harmless.
+_dep_poll_started = False
+def _deputy_self_poll_loop():
+    import threading as _th, time as _time
+    _time.sleep(45)   # let the app finish booting first
+    while True:
+        try:
+            host, token = db.deputy_cfg()
+            if host and token and db.try_claim_poll_slot('deputy_poll_slot', 540):
+                _deputy_poll()
+        except Exception:
+            pass
+        _time.sleep(600)
+
+def _start_deputy_self_poll():
+    global _dep_poll_started
+    if _dep_poll_started or os.environ.get('MCQ_NO_BG_POLL'): return
+    _dep_poll_started = True
+    import threading as _th
+    _th.Thread(target=_deputy_self_poll_loop, daemon=True, name='deputy-self-poll').start()
 
 if __name__ == '__main__':
     create_app().run(host='0.0.0.0', port=8001, debug=True)

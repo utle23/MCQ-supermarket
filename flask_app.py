@@ -63,6 +63,7 @@ app.config['MAX_FORM_MEMORY_SIZE'] = 32 * 1024 * 1024   # Werkzeug 3.1+ (ignored
 db.init_db()                       # create/seed SQLite on first boot
 app.register_blueprint(backend.api)  # mounts /api/* on this same app
 backend.add_cors(app)              # harmless on same-origin; helps if you ever split origins
+backend._start_deputy_self_poll()  # Deputy attendance monitor polls itself every ~10 min (no external cron)
 # realtime WebSocket hub (/api/ws) — clients get push hints instead of polling
 try:
     import ws_hub

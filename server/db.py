@@ -1506,6 +1506,33 @@ def attendance_seen(ts_id, event=None):
         return bool(conn.execute('SELECT 1 FROM attendance WHERE ts_id=? LIMIT 1', (str(ts_id),)).fetchone())
     finally: conn.close()
 
+def try_claim_poll_slot(key, min_interval_sec):
+    """Atomic compare-and-swap on a settings row so exactly ONE gunicorn worker runs a
+    self-scheduled job per interval (all workers race; the UPDATE … WHERE old-value
+    guard lets a single winner through on both SQLite and Postgres)."""
+    conn = connect()
+    try:
+        now_t = time.time()
+        row = conn.execute('SELECT value_json FROM settings WHERE key=?', (key,)).fetchone()
+        if row is None:
+            try:
+                conn.execute('INSERT INTO settings(key,value_json,updated_at) VALUES(?,?,?)',
+                             (key, json.dumps(now_t), now()))
+                conn.commit()
+                return True
+            except Exception:
+                return False
+        try: last = float(json.loads(row['value_json']))
+        except Exception: last = 0
+        if now_t - last < min_interval_sec:
+            return False
+        cur = conn.execute('UPDATE settings SET value_json=?, updated_at=? WHERE key=? AND value_json=?',
+                           (json.dumps(now_t), now(), key, row['value_json']))
+        conn.commit()
+        return cur.rowcount == 1
+    finally:
+        conn.close()
+
 def deputy_cfg():
     """Deputy install + permanent token. Env vars win; else the settings table (set once via
     the super-only /api/deputy/config — the token never lives in the repo)."""
