@@ -157,7 +157,7 @@ def _deputy_norm(topic, d):
             'late_min': late, 'over_min': over}
 
 def _fmt_hm(epoch):
-    try: return time.strftime('%d %b %H:%M', time.localtime(int(epoch)))
+    try: return time.strftime('%d %b %H:%M', time.gmtime(int(epoch) + 8 * 3600))   # Perth (UTC+8)
     except Exception: return ''
 
 @api.route('/api/deputy/webhook', methods=['POST'])
@@ -657,7 +657,7 @@ def post_file():
     if size > MAX_FILE_BYTES:
         return jsonify(ok=False, error='File is larger than 30 MB'), 413
     store_id = au['store_id'] if au['role'] not in ('super', 'ba') else 'ALL'
-    fid = 'f_' + time.strftime('%Y%m%d') + '_' + secrets.token_hex(9)
+    fid = 'f_' + time.strftime('%Y%m%d', time.gmtime(time.time() + 8 * 3600)) + '_' + secrets.token_hex(9)
     name = (f.filename or 'file').replace('/', '_').replace('\\', '_')[-120:]
     mime = f.mimetype or 'application/octet-stream'
     cloud = None; chunks = 0
@@ -705,7 +705,7 @@ def post_photo():
     require_store(au, store_id)
     f = request.files.get('image')
     data_url = request.form.get('dataUrl')
-    pid = request.form.get('id') or ('p_' + time.strftime('%Y%m%d') + '_' + secrets.token_hex(5))
+    pid = request.form.get('id') or ('p_' + time.strftime('%Y%m%d', time.gmtime(time.time() + 8 * 3600)) + '_' + secrets.token_hex(5))
     pid = ''.join(c for c in pid if c.isalnum() or c in '_-')[:40] or ('p_' + secrets.token_hex(5))
     mime = 'image/jpeg'; ext = 'jpg'; data = None
     if f:

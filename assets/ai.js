@@ -56,7 +56,7 @@
     try{ data=await compressImage(f,1000,0.6); }catch(e){ try{ data=URL.createObjectURL(f); }catch(_){ } }
     try{ vision=await aiVision(f); }catch(e){}
     if(tool==='expiry'||tool==='price'){ try{ ocr=await aiOcr(f); }catch(e){ ocr=''; } }
-    st.cap[tool]={photo:data, vision, ocr, time:new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}), file:f.name};
+    st.cap[tool]={photo:data, vision, ocr, time:(window.perthTimeHM?perthTimeHM():new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})), file:f.name};
     renderAIUse();
   };
   window.aiClear=function(tool){ const st=aiState(); delete st.cap[tool]; renderAIUse(); };
@@ -146,8 +146,8 @@
     a.busy=true; renderAIUse(); let data=null,v={neat:75,full:75,pres:75,avg:75,risk:'Medium'};
     try{ data=await compressImage(f,1000,0.6); }catch(e){ try{ data=URL.createObjectURL(f); }catch(_){ } }
     try{ v=await aiVision(f); }catch(e){} a.busy=false;
-    if(which==='before'){ a.res={...v, photo:data, time:new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}), fixed:false}; }
-    else { a.res=a.res||{}; a.res.fixPhoto=data; a.res.fixTime=new Date().toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}); a.res.fixed=true; }
+    if(which==='before'){ a.res={...v, photo:data, time:(window.perthTimeHM?perthTimeHM():new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})), fixed:false}; }
+    else { a.res=a.res||{}; a.res.fixPhoto=data; a.res.fixTime=(window.perthTimeHM?perthTimeHM():new Date().toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})); a.res.fixed=true; }
     renderAIUse();
   };
   window.aiFvReport=function(fmt){ const fv=fvInit(); const cols=[{label:'Area',get:a=>a.name},{label:'Assigned',get:a=>a.staff||'—'},{label:'Score',get:a=>a.res?a.res.avg+'/100':'—'},{label:'Risk',get:a=>a.res?a.res.risk:'—'},{label:'Status',get:a=>!a.res?'Not checked':a.res.avg<75?(a.res.fixed?'Fixed':'Needs attention'):'OK'},{label:'Checked',get:a=>a.res?a.res.time:'—'}]; expRecords('Fruit & Veg Display Report',cols,fv.areas,fmt); };
@@ -182,7 +182,7 @@
   }
 
   /* ---------------- Order suggestions ---------------- */
-  function aiOrder(){ const st=aiState(); const day=st.orderDay||((new Date().getDay()+1)%7); const dn=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  function aiOrder(){ const st=aiState(); const day=st.orderDay||((perthNow().getDay()+1)%7); const dn=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
     const weekend=(day===6||day===0);
     const sug=weekend
       ? [['Baguette / banh mi rolls','+15%','High weekend banh mi sales'],['Roast pork','+10%','Strong Saturday demand'],['Pickled carrot & herbs','+10%','Pairs with banh mi'],['Fruit salad','+8%','Weekend foot traffic'],['Asian greens','+12%','Weekend cooking']]

@@ -33,7 +33,7 @@ function renderStaffHome(){
   $('#content').innerHTML=`
     <div class="staff-hero">
       <div class="sh-greet"><div class="sh-hi">Hi, ${esc((u.name||'Team').split(' ')[0])} 👋</div>
-        <div class="sh-sub">MCQ ${esc(State.branch)} · ${new Date().toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'short'})}</div></div>
+        <div class="sh-sub">MCQ ${esc(State.branch)} · ${perthDateLbl({weekday:'long',day:'numeric',month:'short'})}</div></div>
       <div class="sh-badge"><b>${openItems}</b><span>open items</span></div>
     </div>
     ${profileNudgeHTML()}
@@ -1611,7 +1611,7 @@ function ckQueueTempAlert(i,temp){
   // email the store admin + temp-alert recipients (silent via Brevo if configured)
   if(window.mcqEmail && mcqEmail.alert){
     const subject=`🌡️ TEMP ALERT · ${State.branch} · ${r.meta.equipment||r.task||r.dept}`;
-    const body=`Temperature OUT OF RANGE\n\nStore: ${State.branch}\nDepartment: ${r.dept}\nEquipment: ${r.meta.equipment||r.task||'—'}\nReading: ${temp.value!=null?temp.value+' °C':'—'}\nSafe range: ${temp.range||''}\nSession: ${State.chk.session}\nTime: ${new Date().toLocaleString()}\n\nPlease check the unit and record the corrective action.`;
+    const body=`Temperature OUT OF RANGE\n\nStore: ${State.branch}\nDepartment: ${r.dept}\nEquipment: ${r.meta.equipment||r.task||'—'}\nReading: ${temp.value!=null?temp.value+' °C':'—'}\nSafe range: ${temp.range||''}\nSession: ${State.chk.session}\nTime: ${perthStamp()}\n\nPlease check the unit and record the corrective action.`;
     const res=mcqEmail.alert(subject,body,DB.checklist.tempAlertEmails||[]);
     if(res==='silent') toast('🌡️ Temp alert emailed to admin');
   }
@@ -1712,8 +1712,8 @@ function ckDoSubmit(){
   const resp=(State.chk.resp||{})[State.chk.dept]||{};
   const ymd=todayISO();
   const sub={ id:makeRecordId('CKS',State.branch),
-    store:State.branch, dept:State.chk.dept, session:State.chk.session, date:ymd, dayName:new Date().toLocaleDateString(undefined,{weekday:'long'}),
-    by:myIdentityName(), responsible:resp.p1||'', created:dISO()+' '+new Date().toTimeString().slice(0,5),
+    store:State.branch, dept:State.chk.dept, session:State.chk.session, date:ymd, dayName:perthDateLbl({weekday:'long'}),
+    by:myIdentityName(), responsible:resp.p1||'', created:dISO()+' '+perthTimeHM(),
     progress: totalN?Math.round(doneN/totalN*100):0, done:doneN, total:totalN, status:'Submitted', tempAlerts:out, items };
   DB.checklistSubs=DB.checklistSubs||[]; DB.checklistSubs.unshift(sub);
   auditLog('create','checklistSubmission',sub.id,sub.store,null,sub,`${sub.dept} ${sub.session}`);
@@ -1926,7 +1926,7 @@ function issSubmit(){
     if(empty){ e.classList.add('invalid','shake'); setTimeout(()=>e.classList.remove('shake'),450); bad=bad||e; }});
   if(bad){ toast('Please complete the required fields'); bad.scrollIntoView({behavior:'smooth',block:'center'}); return; }
   const name=val('iss-name'), desc=val('iss-desc'), store=storeForWrite($('#iss-store')?.value), prio=State.iss.prio||'Normal';
-  const now=dISO()+' '+new Date().toTimeString().slice(0,5);
+  const now=dISO()+' '+perthTimeHM();
   const sev=DB.prioToSeverity[prio]; const photo=State.iss.photo||''; let modOut=mod, ref, rec;
   if(mod==='maintenance'){
     const dept=val('iss-dept'), loc=val('iss-loc'), equip=val('iss-equip');
@@ -2420,7 +2420,7 @@ const EXP_CSS=`*{box-sizing:border-box}body{font-family:'Segoe UI',Arial,sans-se
 const EXP_DOC_CSS=`table{border-collapse:collapse;width:100%;font-family:Calibri,Arial,sans-serif;font-size:11pt}th{background:#0e9f6e;color:#fff;border:1px solid #0b8f63;padding:6px 9px;text-align:left}td{border:1px solid #d9e2ec;padding:6px 9px;vertical-align:top}.cbx.on{color:#0e9f6e}.sched-dept td{background:#ecfdf5;color:#047857;font-weight:bold}.sched-cbx{font-size:16pt;font-weight:bold}.sched-cbx.done{color:#15803d}.sched-cbx.todo{color:#a16207}.sched-day{text-align:center}.sched-day small{display:block;font-size:8pt;color:#64748b}.sign-line,.note-line{display:block;border-bottom:1px solid #94a3b8;height:16px;min-width:80px}`;
 function expPrintReport(title,inner,meta){
   const w=window.open('','_blank'); if(!w){ toast('Allow pop-ups to print / export'); return; }
-  const when=new Date().toLocaleString(), role=isSuper()?'Super Admin':isAdmin()?'Admin':'Staff';
+  const when=perthStamp(), role=isSuper()?'Super Admin':isAdmin()?'Admin':'Staff';
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title><style>${EXP_CSS}</style></head><body>
     <div class="rpt-head">${MCQ_LOGO_URL?`<img src="${MCQ_LOGO_URL}" alt="MCQ" style="height:50px;width:auto;object-fit:contain">`:'<div class="rpt-logo">MCQ</div>'}<div><div class="rpt-title">${esc(title)}</div><div class="rpt-sub">MCQ Supermarket · ${esc(expScope())}</div></div><div class="rpt-stamp">${esc(when)}<br>${esc(role)} view</div></div>
     ${meta?`<div class="rpt-meta">${meta}</div>`:''}
@@ -2430,7 +2430,7 @@ function expPrintReport(title,inner,meta){
   w.document.close();
 }
 function expDocBlob(title,inner,meta){
-  const when=new Date().toLocaleString();
+  const when=perthStamp();
   const html=`<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word"><head><meta charset="utf-8"><style>${EXP_DOC_CSS}</style></head><body>
     ${MCQ_LOGO_URL?`<img src="${MCQ_LOGO_URL}" alt="MCQ" style="height:42px;width:auto"><br>`:''}
     <h2 style="color:#0e9f6e;margin:0 0 2px">MCQ Supermarket — ${esc(title)}</h2>
@@ -2440,7 +2440,7 @@ function expDocBlob(title,inner,meta){
   expDownload(new Blob(['﻿'+html],{type:'application/msword'}), expFileName(title,'doc')); toast('⬇️ Word exported');
 }
 function expXlsBlob(title,inner,meta){
-  const when=new Date().toLocaleString(), cols=expColsOf(inner);
+  const when=perthStamp(), cols=expColsOf(inner);
   const style='<style>table{border-collapse:collapse;font-family:Calibri,Arial}th{background:#0e9f6e;color:#fff;border:1px solid #cbd5e1;padding:7px 10px;text-align:left;font-size:12px}td{border:1px solid #e2e8f0;padding:6px 10px;font-size:12px}.sched-dept td{background:#ecfdf5;color:#047857;font-weight:bold}.sched-cbx{font-size:16px;font-weight:bold}.sched-cbx.done{color:#15803d}.sched-cbx.todo{color:#a16207}.sched-day{text-align:center}.sched-day small{display:block;color:#64748b;font-size:9px}.sign-line,.note-line{display:block;border-bottom:1px solid #94a3b8;height:16px;min-width:80px}</style>';
   const head=`<tr><td colspan="${cols}" style="font-size:17px;font-weight:bold;color:#0e9f6e;padding:8px 10px">MCQ Supermarket — ${esc(title)}</td></tr><tr><td colspan="${cols}" style="color:#64748b;padding:0 10px 10px">${esc(expScope())} · Generated ${esc(when)}${meta?' · '+meta.replace(/<[^>]+>/g,''):''}</td></tr>`;
   const html='<html><head><meta charset="utf-8">'+style+'</head><body><table>'+head+inner+'</table></body></html>';
@@ -2513,7 +2513,7 @@ async function ckAllStoresPDF(session){
     doc.setTextColor(i===3&&tempBad?185:14,i===3&&tempBad?28:159,i===3&&tempBad?28:110); doc.setFont('helvetica','bold'); doc.setFontSize(17); doc.text(String(t[1]),x+tw/2,ty+30,{align:'center'});
     doc.setTextColor(100); doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.text(t[0],x+tw/2,ty+46,{align:'center'}); });
   if(missing){ doc.setTextColor(255,237,213); doc.setFontSize(9.5); doc.text(missing+' photo(s) still syncing from a device — will appear in later reports',PW/2,ty+82,{align:'center'}); }
-  doc.setTextColor(255); doc.setFontSize(9); doc.text('Generated '+new Date().toLocaleString()+'  ·  MCQ International',PW/2,PH-32,{align:'center'});
+  doc.setTextColor(255); doc.setFontSize(9); doc.text('Generated '+perthStamp()+'  ·  MCQ International',PW/2,PH-32,{align:'center'});
   // ---- per store: FULL checklist, every task ticked/unticked ----
   const sessionsInScope=session?[session]:['Opening','Mid-afternoon','Closing'];
   const tplRows=DB.checklist.items.map(ckItem);
@@ -2651,7 +2651,7 @@ async function ckSharePDF(session){
     tiles.forEach((t,i)=>{ const x=sx+i*(tw+gap); doc.setFillColor(255,255,255); doc.roundedRect(x,ty,tw,60,9,9,'F');
       doc.setTextColor(i===2&&outCount?185:14,i===2&&outCount?28:159,i===2&&outCount?28:110); doc.setFont('helvetica','bold'); doc.setFontSize(21); doc.text(String(t[1]),x+tw/2,ty+31,{align:'center'});
       doc.setTextColor(100); doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.text(t[0],x+tw/2,ty+48,{align:'center'}); });
-    doc.setTextColor(255); doc.setFontSize(9.5); doc.text('Generated '+new Date().toLocaleString()+'  ·  MCQ International',PW/2,PH-34,{align:'center'});
+    doc.setTextColor(255); doc.setFontSize(9.5); doc.text('Generated '+perthStamp()+'  ·  MCQ International',PW/2,PH-34,{align:'center'});
     doc.addPage();
   })();
   function header(){
@@ -2780,7 +2780,7 @@ function expRecords(title,cols,rows,fmt){
 
 /* ============================================================ CLEANING & MAINTENANCE — editable weekly schedule */
 const SCHED_DAYS=['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-function schedWeekStart(off){ const d=new Date(); d.setHours(0,0,0,0); const wd=(d.getDay()+6)%7; d.setDate(d.getDate()-wd+(off||0)*7); return d; }
+function schedWeekStart(off){ const d=perthNow(); d.setHours(0,0,0,0); const wd=(d.getDay()+6)%7; d.setDate(d.getDate()-wd+(off||0)*7); return d; }
 function schedWeekKey(off){ return dISO(schedWeekStart(off)); }
 function schedTickKey(id,day,off){ return schedWeekKey(off)+'|'+id+'|'+day; }
 function schedTab(t){ State.sched=State.sched||{}; State.sched.tab=t; renderSchedules(); }
@@ -3207,7 +3207,7 @@ function mgrSynthSubs(){
   if(State._synthSubs) return State._synthSubs;
   const depts=(DB.checklist&&DB.checklist.depts)||['MANAGER','CASHIER','FV','GROCERY','FROZEN & DAIRY','BUTCHER'];
   const stores=DB.stores, names=DB.staff.map(s=>s.name);
-  const today=new Date(), fmt=d=>dISO(d), dn=d=>d.toLocaleDateString(undefined,{weekday:'long'});
+  const today=perthNow(), fmt=d=>dISO(d), dn=d=>d.toLocaleDateString(undefined,{weekday:'long'});
   const out=[];
   [0,1,2,3,4,5,6].forEach(off=>{ const d=new Date(today); d.setDate(d.getDate()-off); const ds=fmt(d), dname=dn(d);
     stores.forEach((store,si)=>depts.forEach((dept,di)=>['Opening','Closing'].forEach((session,sei)=>{
@@ -3240,13 +3240,13 @@ function mgrSubs(){
   return mcqDemoMode() ? out.concat(mgrSynthSubs()) : out;
 }
 /* ---------- daily operations pulse + "needs attention" (real data only) ---------- */
-function ckTodayStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }   // LOCAL date (toISOString is UTC — wrong for Perth between midnight and 8am)
+function ckTodayStr(){ return todayISO(); }   // PERTH date — never the device timezone
 function ckDeadlinePassed(session){
   const t=ckDeadline(session); if(!t) return false;
   const m=/(\d{1,2}):(\d{2})\s*(AM|PM)?/i.exec(t); if(!m) return false;
   let h=+m[1]; const mi=+m[2], ap=(m[3]||'').toUpperCase();
   if(ap==='PM'&&h<12)h+=12; if(ap==='AM'&&h===12)h=0;
-  const now=new Date(); return (now.getHours()*60+now.getMinutes())>(h*60+mi);
+  const now=perthNow(); return (now.getHours()*60+now.getMinutes())>(h*60+mi);
 }
 function ckMyScope(s){ return isSuper() || s===State.branch; }
 function ckOpsPulse(){
@@ -3804,7 +3804,7 @@ function renderWhatsapp(){
     ['⚠️','Incidents',DB.modules.incident.records.filter(r=>!['Closed','Cancelled'].includes(r.status)).length,'open','#ef4444'],
     ['🚚','Deliveries',DB.modules.delivery.records.length,'trips','#3b82f6'] ];
   let allPhotos=[]; Object.values(byDept).forEach(d=>allPhotos=allPhotos.concat(d.photos));
-  const date=new Date().toLocaleDateString();
+  const date=perthDateLbl();
   const deptCards=Object.entries(byDept).map(([dept,d])=>{
     const pct=d.total?Math.round(d.done/d.total*100):0;
     const realThumbs=d.photos.map(u=>`<img src="${imgSrc(u)}" loading="lazy">`).join('');
@@ -3870,7 +3870,7 @@ function renderWhatsappSuper(){
         ${thumbs?`<div class="wa-thumbs">${thumbs}</div>`:''}</div></div>`);
     msgLines.push(`• ${store}: ${subs.length?`${done}/${total} done (${pct}%)${tempBad?` · 🌡️ ${tempBad}`:''}${missing.length?` · waiting: ${missing.join(', ')}`:''}`:`no ${period} submission yet`}`);
   });
-  const dateLbl=new Date().toLocaleDateString();
+  const dateLbl=perthDateLbl();
   const msg=`*MCQ All Stores — ${period} Report (${dateLbl})*\n`+msgLines.join('\n')+
     (tempBadTotal?`\n\n⚠️ TEMPERATURE ALERTS: ${tempBadTotal} reading(s) OUT OF RANGE`:'')+
     `\n\n✅ Company-wide: ${grandDone}/${grandTotal} tasks done\n📷 Photos: ${allPhotos.length}\n\n_Sent from MCQ Supermarket_`;
@@ -3913,7 +3913,7 @@ window.mcqEmail={
   _html(title,body){
     // professional, email-client-safe layout (all inline styles). `body` is plain text → pre-wrap.
     const t=String(title||''); const accent = /violation|warning|cảnh cáo/i.test(t) ? '#b45309' : /issue|incident|complaint|maintenance|urgent|critical/i.test(t) ? '#dc2626' : '#0e9f6e';
-    const when=new Date().toLocaleString();
+    const when=perthStamp();
     return `<div style="background:#f1f5f9;padding:24px 12px;font-family:'Segoe UI',Arial,Helvetica,sans-serif">
       <div style="max-width:600px;margin:auto;background:#fff;border-radius:16px;overflow:hidden;box-shadow:0 6px 24px rgba(15,23,42,.10)">
         <div style="background:linear-gradient(135deg,#0e9f6e,#0891b2);padding:22px 26px;color:#fff">

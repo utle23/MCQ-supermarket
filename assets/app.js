@@ -1041,7 +1041,7 @@ function submitForm(e,modId){
   fd.forEach((v,k)=>{obj[k]=obj[k]?obj[k]+', '+v:v;});
   const writeStore=storeForWrite(obj.store);
   const id=makeRecordId(m.idPrefix,writeStore);
-  const rec=Object.assign({id,created:dISO()+' '+new Date().toTimeString().slice(0,5),store:writeStore,status:m.statuses[0],
+  const rec=Object.assign({id,created:dISO()+' '+perthTimeHM(),store:writeStore,status:m.statuses[0],
     severity:obj.severity||obj.priority,priority:obj.priority,summary:obj.whatHappened||obj.shortDescription||obj.issueDescription||obj.description||obj.caseDetails,
     issue:obj.issueDescription,shortDescription:obj.shortDescription,category:obj.category||obj.issueCategory||obj.concernCategory,
     equipment:obj.equipmentName,type:obj.incidentType,employee:obj.employeeName,step:obj.step||obj.disciplinaryStep,department:obj.department,age:0},obj);

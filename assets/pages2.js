@@ -386,7 +386,7 @@ function renderBirthday(){
   setAccent('#f9a825'); setCrumb('🎂','Birthdays','From staff profiles · '+(isSuper()?(State.superStore&&State.superStore!=='ALL'?State.superStore:'all stores'):('MCQ '+State.branch)));
   const list=bdStaffList().map(s=>{ const bd=bdCalc(s.dob); const g=bdGiftRec(s)||{}; return bd?{...s,bd,gift:g.favoriteGift||'',status:g.status||''}:null; }).filter(Boolean).sort((a,b)=>a.bd.du-b.bd.du);
   const todayList=list.filter(r=>r.bd.du===0), next7=list.filter(r=>r.bd.du<=7), next30=list.filter(r=>r.bd.du<=30);
-  const m=new Date().getMonth()+1, thisMonth=list.filter(r=>r.bd.month===m);
+  const m=perthNow().getMonth()+1, thisMonth=list.filter(r=>r.bd.month===m);
   const missing=(DB.staff||[]).filter(s=>!s.dob && s.active!==0 && !s.archived && (isSuper()? (!State.superStore||State.superStore==='ALL'||s.store===State.superStore) : s.store===State.branch)).length;
   const next=list.find(r=>r.bd.du>0);
   const hero = todayList.length

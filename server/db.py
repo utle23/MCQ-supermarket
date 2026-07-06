@@ -180,7 +180,10 @@ def connect():
     return _Conn(conn)
 
 def now():
-    return time.strftime('%Y-%m-%d %H:%M:%S')
+    # Perth wall-clock (Australia/Perth = UTC+8, no DST). Production servers run in UTC,
+    # so server-side timestamps (messages, announcements, submissions, audit) must be
+    # shifted or every displayed time reads 8 hours early.
+    return time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(time.time() + 8 * 3600))
 
 def get_setting(key, default=None):
     conn = connect()

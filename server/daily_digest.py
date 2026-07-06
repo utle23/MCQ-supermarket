@@ -38,7 +38,9 @@ def db_safe(s):
 
 
 def today_str():
-    return time.strftime('%Y-%m-%d')
+    # Perth calendar day (UTC+8) — the server runs in UTC, and the 9:30 PM digest must
+    # report Perth's "today", not the UTC date (which flips at 8 AM Perth).
+    return time.strftime('%Y-%m-%d', time.gmtime(time.time() + 8 * 3600))
 
 
 _TMP_PHOTOS = []   # temp files created for Cloudinary-hosted photos (cleaned at exit)
