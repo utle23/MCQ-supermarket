@@ -1425,7 +1425,45 @@ def revoke_device(au, device_id):
 
 # ============================================================ DEPUTY ATTENDANCE
 LATE_GRACE_MIN = 10          # clock-in later than this many minutes past the rostered start = a lateness event
-VERBAL_TO_WRITTEN = 3        # this many verbal warnings escalate the next one to a written warning
+VERBAL_TO_WRITTEN = 3        # (legacy constant — the ladder below is what applies now)
+LATE_WINDOW_DAYS = 183       # Khoi's escalation window: lateness count resets on a rolling 6 months
+
+def late_ladder_step(conn, store, staff_id):
+    """Lateness escalation ladder (per staff, rolling 6-month window, INCLUDING the event
+    being recorded now): 1st-3rd → Verbal Discussion, 4th → Written Warning,
+    5th → Final Warning, 6th+ → Termination Referral. Returns (occurrence_number, step)."""
+    cutoff = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(time.time() + 8 * 3600 - LATE_WINDOW_DAYS * 86400))
+    n = conn.execute("SELECT COUNT(*) c FROM attendance WHERE store_id=? AND staff_id=? AND event='clockin' AND late_min>? AND created_at>=?",
+                     (store, str(staff_id), LATE_GRACE_MIN, cutoff)).fetchone()['c']
+    nth = n + 1
+    step = ('Verbal Discussion' if nth <= 3 else 'Written Warning' if nth == 4
+            else 'Final Warning' if nth == 5 else 'Termination Referral')
+    return nth, step
+
+def attendance_seen(ts_id):
+    """Has this Deputy timesheet already been processed (webhook or a previous poll)?"""
+    if not ts_id: return False
+    conn = connect()
+    try: return bool(conn.execute('SELECT 1 FROM attendance WHERE ts_id=? LIMIT 1', (str(ts_id),)).fetchone())
+    finally: conn.close()
+
+def deputy_cfg():
+    """Deputy install + permanent token. Env vars win; else the settings table (set once via
+    the super-only /api/deputy/config — the token never lives in the repo)."""
+    host = (os.environ.get('DEPUTY_HOST') or get_setting('deputy_host') or '').rstrip('/')
+    token = os.environ.get('DEPUTY_TOKEN') or get_setting('deputy_token') or ''
+    return host, token
+
+def add_violation_record(store, rec):
+    """Insert a violation into the records store (same shape the client's Violation module
+    reads) — used by the automatic late-clock-in ladder."""
+    conn = connect()
+    try:
+        conn.execute('INSERT INTO records(id,store_id,module,data_json,created_at) VALUES(?,?,?,?,?) ON CONFLICT (store_id,module,id) DO UPDATE SET data_json=excluded.data_json',
+                     (rec['id'], store, 'violation', json.dumps(rec), now()))
+        conn.commit()
+    finally:
+        conn.close()
 
 def _to_epoch(v):
     """Deputy sends unix seconds (int) or ISO strings — normalise to epoch seconds."""
@@ -1453,13 +1491,13 @@ def _match_staff_for_deputy(email, name, deputy_id):
             try: d = json.loads(r['data_json'] or '{}')
             except Exception: d = {}
             if want_d and str(d.get('deputyId') or '') == want_d:
-                return {'store': r['store_id'], 'id': d.get('id'), 'name': d.get('name')}
+                return {'store': r['store_id'], 'id': d.get('id'), 'name': d.get('name'), 'email': d.get('email') or ''}
             e = str(d.get('email') or '').strip().lower()
             if want_e and e == want_e and not by_email:
-                by_email = {'store': r['store_id'], 'id': d.get('id'), 'name': d.get('name')}
+                by_email = {'store': r['store_id'], 'id': d.get('id'), 'name': d.get('name'), 'email': d.get('email') or ''}
             n = str(d.get('name') or '').strip().lower()
             if want_n and n == want_n and not by_name:
-                by_name = {'store': r['store_id'], 'id': d.get('id'), 'name': d.get('name')}
+                by_name = {'store': r['store_id'], 'id': d.get('id'), 'name': d.get('name'), 'email': d.get('email') or ''}
         return by_email or by_name
     finally:
         conn.close()
@@ -1472,12 +1510,9 @@ def record_attendance(ev):
         late = int(ev.get('late_min') or 0)
         over = int(ev.get('over_min') or 0)
         warning = ''
-        prior_verbal = 0
+        nth = 0
         if ev.get('event') == 'clockin' and late > LATE_GRACE_MIN and ev.get('staff_id'):
-            prior_verbal = conn.execute(
-                "SELECT COUNT(*) c FROM attendance WHERE store_id=? AND staff_id=? AND warning IN ('verbal','written')",
-                (ev.get('store_id'), str(ev.get('staff_id')))).fetchone()['c']
-            warning = 'written' if (prior_verbal + 1) >= VERBAL_TO_WRITTEN else 'verbal'
+            nth, warning = late_ladder_step(conn, ev.get('store_id'), ev.get('staff_id'))
         aid = 'att_' + secrets.token_hex(8)
         conn.execute('''INSERT INTO attendance(id,ts_id,event,store_id,staff_id,staff_name,deputy_employee,
             scheduled_start,actual_start,scheduled_end,actual_end,late_min,over_min,warning,created_at)
@@ -1486,8 +1521,7 @@ def record_attendance(ev):
              ev.get('staff_name'), str(ev.get('deputy_employee') or ''), ev.get('scheduled_start'), ev.get('actual_start'),
              ev.get('scheduled_end'), ev.get('actual_end'), late, over, warning, now()))
         conn.commit()
-        return {'late_min': late, 'over_min': over, 'warning': warning,
-                'warning_number': (prior_verbal + 1) if warning else 0}
+        return {'late_min': late, 'over_min': over, 'warning': warning, 'warning_number': nth}
     finally:
         conn.close()
 

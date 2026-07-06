@@ -190,31 +190,176 @@ def deputy_webhook():
         # notify the employee's inbox
         try:
             au = {'role': 'super', 'store_id': None, 'staff_id': None, 'staff_name': '⏱ Attendance'}
+            if ev['event'] == 'clockin' and res['late_min'] > db.LATE_GRACE_MIN:
+                # full late pipeline: violation record + staff inbox + managers copy + email
+                _deputy_late_effects(m, ev, res, dept_name=str((d.get('OperationalUnitName') if isinstance(d, dict) else '') or ''))
+                continue
             if ev['event'] == 'clockin':
-                if res['late_min'] > db.LATE_GRACE_MIN:
-                    w = res['warning']
-                    subj = ('🔴 Written warning — repeated lateness' if w == 'written'
-                            else '🟠 Verbal warning — late clock-in')
-                    body_html = ('<p>You clocked in <b>%d minutes late</b>%s.</p>'
-                                 '<p>This is <b>%s warning #%d</b> for lateness.%s</p>'
-                                 % (res['late_min'], (' at ' + _fmt_hm(ev['actual_start']) if ev['actual_start'] else ''),
-                                    w, res['warning_number'],
-                                    (' Reaching %d verbal warnings escalates to a written warning.' % db.VERBAL_TO_WRITTEN if w == 'verbal' else '')))
-                else:
-                    subj = '✅ Clock-in recorded — on time'
-                    body_html = '<p>Thanks — you clocked in on time%s. Have a great shift! 💚</p>' % (' at ' + _fmt_hm(ev['actual_start']) if ev['actual_start'] else '')
+                subj = '✅ Clock-in recorded — on time'
+                body_html = '<p>Thanks — you clocked in on time%s. Have a great shift! 💚</p>' % (' at ' + _fmt_hm(ev['actual_start']) if ev['actual_start'] else '')
             else:
                 subj = '👋 Clock-out recorded'
                 body_html = ('<p>You clocked out%s.%s</p>'
                              % ((' at ' + _fmt_hm(ev['actual_end']) if ev['actual_end'] else ''),
                                 (' You stayed <b>%d minutes past</b> your rostered finish.' % res['over_min'] if res['over_min'] > 0 else '')))
             db.send_message(au, ev['store_id'], 'message', subj, body_html, to_staff_id=ev['staff_id'], to_super=False, to_managers=False)
-            if ev['event'] == 'clockin' and res['warning']:   # managers get a copy of warnings
-                db.send_message(au, ev['store_id'], 'message', '⏱ ' + (m['name'] or '') + ' — ' + res['warning'] + ' warning (late ' + str(res['late_min']) + 'm)',
-                                body_html, to_managers=True, to_super=True)
         except Exception:
             pass
     return jsonify(ok=True, processed=processed, received=len(items))
+
+def _deputy_late_effects(m, ev, res, dept_name=''):
+    """Everything that happens for ONE late clock-in (>10 min past the rostered start):
+    a violation record in that store's Violation module (Khoi's 6-month ladder step),
+    an inbox notice to the employee + a copy to the store's managers/super, and a
+    branded email to the employee's gmail. `m` = matched MCQ staff {store,id,name,email}."""
+    step = res.get('warning') or 'Verbal Discussion'
+    nth = res.get('warning_number') or 1
+    late = res.get('late_min') or 0
+    at_hm = _fmt_hm(ev.get('actual_start')) if ev.get('actual_start') else ''
+    sched_hm = _fmt_hm(ev.get('scheduled_start')) if ev.get('scheduled_start') else ''
+    sev = 'Minor' if step == 'Verbal Discussion' else 'Serious' if step == 'Written Warning' else 'Major'
+    desc = ('Clocked in %d minutes late%s%s%s.'
+            % (late, (' at ' + at_hm) if at_hm else '', (' (rostered ' + sched_hm + ')') if sched_hm else '',
+               (' · Deputy department: ' + dept_name) if dept_name else ''))
+    rec = {'id': 'VIO-ATT-' + secrets.token_hex(4).upper(), 'created': db.now()[:16],
+           'staffName': m.get('name') or '', 'store': m['store'], 'category': 'Late clock-in',
+           'severity': sev, 'step': step, 'status': step, 'description': desc,
+           'actionTaken': 'Automatic attendance monitor (Deputy)', 'followUpDate': '',
+           'reportedBy': 'Attendance monitor', 'auto': True}
+    try: db.add_violation_record(m['store'], rec)
+    except Exception: pass
+    icon = {'Verbal Discussion': '🟠', 'Written Warning': '🔴', 'Final Warning': '⛔', 'Termination Referral': '🚫'}.get(step, '🟠')
+    subj = '%s Late clock-in — %d min · %s' % (icon, late, step)
+    body_html = ('<p>You clocked in <b>%d minutes late</b>%s%s%s.</p>'
+                 '<p>This is lateness <b>#%d</b> in the last 6 months → <b>%s</b>.</p>'
+                 '<p>Reference %s · Please speak with your manager — this is a formal record.</p>'
+                 % (late, (' at <b>' + at_hm + '</b>') if at_hm else '',
+                    (' (rostered ' + sched_hm + ')') if sched_hm else '',
+                    (' · Deputy department: <b>' + dept_name + '</b>') if dept_name else '',
+                    nth, step, rec['id']))
+    au = {'role': 'super', 'store_id': None, 'staff_id': None, 'staff_name': '⏱ Attendance'}
+    try:
+        db.send_message(au, m['store'], 'violation', subj, body_html, to_staff_id=m['id'], to_super=True, to_managers=False)
+        db.send_message(au, m['store'], 'message',
+                        '⏱ %s — %s (late %dm, lateness #%d)' % (m.get('name') or '', step, late, nth),
+                        body_html, to_managers=True, to_super=True)
+    except Exception: pass
+    email = str(m.get('email') or '').strip()
+    if email and '@' in email:
+        html = ('<div style="font-family:Arial,Helvetica,sans-serif;max-width:600px;margin:auto">'
+                '<div style="background:linear-gradient(135deg,#0e9f6e,#0891b2);color:#fff;padding:18px 22px;border-radius:12px 12px 0 0">'
+                '<b style="font-size:17px">MCQ Supermarket</b><div style="font-size:12px;opacity:.9">Attendance notice · %s</div></div>'
+                '<div style="border:1px solid #e5e7eb;border-top:0;padding:20px 22px;border-radius:0 0 12px 12px;font-size:14px;line-height:1.65;color:#334155">'
+                '<p>Dear %s,</p>%s<p style="color:#64748b;font-size:12px">Sent automatically from the MCQ attendance monitor (Deputy clock-in data). Do not reply.</p></div></div>'
+                % (m['store'], m.get('name') or 'team member', body_html))
+        try: _brevo_send([{'email': email, 'name': m.get('name') or email}],
+                         'MCQ %s · Late clock-in — %s' % (m['store'], step), html)
+        except Exception: pass
+    return rec['id']
+
+# ---------- Deputy POLLING (no webhook needed): cron-job.org hits this every ~10 min ----------
+_dep_emp_cache = {}
+def _deputy_get(host, token, path):
+    req = urllib.request.Request(host + path, headers={'Authorization': 'OAuth ' + token, 'Accept': 'application/json'})
+    return json.loads(urllib.request.urlopen(req, timeout=15, context=_TLS).read().decode())
+
+def _deputy_employee_email(host, token, emp_id):
+    """Employee email, cached. Deputy keeps it on Employee or on the linked Contact record."""
+    key = str(emp_id)
+    if key in _dep_emp_cache: return _dep_emp_cache[key]
+    email = ''; name = ''
+    try:
+        e = _deputy_get(host, token, '/api/v1/resource/Employee/' + key)
+        name = str(e.get('DisplayName') or e.get('FirstName', '') or '')
+        for f in ('Email', 'EmailAddress'):
+            if e.get(f): email = str(e[f]); break
+        if not email and e.get('Contact'):
+            c = _deputy_get(host, token, '/api/v1/resource/Contact/' + str(e['Contact']))
+            for f in ('Email', 'Email1', 'Email2'):
+                if c.get(f): email = str(c[f]); break
+    except Exception:
+        pass
+    _dep_emp_cache[key] = (email, name)
+    return email, name
+
+def _deputy_poll():
+    """Pull today's Deputy timesheets and run every NEW clock-in through the lateness
+    pipeline. Only Deputy employees whose gmail (or exact name) exists in MCQ Staff
+    Members are processed — everyone else is skipped, per store isolation."""
+    host, token = db.deputy_cfg()
+    if not host or not token:
+        return {'error': 'Deputy not configured — POST /api/deputy/config {host, token} as Super', 'processed': 0}
+    today = db.now()[:10]
+    q = {'search': {'d': {'field': 'Date', 'type': 'eq', 'data': today}},
+         'join': ['OperationalUnitObject'], 'max': 500}
+    req = urllib.request.Request(host + '/api/v1/resource/Timesheet/QUERY',
+                                 data=json.dumps(q).encode(),
+                                 headers={'Authorization': 'OAuth ' + token, 'Content-Type': 'application/json', 'Accept': 'application/json'},
+                                 method='POST')
+    rows = json.loads(urllib.request.urlopen(req, timeout=25, context=_TLS).read().decode())
+    if not isinstance(rows, list):
+        return {'error': 'unexpected Deputy response', 'processed': 0}
+    seen = skipped = late_n = processed = 0
+    for t in rows:
+        if not isinstance(t, dict): continue
+        ts_id = str(t.get('Id') or '')
+        actual_start = db._to_epoch(t.get('StartTime'))
+        if not ts_id or not actual_start: continue
+        if db.attendance_seen(ts_id): seen += 1; continue
+        email, dep_name = _deputy_employee_email(host, token, t.get('Employee'))
+        ou = t.get('OperationalUnitObject') if isinstance(t.get('OperationalUnitObject'), dict) else {}
+        dept_name = str(ou.get('OperationalUnitName') or '')
+        m = db._match_staff_for_deputy(email, dep_name, t.get('Employee'))
+        if not m or not m.get('id'): skipped += 1; continue   # gmail not in MCQ → not ours to notify
+        sched_start = None
+        if t.get('Roster'):
+            try:
+                ro = _deputy_get(host, token, '/api/v1/resource/Roster/' + str(t['Roster']))
+                sched_start = db._to_epoch(ro.get('StartTime'))
+            except Exception: pass
+        late = max(0, round((actual_start - sched_start) / 60)) if sched_start else 0
+        ev = {'ts_id': ts_id, 'event': 'clockin', 'store_id': m['store'], 'staff_id': m['id'],
+              'staff_name': m['name'], 'deputy_employee': str(t.get('Employee') or ''),
+              'scheduled_start': sched_start, 'actual_start': actual_start,
+              'scheduled_end': None, 'actual_end': None, 'late_min': late, 'over_min': 0}
+        res = db.record_attendance(ev)
+        processed += 1
+        if res['late_min'] > db.LATE_GRACE_MIN:
+            late_n += 1
+            try: _deputy_late_effects(m, ev, res, dept_name=dept_name)
+            except Exception: pass
+    return {'processed': processed, 'late': late_n, 'already_seen': seen, 'skipped_unmatched': skipped, 'timesheets': len(rows), 'date': today}
+
+@api.route('/api/cron/deputy-late', methods=['GET', 'POST'])
+def cron_deputy_late():
+    secret = os.environ.get('CRON_SECRET', '')
+    if not secret or (request.args.get('key') or '') != secret:
+        abort(403)
+    try:
+        return jsonify(ok=True, **_deputy_poll())
+    except Exception as e:
+        return jsonify(ok=False, error=str(e)[:300]), 500
+
+@api.route('/api/deputy/config', methods=['POST'])
+def deputy_config():
+    """Super only: store the Deputy install URL + permanent token in the settings table
+    (never in the repo). Validates the pair with a live /api/v1/me call."""
+    au = require_auth()
+    if au['role'] != 'super': abort(403)
+    d = request.get_json(force=True, silent=True) or {}
+    host = str(d.get('host') or '').strip().rstrip('/')
+    token = str(d.get('token') or '').strip()
+    if host and not host.startswith('http'): host = 'https://' + host
+    if not host or not token: return jsonify(ok=False, error='host and token required'), 400
+    try:
+        me = _deputy_get(host, token, '/api/v1/me')
+        who = str((me or {}).get('Name') or (me or {}).get('Login') or 'ok')
+    except Exception as e:
+        return jsonify(ok=False, error='Deputy rejected the host/token: ' + str(e)[:200]), 400
+    db.set_setting('deputy_host', host)
+    db.set_setting('deputy_token', token)
+    db.write_audit(uid(au), 'ALL', 'save', 'deputy_config', host, None, {'who': who})
+    return jsonify(ok=True, host=host, connected_as=who)
 
 @api.route('/api/attendance/<store_id>/<staff_id>', methods=['GET'])
 def attendance_view(store_id, staff_id):

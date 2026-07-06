@@ -784,7 +784,12 @@ function render(){
   if(!State.account){ showLogin(); return; }
   State.route=parseHash();
   maybeStartRouteSync();
-  destroyCharts(); closeDrawer();
+  destroyCharts();
+  // close the drawer/overlay only when the ROUTE actually changed — background repaints
+  // (photo arrivals, live refresh, WS events) must not yank an open drawer / verify
+  // screen / history detail away (that was the "opens then closes itself" bug)
+  const _rt=(State.route.mod||'')+'/'+(State.route.tab||'');
+  if(State._renderedRoute!==_rt){ closeDrawer(); State._renderedRoute=_rt; }
   const mod=State.route.mod;
   buildSidebar();
   refreshBell();
@@ -1146,7 +1151,8 @@ function recDelete(modId,id,store){
   closeDrawer(); toast(`${id} deleted`); buildSidebar(); render();
 }
 function closeDrawer(){ $('#drawer')?.classList.remove('open'); $('#drawer-mask')?.classList.remove('open');
-  const mv=document.getElementById('mv-ov'); if(mv){ mv.remove(); document.body.style.overflow=''; } }   // verify studio closes through the same paths (✕ / Esc / route change)
+  const mv=document.getElementById('mv-ov'); if(mv){ mv.remove(); document.body.style.overflow=''; }   // verify studio / history detail close through the same paths (✕ / Esc / route change)
+  if(window.State) State._overlayRefresh=null; }
 function refreshBell(){ try{ const n=(window.ckAttentionCount?ckAttentionCount():0); const el=$('#tb-bell-n'); if(el){ el.textContent=n>99?'99+':n; el.style.display=n?'':'none'; } const b=$('#tb-bell'); if(b) b.classList.toggle('has',n>0); }catch(e){} }
 
 /* ---------- command palette (Cmd/Ctrl-K) ---------- */

@@ -1,39 +1,36 @@
-# Connecting Deputy → MCQ Supermarket (clock-in/out attendance)
+# Connecting Deputy → MCQ Supermarket (late clock-in monitor)
 
-MCQ receives Deputy **timesheet webhooks** and turns them into per-employee
-punctuality: late minutes, verbal/written warnings, overtime past finish — all
-posted to the employee's Inbox and shown in Staff Members ▸ Attendance.
+MCQ watches Deputy clock-ins and turns lateness into formal records automatically:
+- clock-in **more than 10 minutes** after the rostered start = a lateness event
+- escalation ladder (counted per employee over a **rolling 6 months**):
+  1st–3rd → **Verbal Discussion** · 4th → **Written Warning** · 5th → **Final Warning** · 6th+ → **Termination Referral**
+- every late event creates a **Violation record** in that store's Violation module,
+  an **Inbox notice** to the employee (+ a copy to the store's managers & Super),
+  and an **email** to the employee's gmail — including minutes late, clock-in time,
+  rostered time and the Deputy department.
+- ONLY Deputy employees whose **gmail (or exact name) exists in MCQ Staff Members**
+  are processed — everyone else is skipped. Notices are store-scoped.
 
-## 1. One-time server config (PythonAnywhere → Web tab → Environment variables)
-- `DEPUTY_WEBHOOK_SECRET` = your Deputy "Private Key for API Signing"
-  (Deputy: Enterprise → Advanced Settings). MCQ verifies every webhook's
-  `X-Deputy-Secret` HMAC against this. **Without it the endpoint still works but
-  is unverified — set it before go-live.**
-- (Optional, for exact rostered times) `DEPUTY_HOST` = `https://<your>.deputy.com`
-  and `DEPUTY_TOKEN` = a Deputy OAuth token. If set, MCQ fetches the linked
-  Roster to know the scheduled start/finish when the webhook doesn't include it.
+## Option A (active) — POLLING with a Deputy permanent token
+1. In Deputy: your install URL looks like `https://XXXX.au.deputy.com`; create a
+   permanent token (Enterprise → API access).
+2. As Super, store them on the server (never in the repo):
+   `POST /api/deputy/config` with JSON `{"host": "https://XXXX.au.deputy.com", "token": "…"}`
+   (the endpoint validates the pair against Deputy `/api/v1/me` before saving).
+3. On cron-job.org add a job hitting every 10 minutes:
+   `https://mcq-supermarket.onrender.com/api/cron/deputy-late?key=<CRON_SECRET>`
+   Each run pulls today's timesheets, processes NEW clock-ins only (deduped by
+   timesheet id) and applies the ladder.
 
-## 2. Create the webhooks in Deputy (point them at MCQ)
-Callback URL:  `https://mcqsupermarket.pythonanywhere.com/api/deputy/webhook`
-Create one webhook for each timesheet event you want:
-- Timesheet **Insert** (employee clocks ON)  → lateness + warnings
-- Timesheet **Update** (employee clocks OFF) → overtime past finish
-Payload format: default Deputy JSON `{topic, data}` (what MCQ expects).
+## Option B (also supported) — webhooks
+Callback URL: `https://mcq-supermarket.onrender.com/api/deputy/webhook`
+- Timesheet **Insert** (clock ON) → lateness ladder; Timesheet **Update** (clock OFF) → overtime note.
+- Set `DEPUTY_WEBHOOK_SECRET` (Deputy "Private Key for API Signing") in Render env to verify signatures.
 
-## 3. Matching Deputy employees → MCQ staff
-MCQ matches each Deputy employee to a staff member by, in order:
-1. `deputyId` stored on the staff profile (most reliable), else
-2. **email** (the same Gmail used for account activation), else
-3. exact name.
-→ Make sure each staff member's **email in MCQ = their Deputy email**.
+## Matching Deputy employees → MCQ staff
+Priority: `deputyId` stored on the staff profile → **email** → exact name.
+→ Keep each staff member's **email in MCQ = their Deputy email**.
 
-## 4. Rules (change in server/db.py if needed)
-- `LATE_GRACE_MIN = 10`  → clock-in more than 10 min late = a lateness event
-- `VERBAL_TO_WRITTEN = 3` → the 3rd lateness escalates to a WRITTEN warning
-- Warnings + an on-time summary are sent to the employee's Inbox; managers +
-  Super get a copy of each warning.
-
-## Notes
-- Field names differ across Deputy installs; MCQ already accepts common aliases
-  (StartTime/RosterStartTime/EmployeeEmail…). Send one real sample webhook and
-  we can map any custom field in `_deputy_norm()` in ~5 minutes.
+## Rules (server/db.py)
+- `LATE_GRACE_MIN = 10` — grace window
+- `LATE_WINDOW_DAYS = 183` — the rolling 6-month escalation window

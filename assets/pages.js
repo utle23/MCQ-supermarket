@@ -44,7 +44,7 @@ function renderStaffHome(){
 }
 
 /* ============================================================ CHECKLIST — Opening/Closing + photo capture */
-const CK_DEADLINE={Opening:'10:30 AM',Closing:'9:30 PM'};
+const CK_DEADLINE={Opening:'11:30 AM','Mid-afternoon':'4:30 PM',Closing:'9:30 PM'};
 function ckJS(s){ return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
 function staffNorm(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase(); }
 function staffScopeList(){
@@ -201,7 +201,7 @@ function renderChecklist(){
   const today=ckTodayStr(); if(!s.date) s.date=today; const viewing=s.date!==today;
   const bestSub=ckBestSubmission(s.dept,s.session,today);
   const reopened=!!(State.chk.reopen && State.chk.reopen[s.dept+'|'+s.session]) && !ckIsVerifiedSub(bestSub);
-  const submitted=!viewing && !isAdmin() && !!bestSub && !reopened;   // show the Done screen for staff after submit
+  const submitted=!viewing && !!bestSub && !reopened;   // submitted today → LOCKED done screen for everyone (Re-open available until verified)
   setCrumb('✅','Store Operation Checklist',`${superScopeLabel()} · ${s.session}${viewing?' · '+s.date:''}`);
   const chips=C.depts.map(d=>{ const m=C.deptMeta[d]||{}; const col=m.color||'#0e9f6e';
     return `<button class="dept-chip ${d===s.dept?'active':''}" style="--dc:${col}" ${ckCanBuild()?`ondblclick="ckDeptHEdit('${ckJS(d)}')" title="Double-click to rename / delete"`:''} onclick="ckDept('${ckJS(d)}')">${m.icon?`<i class="fas ${m.icon}"></i> `:''}${esc(d)}</button>`; }).join('')
@@ -1095,13 +1095,26 @@ function ckDoneHTML(dept,session){
   const s=ckBestSubmission(dept,session,ckTodayStr(),State.branch)||{done:0,total:0,progress:0};
   const out=(s.items||[]).filter(it=>!it.done);
   const verified=ckIsVerifiedSub(s);
-  return `<div class="ck-done">
-      <div class="ck-done-ring"><svg viewBox="0 0 52 52"><circle class="cs-circle" cx="26" cy="26" r="24"/><path class="cs-check" d="M14.5 27l7.5 7.5 16-16.5"/></svg></div>
-      <h3>${esc(dept)} · ${esc(session)} — Submitted ✓</h3>
-      <p>${s.done||0}/${s.total||0} done · ${s.progress||0}%${s.by?` · by ${esc(s.by)}`:''}${verified?' · ✅ Verified':''}</p>
+  const subTime=String(s.created||'').slice(11,16);
+  return `<div class="ck-done ck-locked">
+      <div class="ck-lock-band ${verified?'verified':''}">
+        <div class="ck-done-ring"><svg viewBox="0 0 52 52"><circle class="cs-circle" cx="26" cy="26" r="24"/><path class="cs-check" d="M14.5 27l7.5 7.5 16-16.5"/></svg></div>
+        <div class="ck-lock-main">
+          <h3>${esc(dept)} · ${esc(session)} — Submitted ✓</h3>
+          <p>This checklist is <b>${verified?'verified and locked':'locked'}</b> for today — nothing more to fill in.</p>
+          <div class="ck-lock-chips">
+            <span class="ck-lock-chip">${s.done||0}/${s.total||0} tasks</span>
+            <span class="ck-lock-chip">${s.progress||0}%</span>
+            ${s.by?`<span class="ck-lock-chip">👤 ${esc(s.by)}</span>`:''}
+            ${subTime?`<span class="ck-lock-chip">⏱ submitted ${esc(subTime)}</span>`:''}
+            <span class="ck-lock-chip strong">${verified?'✅ Verified — locked':'🔒 Awaiting manager verify'}</span>
+          </div>
+        </div>
+        <div class="ck-lock-icon" aria-hidden="true">${verified?'✅':'🔒'}</div>
+      </div>
       ${out.length?`<div class="ck-done-out">⚠️ ${out.length} not completed: ${esc(out.slice(0,8).map(it=>it.task).join(', '))}${out.length>8?'…':''}</div>`:'<div class="ck-done-ok">All tasks completed. Great work! 🎉</div>'}
       <div class="ck-done-actions">
-        ${verified?'<span class="badge ok">Verified — locked</span>':`<button class="btn" onclick="ckReopen('${ckJS(dept)}','${ckJS(session)}')"><i class="fas fa-pen"></i>&nbsp; Re-open to edit</button>`}
+        ${verified?'':`<button class="btn" onclick="ckReopen('${ckJS(dept)}','${ckJS(session)}')"><i class="fas fa-pen"></i>&nbsp; Re-open to edit</button>`}
         <button class="btn primary" onclick="ckSharePDF('${ckJS(session)}')"><i class="fab fa-whatsapp"></i>&nbsp; Share PDF</button>
       </div>
     </div>
@@ -3112,17 +3125,67 @@ function histScheduleRows(){
   return (DB.scheduleHistory||[]).filter(r=>r.type!=='handover'&&histStoreOk(r)&&histTextOk(r)&&(h.dept==='All departments'||r.dept===h.dept))
     .sort((a,b)=>String(b.created||b.date||'').localeCompare(String(a.created||a.date||'')));
 }
+/* Checklist History detail — read-only full-screen view in the Verify-Studio style.
+   Shows EVERY task ✓/✗ with staff notes + evidence, the manager's per-task notes/photos,
+   and the verification assessment (overall / issues found / action taken). */
 function histOpenChecklist(id){
   const sub=(DB.checklistSubs||[]).find(r=>r.id===id); if(!sub) return;
-  const photos=[]; (sub.items||[]).forEach(it=>(it.photos||[]).forEach(p=>photos.push({src:p,task:it.task,area:it.area})));
-  const rows=(sub.items||[]).map(it=>`<div class="hist-line ${it.done?'done':'todo'}">
-    <div><b>${it.done?'✓':'○'} ${esc(it.task)}</b><span>${esc(it.area||'General')}${it.note?' · '+esc(it.note):''}</span></div>
-    ${it.temp?`<em class="${it.temp.inRange?'ok':'bad'}">${it.temp.defrosting?'Defrosting':Number(it.temp.value).toFixed(1)+' C'}</em>`:''}
-    ${(it.photos||[]).length?histStrip(it.photos):''}
-  </div>`).join('');
-  $('#drawer').innerHTML=`<div class="drawer-head"><div class="dh-ic">✅</div><div><div style="font-weight:840;font-size:16px">${esc(sub.dept)} · ${esc(sub.session)}</div><div style="color:var(--muted);font-size:12.5px">${esc(sub.store)} · ${esc(sub.date)} · ${esc(sub.id)}</div></div><button class="x-btn" onclick="closeDrawer()">✕</button></div>
-    <div class="drawer-body hist-drawer"><div class="hist-summary"><span><b>${esc(sub.progress||0)}%</b> Progress</span><span><b>${esc(sub.done||0)}/${esc(sub.total||0)}</b> Done</span><span><b>${photos.length}</b> Photos</span><span><b>${esc(sub.by||'—')}</b> Submitted by</span></div>${rows||'<div class="empty">No checklist items stored.</div>'}</div>`;
-  $('#drawer').classList.add('open'); $('#drawer-mask').classList.add('open');
+  const verified=ckIsVerifiedSub(sub);
+  const meta=(((DB.checklist&&DB.checklist.deptMeta)||{})[sub.dept])||{color:'#0f766e'};
+  const col=meta.color||'#0f766e';
+  const rc=ckHexToRgb(col), colDark=`rgb(${Math.round(rc.r*.42)},${Math.round(rc.g*.42)},${Math.round(rc.b*.42)})`;
+  const pct=sub.progress||0, RING=2*Math.PI*26, ringOff=RING*(1-Math.min(100,pct)/100);
+  const items=sub.items||[];
+  const photosN=items.reduce((n,it)=>n+(it.photos||[]).length,0);
+  const mn=sub.taskNotes||{}, mp=sub.taskPhotos||{};
+  const notesN=items.filter(it=>it.note).length+Object.keys(mn).length;
+  const tempBad=items.filter(it=>it.temp&&it.temp.inRange===false).length;
+  const subTime=String(sub.created||'').slice(11,16);
+  const byArea={}; items.forEach((it,idx)=>{ (byArea[it.area||'General']=byArea[it.area||'General']||[]).push([it,idx]); });
+  const taskHtml=Object.entries(byArea).map(([area,list])=>`
+    <div class="hv-area">${esc(area)}</div>
+    ${list.map(([it,idx])=>{
+      const mnote=mn[idx]||'', mgrPh=mp[idx]||[];
+      return `<div class="mv-t ${it.done?'done':'todo'}">
+        <div class="mv-tk"><span class="mv-check">${it.done?'✓':'✕'}</span><div class="mv-name">${esc(it.task)}<small>${esc(it.area||'General')}</small></div>
+          ${it.temp?`<span class="badge ${it.temp.inRange===false?'bad':'ok'}">${it.temp.defrosting?'Defrosting':(it.temp.value!=null?Number(it.temp.value).toFixed(1)+'°C':'')}</span>`:''}
+          ${it.done?'':'<span class="mv-tag">NOT DONE</span>'}</div>
+        ${(it.photos||[]).length?`<div class="mr-photos">${it.photos.map(p=>`<img src="${imgSrc(p)}" onclick="openLightbox('${ckJS(imgSrc(p))}')" style="cursor:zoom-in">`).join('')}</div>`:''}
+        ${it.note?`<div class="mr-note">📝 ${esc(it.note)}</div>`:''}
+        ${mnote?`<div class="mr-mnote-ro">🗒️ Manager: ${esc(mnote)}</div>`:''}
+        ${mgrPh.length?`<div class="mv-tprow">${mgrPh.map(p=>`<span class="mv-tph"><img src="${imgSrc(p)}" onclick="openLightbox('${ckJS(imgSrc(p))}')"></span>`).join('')}</div>`:''}
+      </div>`;}).join('')}`).join('');
+  const hasAssess=verified||sub.verifyNote||sub.issuesFound||sub.actionResponsible||sub.overallResult||(sub.verifyPhotos||[]).length;
+  const assess=hasAssess?`
+    <div class="field"><label>Overall result</label><div>${sub.overallResult?`<span class="badge ${sub.overallResult==='Good'?'ok':sub.overallResult==='Critical'?'bad':'warn'}" style="font-size:12px">${sub.overallResult==='Good'?'😊':sub.overallResult==='Critical'?'🚨':'😐'} ${esc(sub.overallResult)}</span>`:'<span class="fhint">—</span>'}</div></div>
+    ${sub.issuesFound?`<div class="field"><label>⚠️ Issues found</label><div class="hv-ro bad">${esc(sub.issuesFound)}</div></div>`:''}
+    ${sub.actionResponsible?`<div class="field"><label>🛠 Action / Responsible</label><div class="hv-ro">${esc(sub.actionResponsible)}</div></div>`:''}
+    ${sub.verifyNote?`<div class="field"><label>Manager note</label><div class="hv-ro">${esc(sub.verifyNote)}</div></div>`:''}
+    ${(sub.verifyPhotos||[]).length?`<div class="field"><label>Manager photos</label><div class="mr-photos">${sub.verifyPhotos.map(p=>`<img src="${imgSrc(p)}" onclick="openLightbox('${ckJS(imgSrc(p))}')" style="cursor:zoom-in">`).join('')}</div></div>`:''}`
+    :`<div class="fhint" style="padding:4px 0">🕓 Not verified yet — the manager hasn't reviewed this checklist.</div>`;
+  document.getElementById('mv-ov')?.remove();
+  const ov=document.createElement('div'); ov.className='mv-ov'; ov.id='mv-ov';
+  ov.innerHTML=`<div class="mv-panel" style="--mvc:${col};--mvcd:${colDark}">
+    <div class="mv-head">
+      <div class="mv-ring"><svg viewBox="0 0 64 64"><circle class="bg" cx="32" cy="32" r="26"/><circle class="fg" cx="32" cy="32" r="26" style="stroke-dasharray:${RING.toFixed(1)};stroke-dashoffset:${ringOff.toFixed(1)}"/></svg><b>${pct}%</b></div>
+      <div class="mv-title"><h2>${esc(sub.dept)} · ${esc(sub.session)}</h2>
+        <div class="mv-chips"><span class="mv-chip">🏬 ${esc(sub.store)}</span><span class="mv-chip">📅 ${esc(sub.date)}${sub.dayName?' · '+esc(sub.dayName):''}</span><span class="mv-chip">👤 ${esc(sub.by||'—')}</span>${subTime?`<span class="mv-chip">⏱ ${esc(subTime)}</span>`:''}<span class="mv-chip ${verified?'ok':''}">${verified?'✅ Verified':'🕓 '+esc(sub.status||'Submitted')}</span></div></div>
+      <button class="mv-x" onclick="closeDrawer()">✕</button>
+    </div>
+    <div class="mv-body">
+      <div class="mv-tasks">
+        <div class="hv-stats"><span><b>${sub.done||0}/${sub.total||0}</b> tasks</span><span><b>${photosN}</b> photos</span><span><b>${notesN}</b> notes</span><span class="${tempBad?'bad':''}"><b>${tempBad}</b> temp alert${tempBad!==1?'s':''}</span></div>
+        <div class="mv-list">${taskHtml||'<div class="empty">No checklist items stored.</div>'}</div>
+      </div>
+      <div class="mv-side">
+        <div class="mv-side-h">🛡️ Manager verification${verified&&sub.verifiedBy?` — ${esc(sub.verifiedBy)}`:''}</div>
+        <div class="mv-side-in">${assess}</div>
+      </div>
+    </div>
+  </div>`;
+  document.body.appendChild(ov);
+  document.body.style.overflow='hidden';
+  State._overlayRefresh=()=>histOpenChecklist(id);   // repaint when downloaded photos arrive
 }
 function histOpenBin(id){
   const r=((DB.binAdmin&&DB.binAdmin.records)||[]).find(x=>x.id===id); if(!r) return;
@@ -3137,25 +3200,87 @@ function histOpenSchedule(id){
     <div class="drawer-body hist-drawer"><div class="hist-summary"><span><b>${esc(r.staffName)}</b> Completed by</span><span><b>${esc(r.dept||'')}</b> Department</span><span><b>${esc(r.day)}</b> Day</span><span><b>${esc((r.created||'').slice(0,16).replace('T',' '))}</b> Time</span></div>${r.photo?`<img class="hist-hero-photo" style="cursor:zoom-in" src="${imgSrc(r.photo)}" alt="" onclick="openLightbox('${ckJS(imgSrc(r.photo))}')">`:''}${r.note?`<div class="hist-note">${esc(r.note)}</div>`:''}${isAdmin()?`<button class="btn sm" onclick="schedDeleteHistory('${ckJS(r.id)}')"><i class="fas fa-trash"></i> Delete record</button>`:''}</div>`;
   $('#drawer').classList.add('open'); $('#drawer-mask').classList.add('open');
 }
+function hvDayLabel(d){
+  const t=todayISO(); if(d===t) return 'Today';
+  try{ const y=dISO(new Date(new Date(t+'T12:00').getTime()-864e5)); if(d===y) return 'Yesterday';
+    return new Date(d+'T12:00').toLocaleDateString('en-AU',{weekday:'long',day:'numeric',month:'short',year:'numeric'});
+  }catch(e){ return d; }
+}
+const HV_SESS={'Opening':'☀️','Mid-afternoon':'🌤️','Closing':'🌙'};
 function renderHistory(){
   const h=histState(); setAccent('#0f766e'); setCrumb('🧾','Checklist History','Checklist, bin and cleaning evidence records');
-  const tabs=[['checklist','Checklist'],['bin','Bin'],['schedule','Cleaning & Maintenance']].map(t=>`<button class="seg-btn ${h.tab===t[0]?'active':''}" onclick="histTab('${t[0]}')">${t[1]}</button>`).join('');
+  const tabs=[['checklist','✅ Checklist'],['bin','🗑 Bin'],['schedule','🧽 Cleaning']].map(t=>`<button class="seg-btn ${h.tab===t[0]?'active':''}" onclick="histTab('${t[0]}')">${t[1]}</button>`).join('');
   const storePick=isSuper()?`<select class="login-input" style="width:auto" onchange="histSet('store',this.value)">${['All stores',...DB.stores].map(s=>`<option ${s===h.store?'selected':''}>${esc(s)}</option>`).join('')}</select>`:'';
-  const rows=(h.tab==='checklist'?histChecklistRows():h.tab==='bin'?histBinRows():histScheduleRows()).filter(histDateOk);
+  let rows=(h.tab==='checklist'?histChecklistRows():h.tab==='bin'?histBinRows():histScheduleRows()).filter(histDateOk);
+  if(h.tab==='checklist'&&h.session) rows=rows.filter(r=>r.session===h.session);
   const datePick=`<input type="date" class="login-input" style="width:auto" value="${esc(h.date||'')}" title="Filter by date" onchange="histSet('date',this.value)">${h.date?`<button class="btn sm" onclick="histSet('date','')">✕ All dates</button>`:''}`;
   const deptList=h.tab==='checklist'?[...new Set((DB.checklistSubs||[]).filter(histStoreOk).map(r=>r.dept).filter(Boolean))]:h.tab==='schedule'?[...new Set((DB.scheduleHistory||[]).filter(histStoreOk).map(r=>r.dept).filter(Boolean))]:[];
   const deptPick=deptList.length?`<select class="login-input" style="width:auto" onchange="histSet('dept',this.value)">${['All departments',...deptList.sort()].map(d=>`<option ${d===h.dept?'selected':''}>${esc(d)}</option>`).join('')}</select>`:'';
-  const cards=rows.map(r=>{
+  const sessPills=h.tab==='checklist'?`<div class="hv-sess-pills">${['','Opening','Mid-afternoon','Closing'].map(sx=>`<button class="${(h.session||'')===sx?'on':''}" onclick="histSet('session','${sx}')">${sx?((HV_SESS[sx]||'')+' '+sx):'All sessions'}</button>`).join('')}</div>`:'';
+  // hero stats for what's on screen
+  let stat1='',stat2='',stat3='',stat4='';
+  if(h.tab==='checklist'){
+    const verifiedN=rows.filter(ckIsVerifiedSub).length;
+    const photosN=rows.reduce((n,r)=>n+(r.items||[]).reduce((m,it)=>m+(it.photos||[]).length,0),0);
+    const tempN=rows.reduce((n,r)=>n+(r.items||[]).filter(it=>it.temp&&it.temp.inRange===false).length,0);
+    stat1=`<span class="hv-stat"><b>${rows.length}</b>checklists</span>`; stat2=`<span class="hv-stat"><b>${verifiedN}</b>verified</span>`;
+    stat3=`<span class="hv-stat"><b>${photosN}</b>photos</span>`; stat4=`<span class="hv-stat ${tempN?'bad':''}"><b>${tempN}</b>temp alerts</span>`;
+  } else {
+    stat1=`<span class="hv-stat"><b>${rows.length}</b>records</span>`;
+    stat3=`<span class="hv-stat"><b>${rows.filter(r=>r.photo).length}</b>photos</span>`;
+  }
+  // cards, grouped by date (newest first) with Today / Yesterday headers
+  const groups={}; rows.forEach(r=>{ const d=String(r.date||'').slice(0,10)||'—'; (groups[d]=groups[d]||[]).push(r); });
+  const dm=(DB.checklist&&DB.checklist.deptMeta)||{};
+  const cardHTML=r=>{
     if(h.tab==='checklist'){
+      const meta=dm[r.dept]||{color:'#0f766e'};
       const photos=[]; (r.items||[]).forEach(it=>(it.photos||[]).forEach(p=>photos.push(p)));
-      return `<button class="hist-card" onclick="histOpenChecklist('${ckJS(r.id)}')"><div class="hist-top"><b>${esc(r.dept)} · ${esc(r.session)}</b><span>${esc(r.progress||0)}%</span></div><p>${esc(r.store)} · ${esc(r.date)} · by ${esc(r.by||'—')}</p>${histStrip(photos)}<small>${esc(r.done||0)}/${esc(r.total||0)} tasks · ${photos.length} photos</small></button>`;
+      const notesN=(r.items||[]).filter(it=>it.note).length+Object.keys(r.taskNotes||{}).length;
+      const tempBad=(r.items||[]).filter(it=>it.temp&&it.temp.inRange===false).length;
+      const verified=ckIsVerifiedSub(r);
+      const RD=97.4, off=(RD*(1-Math.min(100,r.progress||0)/100)).toFixed(1);
+      const mosaic=photos.length?`<div class="hv-mosaic">${photos.slice(0,4).map(p=>`<img src="${imgSrc(p)}" loading="lazy" alt="">`).join('')}${photos.length>4?`<span class="hv-more">+${photos.length-4}</span>`:''}</div>`:'';
+      return `<button class="hv-card" onclick="histOpenChecklist('${ckJS(r.id)}')">
+        <span class="hv-stripe" style="background:${meta.color||'#0f766e'}"></span>
+        <div class="hv-card-top">
+          <span class="hv-sess" aria-hidden="true">${HV_SESS[r.session]||'✅'}</span>
+          <div class="hv-card-t"><b>${esc(r.dept)}</b><small>${esc(r.session)} · ${esc(r.store)}</small></div>
+          <div class="hv-ring"><svg viewBox="0 0 40 40"><circle class="bg" cx="20" cy="20" r="15.5"/><circle class="fg" cx="20" cy="20" r="15.5" style="stroke-dasharray:${RD};stroke-dashoffset:${off};stroke:${meta.color||'#0f766e'}"/></svg><b>${r.progress||0}%</b></div>
+        </div>
+        <div class="hv-chiprow">
+          <span class="hv-chip ${verified?'ok':''}">${verified?'✅ Verified':'🕓 '+esc(r.status||'Submitted')}</span>
+          <span class="hv-chip">📷 ${photos.length}</span>
+          ${notesN?`<span class="hv-chip">📝 ${notesN}</span>`:''}
+          ${tempBad?`<span class="hv-chip bad">🌡 ${tempBad}</span>`:''}
+          <span class="hv-chip">👤 ${esc(r.by||'—')}</span>
+        </div>${mosaic}</button>`;
     }
-    if(h.tab==='bin') return `<button class="hist-card" onclick="histOpenBin('${ckJS(r.id)}')"><div class="hist-top"><b>Bin · ${esc(r.day)}</b><span>${esc(r.binQty)} bins</span></div><p>${esc(r.store)} · ${esc(r.date)} · ${esc(r.staffName||'—')}</p>${histStrip([r.photo])}<small>${esc(r.id)}</small></button>`;
-    return `<button class="hist-card" onclick="histOpenSchedule('${ckJS(r.id)}')"><div class="hist-top"><b>${esc(r.type==='maintenance'?'Maintenance':'Cleaning')}</b><span>${esc(r.day)}</span></div><p>${esc(r.store)} · ${esc(r.date)} · ${esc(r.dept||'')}</p><strong>${esc(r.task)}</strong>${histStrip([r.photo])}<small>Completed by ${esc(r.staffName||'—')}</small></button>`;
-  }).join('');
-  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🧾</div><div><h2>Checklist History</h2><p>Review submitted checklist records, bin evidence, and completed cleaning/maintenance tasks with photos.</p></div><div class="ph-actions">${storePick}${deptPick}${datePick}<div class="seg seg-light">${tabs}</div></div></div>
-    <div class="toolbar"><span class="count-chip">${rows.length} record${rows.length!==1?'s':''}</span><div class="search"><input value="${esc(h.q||'')}" oninput="State.hist.q=this.value;renderHistory()" placeholder="Search staff, task, area, ID..."></div></div>
-    <div class="hist-grid">${cards||'<div class="card card-pad empty compact">No history records yet.</div>'}</div>`;
+    if(h.tab==='bin') return `<button class="hv-card" onclick="histOpenBin('${ckJS(r.id)}')">
+        <span class="hv-stripe" style="background:#64748b"></span>
+        <div class="hv-card-top"><span class="hv-sess">🗑</span><div class="hv-card-t"><b>Bin collection · ${esc(r.day)}</b><small>${esc(r.store)} · ${esc(r.staffName||'—')}</small></div><div class="hv-ring"><b style="font-size:13px">${esc(r.binQty)}</b></div></div>
+        ${r.photo?`<div class="hv-mosaic"><img src="${imgSrc(r.photo)}" loading="lazy" alt=""></div>`:''}</button>`;
+    return `<button class="hv-card" onclick="histOpenSchedule('${ckJS(r.id)}')">
+        <span class="hv-stripe" style="background:${r.type==='maintenance'?'#f59e0b':'#0891b2'}"></span>
+        <div class="hv-card-top"><span class="hv-sess">${r.type==='maintenance'?'🔧':'🧽'}</span><div class="hv-card-t"><b>${esc(r.task)}</b><small>${esc(r.store)} · ${esc(r.dept||'')} · ${esc(r.day)}</small></div></div>
+        <div class="hv-chiprow"><span class="hv-chip">👤 ${esc(r.staffName||'—')}</span>${r.note?'<span class="hv-chip">📝 note</span>':''}</div>
+        ${r.photo?`<div class="hv-mosaic"><img src="${imgSrc(r.photo)}" loading="lazy" alt=""></div>`:''}</button>`;
+  };
+  const body=Object.keys(groups).sort((a,b)=>b.localeCompare(a)).map(d=>`
+    <div class="hv-day"><span class="hv-day-lbl">${esc(hvDayLabel(d))}</span><span class="hv-day-line"></span><span class="hv-day-n">${groups[d].length}</span></div>
+    <div class="hv-grid">${groups[d].map(cardHTML).join('')}</div>`).join('');
+  $('#content').innerHTML=`
+    <div class="hv-hero">
+      <div class="hv-hero-t"><h2>🧾 Checklist History</h2><p>Every submitted checklist, bin run and cleaning task — with notes, photos and verification.</p></div>
+      <div class="hv-hero-stats">${stat1}${stat2}${stat3}${stat4}</div>
+    </div>
+    <div class="hv-bar">
+      <div class="seg seg-light">${tabs}</div>
+      ${storePick}${deptPick}${datePick}
+      <div class="search hv-search"><input value="${esc(h.q||'')}" oninput="State.hist.q=this.value;renderHistory()" placeholder="🔍 Search staff, task, area, ID…"></div>
+    </div>
+    ${sessPills}
+    ${body||'<div class="card card-pad empty compact" style="margin-top:14px">No records match — try ✕ All dates or another filter.</div>'}`;
 }
 
 /* ============================================================ SHIFT HANDOVER */
@@ -3385,34 +3510,47 @@ function mgrDrawVerifyPhotos(){ const el=document.getElementById('mgr-vphotos');
   el.innerHTML=(State.mgrV.photos||[]).map(p=>`<span style="position:relative;display:inline-block"><img src="${imgSrc(p)}" onclick="openLightbox('${ckJS(imgSrc(p))}')" style="cursor:zoom-in"><span class="ck-rm" onclick="mgrRmVerifyPhoto('${ckJS(p)}')">✕</span></span>`).join(''); }
 /* ---- verify-note DRAFT: survives closing the drawer; cleared only when Verified ---- */
 function mgrVfKey(s){ const store=(s&&s.store)||State.branch; return 'mcq_vfdraft_'+dataStoreId(store)+'_'+((s&&s.id)||State.mgrV&&State.mgrV.id||''); }
-// manager's per-task note (beside each task in the verify drawer)
+// manager's per-task note (beside each task in the verify studio)
 function mgrTaskNote(idx,val){ State.mgrV=State.mgrV||{}; State.mgrV.taskNotes=State.mgrV.taskNotes||{};
   if(String(val||'').trim()) State.mgrV.taskNotes[idx]=String(val); else delete State.mgrV.taskNotes[idx];
   if(State.mgrV.id) mgrSaveVerifyDraft(State.mgrV.id); }
 window.mgrTaskNote=mgrTaskNote;
+// manager's per-task PHOTOS — the file input (no capture attr) opens the native Camera/Gallery chooser
+async function mgrTaskPhoto(e,idx){
+  const files=e.target.files; if(!files||!files.length) return;
+  State.mgrV=State.mgrV||{}; State.mgrV.taskPhotos=State.mgrV.taskPhotos||{};
+  const arr=State.mgrV.taskPhotos[idx]=State.mgrV.taskPhotos[idx]||[];
+  for(const f of files){ try{ const d=await compressImage(f); const ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d; arr.push(ref); }catch(_){} }
+  e.target.value='';
+  if(State.mgrV.id){ mgrSaveVerifyDraft(State.mgrV.id); mgrReview(State.mgrV.id); }
+}
+function mgrTaskRmPhoto(idx,p){ const tp=(State.mgrV&&State.mgrV.taskPhotos)||{}; tp[idx]=(tp[idx]||[]).filter(x=>x!==p); if(!(tp[idx]||[]).length) delete tp[idx];
+  if(State.mgrV&&State.mgrV.id){ mgrSaveVerifyDraft(State.mgrV.id); mgrReview(State.mgrV.id); } }
+window.mgrTaskPhoto=mgrTaskPhoto; window.mgrTaskRmPhoto=mgrTaskRmPhoto;
 function mgrSaveVerifyDraft(id){
   const s=mgrSubs().find(x=>x.id===id); if(!s||ckIsVerifiedSub(s)) return;
   const a=mgrAssessment();
-  try{ localStorage.setItem(mgrVfKey(s), JSON.stringify({verifiedBy:a.verifiedBy,overallResult:a.overallResult,issuesFound:a.issuesFound,actionResponsible:a.actionResponsible,verifyNote:a.verifyNote,photos:a.verifyPhotos,taskNotes:a.taskNotes,ts:Date.now()})); }catch(e){}
+  try{ localStorage.setItem(mgrVfKey(s), JSON.stringify({verifiedBy:a.verifiedBy,overallResult:a.overallResult,issuesFound:a.issuesFound,actionResponsible:a.actionResponsible,verifyNote:a.verifyNote,photos:a.verifyPhotos,taskNotes:a.taskNotes,taskPhotos:a.taskPhotos,ts:Date.now()})); }catch(e){}
   // reassure the manager that closing is safe — flash the "Draft saved" chip in the header
   try{ const el=document.getElementById('mv-draft'); if(el){ el.classList.add('show'); clearTimeout(window._mvDraftT); window._mvDraftT=setTimeout(()=>el.classList.remove('show'),1500); } }catch(e){}
 }
 function mgrLoadVerifyDraft(s){ try{ const raw=localStorage.getItem(mgrVfKey(s)); if(!raw) return null; const d=JSON.parse(raw);
     // only treat as a draft if it actually has content
-    if(d&&(d.verifyNote||d.issuesFound||d.actionResponsible||(d.overallResult&&d.overallResult!=='')||(d.photos&&d.photos.length)||(d.taskNotes&&Object.keys(d.taskNotes).length))) return d; }catch(e){} return null; }
+    if(d&&(d.verifyNote||d.issuesFound||d.actionResponsible||(d.overallResult&&d.overallResult!=='')||(d.photos&&d.photos.length)||(d.taskNotes&&Object.keys(d.taskNotes).length)||(d.taskPhotos&&Object.keys(d.taskPhotos).length))) return d; }catch(e){} return null; }
 function mgrClearVerifyDraft(s){ try{ localStorage.removeItem(mgrVfKey(s)); }catch(e){} }
 function mgrAssessment(){
   const g=id=>{ const el=document.getElementById(id); return el?String(el.value||'').trim():''; };
   return { verifiedBy:g('mgr-by')||((State.account&&State.account.name)||'Manager'), overallResult:g('mgr-overall'),
     issuesFound:g('mgr-issues'), actionResponsible:g('mgr-action'), verifyNote:g('mgr-note'),
     verifyPhotos:((State.mgrV&&State.mgrV.photos)||[]).slice(),
-    taskNotes:Object.assign({}, (State.mgrV&&State.mgrV.taskNotes)||{}) };
+    taskNotes:Object.assign({}, (State.mgrV&&State.mgrV.taskNotes)||{}),
+    taskPhotos:JSON.parse(JSON.stringify((State.mgrV&&State.mgrV.taskPhotos)||{})) };
 }
 function mgrVerify(id){
   const a=mgrAssessment();
   const s=mgrSubs().find(x=>x.id===id);
   if(!mgrSubInScope(s)){ toast('This checklist belongs to another store'); return; }
-  const apply=(o)=>{ o.status='Verified'; o.verifyNote=a.verifyNote; o.verifiedBy=a.verifiedBy; o.overallResult=a.overallResult; o.issuesFound=a.issuesFound; o.actionResponsible=a.actionResponsible; o.verifyPhotos=a.verifyPhotos; o.taskNotes=a.taskNotes; o.verifiedAt=new Date().toISOString(); };
+  const apply=(o)=>{ o.status='Verified'; o.verifyNote=a.verifyNote; o.verifiedBy=a.verifiedBy; o.overallResult=a.overallResult; o.issuesFound=a.issuesFound; o.actionResponsible=a.actionResponsible; o.verifyPhotos=a.verifyPhotos; o.taskNotes=a.taskNotes; o.taskPhotos=a.taskPhotos; o.verifiedAt=new Date().toISOString(); };
   if(s) apply(s);
   const real=(DB.checklistSubs||[]).find(x=>x.id===id && x.store===s.store);
   if(real){ const before=JSON.parse(JSON.stringify(real)); apply(real); auditLog('verify','checklistSubmission',real.id,real.store,before,real,a.verifyNote); if(window.persist) window.persist(); }
@@ -3434,7 +3572,7 @@ function mgrVerify(id){
   })();
   // → ALSO into the Store Inbox (assessment + collected task notes + manager photos)
   try{ const _n=mgrTaskNotes(s);
-    const notesHtml=_n.length?('<p><b>Task notes ('+_n.length+'):</b></p><ul>'+_n.map(n=>`<li>${n.done?'✅':'❌'} <b>${esc(n.task)}</b> — ${esc(n.note)}</li>`).join('')+'</ul>'):'';
+    const notesHtml=_n.length?('<p><b>Flagged tasks ('+_n.length+'):</b></p><ul>'+_n.map(n=>`<li>${n.done?'✅':'❌'} <b>${esc(n.task)}</b>${n.note?' — '+esc(n.note):''}${(n.mgrPhotos||[]).length?'<br>'+inlinePhotoHtml(n.mgrPhotos):''}</li>`).join('')+'</ul>'):'';
     if((hasContent||_n.length) && window.mcqMsgSend) mcqMsgSend({kind:'message', store:s.store,
     subject:`✅ Verified · ${s.department} ${s.session} · ${s.date||''}${s.created?(' · '+String(s.created).slice(11,16)):''}`,
     body_html:`<p>${esc(mgrAssessmentText(a)).replace(/\n/g,'<br>')}</p>${notesHtml}${inlinePhotoHtml(a.verifyPhotos)}`}); }catch(e){}
@@ -3454,15 +3592,18 @@ ${a.actionResponsible||'—'}
 ${a.verifyNote?('Manager note:\n'+a.verifyNote):''}`.trim();
 }
 function mgrTaskNotes(s){
-  // the "look here" list for the department lead: every task that carries a note — either the
-  // staff's note OR the manager's per-task note added during verification (or both).
+  // the "look here" list for the department lead: every task that carries a note or a photo —
+  // the staff's note/evidence OR the manager's per-task note/photos added during verification.
   const mn=(State.mgrV&&State.mgrV.id===s.id?State.mgrV.taskNotes:null)||s.taskNotes||{};
+  const mp=(State.mgrV&&State.mgrV.id===s.id?State.mgrV.taskPhotos:null)||s.taskPhotos||{};
   const out=[];
   mgrSubTasks(s).forEach((t,idx)=>{
     const staff=String(t.note||'').trim(), mgr=String(mn[idx]||'').trim();
-    if(!staff && !mgr) return;
+    const mgrPhotos=(mp[idx]||[]).slice();
+    if(!staff && !mgr && !mgrPhotos.length) return;
     const parts=[]; if(staff) parts.push('staff: '+staff); if(mgr) parts.push('manager: '+mgr);
-    out.push({task:t.task, area:t.area, done:t.done, note:parts.join(' · ')});
+    out.push({task:t.task, area:t.area, done:t.done, note:parts.join(' · '),
+      staffNote:staff, mgrNote:mgr, staffPhotos:(t.photos||[]).slice(), mgrPhotos});
   });
   return out;
 }
@@ -3492,10 +3633,35 @@ async function mgrSendLeadPDF(s,a,leads){
     block('Issues found', a.issuesFound);
     block('Action / Responsible', a.actionResponsible);
     block('Manager note', a.verifyNote);
-    // staff task notes — collected so the lead sees every flagged task in one place
-    if(notes.length){ ensure(16); doc.setTextColor(2,132,199); doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.text(`Task notes (${notes.length})`,M,y); y+=14;
-      doc.setTextColor(30); doc.setFont('helvetica','normal'); doc.setFontSize(10);
-      notes.forEach(n=>{ const l=doc.splitTextToSize(`- [${n.done?'done':'NOT done'}] ${n.task}${n.area?(' ('+n.area+')'):''} - ${n.note}`,PW-2*M); ensure(l.length*12+2); doc.text(l,M,y); y+=l.length*12+4; }); y+=6; }
+    // flagged tasks — every task with a note or photo, as a card the lead can act on:
+    // ✓/✗ state, staff note vs manager note, and the REAL photos (staff evidence + manager's)
+    if(notes.length){
+      const flagUrls=[]; notes.forEach(n=>{ (n.staffPhotos||[]).forEach(u=>flagUrls.push(u)); (n.mgrPhotos||[]).forEach(u=>flagUrls.push(u)); });
+      const fmap=flagUrls.length?(await ckPhotoMap(flagUrls,1000)).pmap:{};
+      ensure(18); doc.setTextColor(2,132,199); doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text(`Flagged tasks — notes & photos (${notes.length})`,M,y); y+=16;
+      for(const n of notes){
+        const ok=!!n.done;
+        const tl=doc.splitTextToSize(String(n.task)+(n.area?('  ('+n.area+')'):''),PW-2*M-56);
+        ensure(tl.length*12+16);
+        doc.setDrawColor(ok?21:220,ok?128:38,ok?61:38); doc.setFillColor(ok?21:254,ok?128:242,ok?61:242);
+        doc.roundedRect(M,y-1,11,11,2,2,'FD');
+        if(ok){ doc.setDrawColor(255); doc.setLineWidth(1.3); doc.line(M+2.3,y+4.4,M+4.4,y+6.9); doc.line(M+4.4,y+6.9,M+8.4,y+1.6); doc.setLineWidth(0.2); }
+        else { doc.setDrawColor(220,38,38); doc.setLineWidth(1.1); doc.line(M+2.4,y+1.4,M+8.6,y+7.6); doc.line(M+8.6,y+1.4,M+2.4,y+7.6); doc.setLineWidth(0.2); }
+        doc.setTextColor(30); doc.setFont('helvetica','bold'); doc.setFontSize(10); doc.text(tl,M+18,y+7);
+        if(!ok){ doc.setFillColor(254,226,226); doc.roundedRect(PW-M-52,y-1,52,11,3,3,'F'); doc.setTextColor(185,28,28); doc.setFontSize(7); doc.text('NOT DONE',PW-M-26,y+7,{align:'center'}); }
+        y+=tl.length*12+3;
+        doc.setFont('helvetica','normal'); doc.setFontSize(9.5);
+        if(n.staffNote){ const l=doc.splitTextToSize('Staff note: '+n.staffNote,PW-2*M-18); ensure(l.length*11.5); doc.setTextColor(80); doc.text(l,M+18,y+6); y+=l.length*11.5+2; }
+        if(n.mgrNote){ const l=doc.splitTextToSize('Manager note: '+n.mgrNote,PW-2*M-18); ensure(l.length*11.5); doc.setTextColor(2,132,199); doc.text(l,M+18,y+6); y+=l.length*11.5+2; }
+        const ph=[...(n.staffPhotos||[]),...(n.mgrPhotos||[])].map(u=>fmap[u]).filter(Boolean);
+        if(ph.length){ const box=125,th=94,gp=8; let x=M+18; ensure(th+10);
+          ph.slice(0,6).forEach(d=>{ if(x+box>PW-M){ x=M+18; y+=th+gp; ensure(th+10); }
+            const ar=(d.w&&d.h)?d.w/d.h:4/3; let iw=box,ih=iw/ar; if(ih>th){ ih=th; iw=ih*ar; }
+            try{ doc.addImage(d.data,'JPEG',x,y,iw,ih); }catch(e){} doc.setDrawColor(205); doc.rect(x,y,iw,ih); x+=box+gp; });
+          y+=th+8; }
+        y+=6;
+      }
+      y+=4; }
     // outstanding tasks list
     const out=tasks.filter(t=>!t.done);
     if(out.length){ ensure(16); doc.setTextColor(185,28,28); doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.text(`Outstanding tasks (${out.length})`,M,y); y+=14;
@@ -3548,7 +3714,8 @@ function mgrReview(id){
   const draft=verified?null:mgrLoadVerifyDraft(s);
   const existingNote=(draft&&draft.verifyNote)||s.verifyNote||'';
   State.mgrV={id:s.id, photos:((draft&&draft.photos)||s.verifyPhotos||[]).slice(),
-    taskNotes:Object.assign({}, (draft&&draft.taskNotes)||s.taskNotes||{})};
+    taskNotes:Object.assign({}, (draft&&draft.taskNotes)||s.taskNotes||{}),
+    taskPhotos:Object.assign({}, (draft&&draft.taskPhotos)||s.taskPhotos||{})};
   // managers/admins for this store to populate "Verified by"
   const mgrNames=[]; const seenN={};
   (DB.staff||[]).filter(x=>x.store===s.store && (staffIsAdmin(x)||/manager|supervisor/i.test(x.role||''))).forEach(x=>{ if(x.name&&!seenN[x.name]){seenN[x.name]=1;mgrNames.push(x.name);} });
@@ -3559,9 +3726,10 @@ function mgrReview(id){
   const mnotes=(State.mgrV&&State.mgrV.taskNotes)||{};
   // ---------- task cards + filter chips (All / Outstanding / Photos / Notes) ----------
   const filter=State.mgrVFilter||'all';
-  const withNote=t=>!!(t.note||''), counts={all:tasks.length, out:outN, photo:tasks.filter(t=>t.photos.length).length,
-    note:tasks.filter((t,i)=>withNote(t)||mnotes[i]).length};
-  const show=(t,i)=>filter==='all'||(filter==='out'&&!t.done)||(filter==='photo'&&t.photos.length)||(filter==='note'&&(withNote(t)||mnotes[i]));
+  const TP=(State.mgrV&&State.mgrV.taskPhotos)||{};
+  const withNote=(t,i)=>!!(t.note||mnotes[i]||(TP[i]||[]).length), counts={all:tasks.length, out:outN, photo:tasks.filter(t=>t.photos.length).length,
+    note:tasks.filter((t,i)=>withNote(t,i)).length};
+  const show=(t,i)=>filter==='all'||(filter==='out'&&!t.done)||(filter==='photo'&&t.photos.length)||(filter==='note'&&withNote(t,i));
   const rows=tasks.map((t,idx)=>{
     if(!show(t,idx)) return '';
     // staff note (read-only) sits beside its photos; the manager gets an editable note box on
@@ -3571,13 +3739,16 @@ function mgrReview(id){
     const evidence=t.photos.length?`<div class="mr-body">${photoHtml}${noteHtml}</div>`
       :(noteHtml||(t.photoReq&&!t.done?`<div class="mr-nophoto">📷 Photo required — not attached</div>`:''));
     const mnote=mnotes[idx]||'';
-    const noteInput=verified
-      ? (mnote?`<div class="mr-mnote-ro">🗒️ ${esc(mnote)}</div>`:'')
-      : `<input class="mr-tnote" value="${esc(mnote)}" placeholder="🗒️ Add your note for this task…" oninput="mgrTaskNote(${idx},this.value)">`;
+    const tps=((State.mgrV&&State.mgrV.taskPhotos)||{})[idx]||[];
+    const tpThumbs=tps.length?`<div class="mv-tprow">${tps.map(p=>`<span class="mv-tph"><img src="${imgSrc(p)}" onclick="openLightbox('${ckJS(imgSrc(p))}')">${verified?'':`<span class="ck-rm" onclick="mgrTaskRmPhoto(${idx},'${ckJS(p)}')">✕</span>`}</span>`).join('')}</div>`:'';
+    // note + 📷 side by side — the photo button opens the device's native Camera/Gallery chooser
+    const noteRow=verified
+      ? ((mnote?`<div class="mr-mnote-ro">🗒️ ${esc(mnote)}</div>`:'')+tpThumbs)
+      : `<div class="mv-noterow"><input class="mr-tnote" value="${esc(mnote)}" placeholder="🗒️ Add your note for this task…" oninput="mgrTaskNote(${idx},this.value)"><label class="mv-addph" title="Add photo — camera or gallery"><input type="file" accept="image/*" multiple onchange="mgrTaskPhoto(event,${idx})">📷</label></div>${tpThumbs}`;
     return `<div class="mv-t ${t.done?'done':'todo'}${mnote?' has-mnote':''}">
       <div class="mv-tk"><span class="mv-check">${t.done?'✓':'✕'}</span><div class="mv-name">${esc(t.task)}<small>${esc(t.area)}</small></div>${t.temp?`<span class="badge ${t.temp.ok?'ok':'warn'}">${esc(t.temp.label)}</span>`:''}${t.done?'':'<span class="mv-tag">NOT DONE</span>'}</div>
       ${evidence}
-      ${noteInput}
+      ${noteRow}
     </div>`; }).join('');
   const subTime=String(s.created||'').slice(11,16);
   // ---------- Verify Studio: full-screen, professional, never closes by a stray tap ----------
@@ -3635,6 +3806,7 @@ function mgrReview(id){
   // deliberate: clicking the dark backdrop does NOT close — only ✕ / Esc do (drafts auto-save)
   document.body.appendChild(ov);
   document.body.style.overflow='hidden';
+  State._overlayRefresh=()=>mgrReview(id);   // repaint when downloaded photos arrive (skipped while typing)
 }
 function mvFilter(id,v){ State.mgrVFilter=v; mgrReview(id); }
 function mvOverall(id,val){ const sel=document.getElementById('mgr-overall'); if(!sel) return;
