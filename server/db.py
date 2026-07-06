@@ -543,6 +543,139 @@ def _store_staff_by_email(conn, store, email):
             return {'staff_id': r['id'], 'name': d.get('name') or '', 'store': store, 'data': d}
     return None
 
+# job title shown in Staff Management for a NEW profile created from an account's access level
+STAFF_TITLE = {'admin': 'Store Manager', 'staff': 'Department Lead', 'employee': 'Team Member'}
+
+def _next_staff_id(conn):
+    """Next E#### staff id — continues the same global series bulk_import_staff uses."""
+    max_e = 0
+    for r in conn.execute('SELECT id FROM staff').fetchall():
+        rid = str(r['id'] or '')
+        if rid.startswith('E') and rid[1:].isdigit(): max_e = max(max_e, int(rid[1:]))
+    return 'E%04d' % (max_e + 1)
+
+def _ensure_staff_for_account(conn, acct):
+    """Account Management is a source of truth for PEOPLE: every non-super account must have a
+    live staff profile in ITS store — Staff Management, pickers and birthdays all read staff.
+    Finds the profile (linked staff_id, else email match in the store), refreshes its
+    name/email/department from the account and un-archives it; creates it when missing.
+    Caller commits. Returns the staff id, or None when the account has no valid store."""
+    a = dict(acct) if not isinstance(acct, dict) else acct
+    role = a.get('role') or 'employee'
+    store = a.get('store_id') or ''
+    if role == 'super' or store not in STORES: return None
+    email = str(a.get('email') or '').strip()
+    name = str(a.get('name') or '').strip()
+    dept = str(a.get('department') or '').strip()
+    row = None
+    sid = str(a.get('staff_id') or '')
+    if sid:
+        row = conn.execute('SELECT id,data_json FROM staff WHERE store_id=? AND id=?', (store, sid)).fetchone()
+    if not row and email:
+        hit = _store_staff_by_email(conn, store, email)
+        if hit:
+            row = conn.execute('SELECT id,data_json FROM staff WHERE store_id=? AND id=?', (store, hit['staff_id'])).fetchone()
+    if row:
+        try: d = json.loads(row['data_json'] or '{}')
+        except Exception: d = {}
+        if name: d['name'] = name
+        if email: d['email'] = email
+        if dept: d['dept'] = dept
+        # keep a real roster job title; only fill from the access level when empty, or when
+        # the account is leadership (Manager / Dept Lead) — that SHOULD show in Staff Management
+        if role in ('admin', 'staff') or not str(d.get('role') or '').strip():
+            d['role'] = STAFF_TITLE.get(role, 'Team Member')
+            if not str(d.get('classification') or '').strip(): d['classification'] = d['role']
+        d['active'] = 1; d['archived'] = 0; d['store'] = store; d['id'] = row['id']
+        conn.execute('UPDATE staff SET data_json=? WHERE store_id=? AND id=?',
+                     (json.dumps(d), store, row['id']))
+        if str(a.get('staff_id') or '') != str(row['id']) and a.get('id'):
+            conn.execute('UPDATE accounts SET staff_id=?, updated_at=? WHERE id=?', (row['id'], now(), a['id']))
+        return row['id']
+    nid = _next_staff_id(conn)
+    title = STAFF_TITLE.get(role, 'Team Member')
+    rec = {'id': nid, 'name': name or (email.split('@')[0].replace('.', ' ').title() if email else nid),
+           'email': email, 'store': store, 'active': 1, 'archived': 0,
+           'role': title, 'classification': title, 'dept': dept, 'dob': '',
+           'start': now()[:10], 'basis': 'Individual', 'category': '', 'estatus': ''}
+    conn.execute('INSERT INTO staff(id,store_id,data_json) VALUES(?,?,?) ON CONFLICT (store_id,id) DO UPDATE SET data_json=excluded.data_json',
+                 (nid, store, json.dumps(rec)))
+    if a.get('id'):
+        conn.execute('UPDATE accounts SET staff_id=?, updated_at=? WHERE id=?', (nid, now(), a['id']))
+    return nid
+
+def _archive_staff(conn, store, staff_id):
+    """Mark a staff profile archived (used when an account moves to another store)."""
+    if not store or not staff_id: return
+    row = conn.execute('SELECT data_json FROM staff WHERE store_id=? AND id=?', (store, str(staff_id))).fetchone()
+    if not row: return
+    try: d = json.loads(row['data_json'] or '{}')
+    except Exception: d = {}
+    d['archived'] = 1; d['active'] = 0
+    conn.execute('UPDATE staff SET data_json=? WHERE store_id=? AND id=?', (json.dumps(d), store, str(staff_id)))
+
+def staff_sync(fix=False):
+    """Audit (and optionally repair) Account Management ↔ Staff Management per store.
+    Audit lists, per store: accounts with NO staff profile, name mismatches between the
+    account and its linked profile, dangling staff_id links, and (info) how many staff
+    have no login account. fix=True runs _ensure_staff_for_account for every account."""
+    conn = connect()
+    try:
+        staff_ids, staff_names, staff_emails = set(), {}, {}
+        staff_count, archived_count = {}, {}
+        for r in conn.execute('SELECT id,store_id,data_json FROM staff').fetchall():
+            try: d = json.loads(r['data_json'] or '{}')
+            except Exception: d = {}
+            key = (r['store_id'], str(r['id']))
+            staff_ids.add(key); staff_names[key] = str(d.get('name') or '')
+            e = str(d.get('email') or '').strip().lower()
+            if e: staff_emails[(r['store_id'], e)] = str(r['id'])
+            if d.get('archived') or d.get('active') == 0:
+                archived_count[r['store_id']] = archived_count.get(r['store_id'], 0) + 1
+            else:
+                staff_count[r['store_id']] = staff_count.get(r['store_id'], 0) + 1
+        accounts = [dict(a) for a in conn.execute('SELECT * FROM accounts ORDER BY store_id, name').fetchall()]
+        stores = {}
+        def bucket(store):
+            return stores.setdefault(store or '(no store)', {
+                'accounts': 0, 'staff_active': staff_count.get(store, 0), 'staff_archived': archived_count.get(store, 0),
+                'missing_staff': [], 'name_mismatch': [], 'dangling_link': [], 'staff_without_account': 0})
+        acct_staff_ids = set(); acct_emails = set()
+        fixed = []
+        for a in accounts:
+            if a.get('role') == 'super': continue
+            store = a.get('store_id') or ''
+            b = bucket(store); b['accounts'] += 1
+            email = str(a.get('email') or '').strip().lower()
+            sid = str(a.get('staff_id') or '')
+            if sid: acct_staff_ids.add((store, sid))
+            if email: acct_emails.add((store, email))
+            linked = bool(sid) and (store, sid) in staff_ids
+            by_email = bool(email) and (store, email) in staff_emails
+            if sid and not linked:
+                b['dangling_link'].append({'id': a['id'], 'name': a.get('name'), 'staff_id': sid})
+            if not linked and not by_email:
+                b['missing_staff'].append({'id': a['id'], 'name': a.get('name'), 'email': a.get('email'), 'role': a.get('role')})
+            elif linked:
+                sn = staff_names.get((store, sid), ''); an = str(a.get('name') or '').strip()
+                if an and sn and an.lower() != sn.lower():
+                    b['name_mismatch'].append({'id': a['id'], 'account_name': an, 'staff_name': sn})
+            if fix and store in STORES:
+                nid = _ensure_staff_for_account(conn, a)
+                if nid: fixed.append({'account': a['id'], 'staff_id': nid, 'store': store})
+        for (store, sid) in staff_ids:
+            if (store, sid) not in acct_staff_ids:
+                # profile with no linked account (fine — not everyone has a login); email-matched
+                # accounts were already linked above, so this is a pure headcount signal
+                if store in stores or True:
+                    b = bucket(store); b['staff_without_account'] += 1
+        if fix: conn.commit()
+        out = {'stores': stores, 'total_accounts': sum(1 for a in accounts if a.get('role') != 'super')}
+        if fix: out['fixed'] = fixed
+        return out
+    finally:
+        conn.close()
+
 ## ---------- proactive overdue-checklist alerts ----------
 import datetime as _dt
 
@@ -806,8 +939,9 @@ def activate_account(email, store=None, password=None, name=None):
         if acc:   # pre-assigned by the account admin -> claim it (keep assigned role/store)
             conn.execute('UPDATE accounts SET password=?, activated=1, updated_at=? WHERE id=?',
                          (str(password), now(), acc['id']))
-            conn.commit()
             a = conn.execute('SELECT * FROM accounts WHERE id=?', (acc['id'],)).fetchone()
+            _ensure_staff_for_account(conn, dict(a))   # profile guaranteed once they activate
+            conn.commit()
             return {'id': a['id'], 'role': a['role'], 'store': a['store_id'], 'name': a['name'],
                     'tab': ACCT_TABS.get(a['role'], 'Staff'), 'matched': True}
         hit = _staff_by_email_any(conn, email)
@@ -900,12 +1034,23 @@ def list_accounts(q=''):
     account yet — so the account admin can assign permissions to the whole company."""
     conn = connect()
     try:
+        # staff index — lets each account row say whether its staff profile actually exists
+        sidx_ids, sidx_emails = set(), set()
+        for r in conn.execute('SELECT id,store_id,data_json FROM staff').fetchall():
+            sidx_ids.add((r['store_id'], str(r['id'])))
+            try: d = json.loads(r['data_json'] or '{}')
+            except Exception: d = {}
+            e = str(d.get('email') or '').strip().lower()
+            if e: sidx_emails.add((r['store_id'], e))
         rows = conn.execute('SELECT * FROM accounts ORDER BY store_id, name').fetchall()
         out, have_staff, have_email = [], set(), set()
         for r in rows:
             d = {k: r[k] for k in r.keys()}
             if d.get('staff_id'): have_staff.add(str(d['staff_id']))
             if d.get('email'): have_email.add(str(d['email']).strip().lower())
+            d['has_staff'] = d.get('role') == 'super' or bool(
+                (d.get('staff_id') and (d.get('store_id'), str(d['staff_id'])) in sidx_ids)
+                or (d.get('email') and (d.get('store_id'), str(d['email']).strip().lower()) in sidx_emails))
             out.append(d)
         for r in conn.execute('SELECT id,store_id,data_json FROM staff ORDER BY store_id').fetchall():
             if str(r['id']) in have_staff: continue
@@ -946,8 +1091,12 @@ def add_account(email, name, role, store, department=''):
                      (aid, '', role, store or '', (hit or {}).get('staff_id'),
                       (name or (hit or {}).get('name') or email.split('@')[0].replace('.', ' ').title()),
                       email, department or '', now(), now()))
+        # keep Staff Management in step: the person must exist as a staff profile in this
+        # store too (created here when new; refreshed/un-archived when they already exist)
+        srow = conn.execute('SELECT * FROM accounts WHERE id=?', (aid,)).fetchone()
+        staff_id = _ensure_staff_for_account(conn, dict(srow)) if srow else None
         conn.commit()
-        return {'id': aid, 'matched': bool(hit)}
+        return {'id': aid, 'matched': bool(hit), 'staff_id': staff_id, 'staff_created': bool(staff_id and not hit)}
     finally:
         conn.close()
 
@@ -982,7 +1131,9 @@ def remove_dept_lead(store, department, email):
         conn.close()
 
 def update_account(aid, patch):
-    """Account admin edits: role / store / department / password / name."""
+    """Account admin edits: role / store / department / password / name.
+    The linked staff profile follows: name/department/title refresh; moving the account to
+    another store archives the old store's profile and creates/relinks one in the new store."""
     allowed = {'role', 'store_id', 'department', 'password', 'name'}
     sets, vals = [], []
     for k, v in (patch or {}).items():
@@ -992,7 +1143,16 @@ def update_account(aid, patch):
     sets.append('updated_at=?'); vals.append(now()); vals.append(str(aid))
     conn = connect()
     try:
+        old = conn.execute('SELECT * FROM accounts WHERE id=?', (str(aid),)).fetchone()
         conn.execute('UPDATE accounts SET ' + ','.join(sets) + ' WHERE id=?', vals)
+        new = conn.execute('SELECT * FROM accounts WHERE id=?', (str(aid),)).fetchone()
+        if new:
+            nd = dict(new)
+            if old and (old['store_id'] or '') != (nd.get('store_id') or '') and old['store_id'] and old['staff_id']:
+                _archive_staff(conn, old['store_id'], old['staff_id'])
+                conn.execute('UPDATE accounts SET staff_id=NULL WHERE id=?', (nd['id'],))
+                nd['staff_id'] = None
+            _ensure_staff_for_account(conn, nd)
         conn.commit()
         return True
     finally:

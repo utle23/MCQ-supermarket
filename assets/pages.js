@@ -3394,6 +3394,8 @@ function mgrSaveVerifyDraft(id){
   const s=mgrSubs().find(x=>x.id===id); if(!s||ckIsVerifiedSub(s)) return;
   const a=mgrAssessment();
   try{ localStorage.setItem(mgrVfKey(s), JSON.stringify({verifiedBy:a.verifiedBy,overallResult:a.overallResult,issuesFound:a.issuesFound,actionResponsible:a.actionResponsible,verifyNote:a.verifyNote,photos:a.verifyPhotos,taskNotes:a.taskNotes,ts:Date.now()})); }catch(e){}
+  // reassure the manager that closing is safe — flash the "Draft saved" chip in the header
+  try{ const el=document.getElementById('mv-draft'); if(el){ el.classList.add('show'); clearTimeout(window._mvDraftT); window._mvDraftT=setTimeout(()=>el.classList.remove('show'),1500); } }catch(e){}
 }
 function mgrLoadVerifyDraft(s){ try{ const raw=localStorage.getItem(mgrVfKey(s)); if(!raw) return null; const d=JSON.parse(raw);
     // only treat as a draft if it actually has content
@@ -3539,7 +3541,9 @@ function mgrReview(id){
   const tasks=mgrSubTasks(s);
   const meta=(((DB.checklist&&DB.checklist.deptMeta)||{})[s.department])||{color:'#0f766e'};
   const doneN=tasks.filter(t=>t.done).length, outN=tasks.length-doneN, photoN=tasks.reduce((n,t)=>n+t.photos.length,0);
-  // restore an in-progress draft (saved if the manager closed the drawer without verifying)
+  // restore an in-progress draft (saved if the manager closed the screen without verifying)
+  const fresh=!(State.mgrV&&State.mgrV.id===s.id&&document.getElementById('mv-ov'));   // first open vs filter re-render
+  if(fresh) State.mgrVFilter='all';
   const verified=ckIsVerifiedSub(s);
   const draft=verified?null:mgrLoadVerifyDraft(s);
   const existingNote=(draft&&draft.verifyNote)||s.verifyNote||'';
@@ -3551,9 +3555,15 @@ function mgrReview(id){
   const curName=(State.account&&State.account.name)||'Manager'; if(!seenN[curName]) mgrNames.unshift(curName);
   const verifiedBy=(draft&&draft.verifiedBy)||s.verifiedBy||curName, overall=(draft&&draft.overallResult)||s.overallResult||'', issues=(draft&&draft.issuesFound)||s.issuesFound||'', action=(draft&&draft.actionResponsible)||s.actionResponsible||'';
   const disabled=verified?'disabled':'';
-  if(draft) setTimeout(()=>toast('📝 Draft restored — your unsaved notes are back'),300);
+  if(draft&&fresh) setTimeout(()=>toast('📝 Draft restored — your unsaved notes are back'),300);
   const mnotes=(State.mgrV&&State.mgrV.taskNotes)||{};
+  // ---------- task cards + filter chips (All / Outstanding / Photos / Notes) ----------
+  const filter=State.mgrVFilter||'all';
+  const withNote=t=>!!(t.note||''), counts={all:tasks.length, out:outN, photo:tasks.filter(t=>t.photos.length).length,
+    note:tasks.filter((t,i)=>withNote(t)||mnotes[i]).length};
+  const show=(t,i)=>filter==='all'||(filter==='out'&&!t.done)||(filter==='photo'&&t.photos.length)||(filter==='note'&&(withNote(t)||mnotes[i]));
   const rows=tasks.map((t,idx)=>{
+    if(!show(t,idx)) return '';
     // staff note (read-only) sits beside its photos; the manager gets an editable note box on
     // EVERY task to jot a comment right next to it — collected into the PDF/inbox on Verify.
     const noteHtml=t.note?`<div class="mr-note">📝 ${esc(t.note)}</div>`:'';
@@ -3564,43 +3574,74 @@ function mgrReview(id){
     const noteInput=verified
       ? (mnote?`<div class="mr-mnote-ro">🗒️ ${esc(mnote)}</div>`:'')
       : `<input class="mr-tnote" value="${esc(mnote)}" placeholder="🗒️ Add your note for this task…" oninput="mgrTaskNote(${idx},this.value)">`;
-    return `<div class="mr-task ${t.done?'done':'todo'}${mnote?' has-mnote':''}">
-      <div class="mr-tk"><span class="mr-check">${t.done?'✓':'○'}</span><div class="mr-name">${esc(t.task)}<small>${esc(t.area)}</small></div>${t.temp?`<span class="badge ${t.temp.ok?'ok':'warn'}">${esc(t.temp.label)}</span>`:''}</div>
+    return `<div class="mv-t ${t.done?'done':'todo'}${mnote?' has-mnote':''}">
+      <div class="mv-tk"><span class="mv-check">${t.done?'✓':'✕'}</span><div class="mv-name">${esc(t.task)}<small>${esc(t.area)}</small></div>${t.temp?`<span class="badge ${t.temp.ok?'ok':'warn'}">${esc(t.temp.label)}</span>`:''}${t.done?'':'<span class="mv-tag">NOT DONE</span>'}</div>
       ${evidence}
       ${noteInput}
     </div>`; }).join('');
   const subTime=String(s.created||'').slice(11,16);
-  $('#drawer').innerHTML=`<div class="drawer-head"><div class="dh-ic" style="background:${meta.color}1f;color:${meta.color}">✅</div>
-    <div><div style="font-weight:840;font-size:16px">${esc(s.department)} · ${esc(s.session)}</div>
-    <div style="color:var(--muted);font-size:12.5px">${esc(s.store)} · ${esc(s.date)} (${esc(s.dayName)}) · by ${esc(s.by)}${subTime?` · ⏱ submitted ${esc(subTime)}`:''}</div>
-    <div style="margin-top:7px;display:flex;gap:6px;flex-wrap:wrap"><span class="badge ok">${doneN} done</span>${outN?`<span class="badge warn">${outN} outstanding</span>`:''}<span class="badge info">📷 ${photoN}</span><span class="badge ${verified?'ok':'warn'}">${esc(verified?'Verified':s.status)}</span></div></div>
-    <button class="x-btn" onclick="closeDrawer()">✕</button></div>
-    <div class="drawer-body">
-      <div class="mr-prog"><span class="pbar" style="flex:1"><i style="width:${s.progress}%;background:${meta.color}"></i></span><b>${s.progress}%</b></div>
-      <div class="mr-list">${rows||'<div class="empty">No tasks for this session.</div>'}</div>
-      <div class="mr-eval">
-        <div class="field"><label>Verified by</label>
-          <select id="mgr-by" ${disabled} onchange="mgrSaveVerifyDraft('${s.id}')">${mgrNames.map(n=>`<option ${n===verifiedBy?'selected':''}>${esc(n)}</option>`).join('')}</select></div>
-        <div class="field"><label>Overall result</label>
-          <select id="mgr-overall" ${disabled} onchange="mgrSaveVerifyDraft('${s.id}')"><option value="">— Select —</option>${['Good','Need improving','Critical'].map(o=>`<option ${o===overall?'selected':''}>${o}</option>`).join('')}</select></div>
-        <div class="field"><label>Issues found</label>
-          <textarea id="mgr-issues" ${disabled} oninput="mgrSaveVerifyDraft('${s.id}')" placeholder="Describe issues…">${esc(issues)}</textarea></div>
-        <div class="field"><label>Action / Responsible</label>
-          <textarea id="mgr-action" ${disabled} oninput="mgrSaveVerifyDraft('${s.id}')" placeholder="What needs doing & who is responsible">${esc(action)}</textarea></div>
-        <div class="field"><label>Manager note</label>
-          <textarea id="mgr-note" ${disabled} oninput="mgrSaveVerifyDraft('${s.id}')" placeholder="Additional note for the store manager / department lead">${esc(existingNote)}</textarea></div>
-        <div class="field"><label>Attach photos (annotate problem areas)</label>
-          ${verified?'':'<input type="file" id="mgr-photo-in" accept="image/*" multiple onchange="mgrAddVerifyPhotos(event)">'}
-          <div id="mgr-vphotos" class="mr-photos" style="margin-top:8px">${(State.mgrV.photos||[]).map(p=>`<span style="position:relative;display:inline-block"><img src="${imgSrc(p)}" onclick="openLightbox('${ckJS(imgSrc(p))}')" style="cursor:zoom-in">${verified?'':`<span class="ck-rm" onclick="mgrRmVerifyPhoto('${ckJS(p)}')">✕</span>`}</span>`).join('')}</div>
+  // ---------- Verify Studio: full-screen, professional, never closes by a stray tap ----------
+  const col=meta.color||'#0f766e';
+  const rc=ckHexToRgb(col), colDark=`rgb(${Math.round(rc.r*.42)},${Math.round(rc.g*.42)},${Math.round(rc.b*.42)})`;
+  const pct=s.progress||0, RING=2*Math.PI*26, ringOff=RING*(1-Math.min(100,pct)/100);
+  document.getElementById('mv-ov')?.remove();
+  const ov=document.createElement('div'); ov.className='mv-ov'; ov.id='mv-ov';
+  ov.innerHTML=`<div class="mv-panel" style="--mvc:${col};--mvcd:${colDark}">
+    <div class="mv-head">
+      <div class="mv-ring"><svg viewBox="0 0 64 64"><circle class="bg" cx="32" cy="32" r="26"/><circle class="fg" cx="32" cy="32" r="26" style="stroke-dasharray:${RING.toFixed(1)};stroke-dashoffset:${ringOff.toFixed(1)}"/></svg><b>${pct}%</b></div>
+      <div class="mv-title"><h2>${esc(s.department)} · ${esc(s.session)}</h2>
+        <div class="mv-chips"><span class="mv-chip">🏬 ${esc(s.store)}</span><span class="mv-chip">📅 ${esc(s.date)} · ${esc(s.dayName)}</span><span class="mv-chip">👤 ${esc(s.by)}</span>${subTime?`<span class="mv-chip">⏱ submitted ${esc(subTime)}</span>`:''}<span class="mv-chip ${verified?'ok':''}">${verified?'✅ Verified':'🕓 '+esc(s.status||'Submitted')}</span><span class="mv-chip">📷 ${photoN}</span></div></div>
+      <span class="mv-save" id="mv-draft">✓ Draft saved</span>
+      <button class="mv-x" onclick="closeDrawer()" title="Close — your notes stay saved as a draft">✕</button>
+    </div>
+    <div class="mv-body">
+      <div class="mv-tasks">
+        <div class="mv-filters">
+          <button class="${filter==='all'?'on':''}" onclick="mvFilter('${ckJS(s.id)}','all')">All · ${counts.all}</button>
+          <button class="out ${filter==='out'?'on':''}" onclick="mvFilter('${ckJS(s.id)}','out')">⚠ Outstanding · ${counts.out}</button>
+          <button class="${filter==='photo'?'on':''}" onclick="mvFilter('${ckJS(s.id)}','photo')">📷 Photos · ${counts.photo}</button>
+          <button class="${filter==='note'?'on':''}" onclick="mvFilter('${ckJS(s.id)}','note')">📝 Notes · ${counts.note}</button>
+        </div>
+        <div class="mv-list">${rows||'<div class="empty" style="margin:20px auto">Nothing matches this filter.</div>'}</div>
+      </div>
+      <div class="mv-side">
+        <div class="mv-side-h">🛡️ Manager assessment</div>
+        <div class="mv-side-in">
+          <div class="field"><label>Verified by</label>
+            <select id="mgr-by" ${disabled} onchange="mgrSaveVerifyDraft('${s.id}')">${mgrNames.map(n=>`<option ${n===verifiedBy?'selected':''}>${esc(n)}</option>`).join('')}</select></div>
+          <div class="field"><label>Overall result</label>
+            <div class="mv-oc-row">${[['Good','😊'],['Need improving','😐'],['Critical','🚨']].map(([o,ic])=>`<button type="button" class="mv-oc ${o===overall?'on':''}" data-v="${esc(o)}" ${disabled} onclick="mvOverall('${ckJS(s.id)}','${ckJS(o)}')"><span>${ic}</span>${esc(o)}</button>`).join('')}</div>
+            <select id="mgr-overall" style="display:none"><option value="">— Select —</option>${['Good','Need improving','Critical'].map(o=>`<option ${o===overall?'selected':''}>${o}</option>`).join('')}</select></div>
+          <div class="field"><label>Issues found</label>
+            <textarea id="mgr-issues" ${disabled} oninput="mgrSaveVerifyDraft('${s.id}')" placeholder="Describe issues…">${esc(issues)}</textarea></div>
+          <div class="field"><label>Action / Responsible</label>
+            <textarea id="mgr-action" ${disabled} oninput="mgrSaveVerifyDraft('${s.id}')" placeholder="What needs doing & who is responsible">${esc(action)}</textarea></div>
+          <div class="field"><label>Manager note</label>
+            <textarea id="mgr-note" ${disabled} oninput="mgrSaveVerifyDraft('${s.id}')" placeholder="Additional note for the store manager / department lead">${esc(existingNote)}</textarea></div>
+          <div class="field"><label>Attach photos (annotate problem areas)</label>
+            ${verified?'':'<input type="file" id="mgr-photo-in" accept="image/*" multiple onchange="mgrAddVerifyPhotos(event)">'}
+            <div id="mgr-vphotos" class="mr-photos" style="margin-top:8px">${(State.mgrV.photos||[]).map(p=>`<span style="position:relative;display:inline-block"><img src="${imgSrc(p)}" onclick="openLightbox('${ckJS(imgSrc(p))}')" style="cursor:zoom-in">${verified?'':`<span class="ck-rm" onclick="mgrRmVerifyPhoto('${ckJS(p)}')">✕</span>`}</span>`).join('')}</div>
+          </div>
+        </div>
+        <div class="mv-cta">
+          ${verified
+            ? `<div class="mv-verified">✅ Verified by <b>${esc(s.verifiedBy||'—')}</b>${s.overallResult?' · '+esc(s.overallResult):''} — locked.</div>`
+            : `<button class="mv-verify" onclick="mgrVerify('${s.id}')"><i class="fas fa-check-double"></i>&nbsp; Verify &amp; notify department lead</button>
+               ${outN?`<div class="fhint" style="text-align:center;margin-top:7px">⚠️ ${outN} task(s) still outstanding</div>`:''}`}
         </div>
       </div>
-      ${verified
-        ? `<div class="rail-tip" style="margin-top:16px">✅ Verified by ${esc(s.verifiedBy||'—')}${s.overallResult?' · '+esc(s.overallResult):''}.</div>`
-        : `<button class="btn primary block lg" style="margin-top:16px" onclick="mgrVerify('${s.id}')"><i class="fas fa-check-double"></i>&nbsp; Verify &amp; notify department lead</button>
-           ${outN?`<div class="fhint" style="text-align:center;margin-top:8px">⚠️ ${outN} task(s) still outstanding</div>`:''}`}
-    </div>`;
-  $('#drawer').classList.add('open'); $('#drawer-mask').classList.add('open');
+    </div>
+  </div>`;
+  // deliberate: clicking the dark backdrop does NOT close — only ✕ / Esc do (drafts auto-save)
+  document.body.appendChild(ov);
+  document.body.style.overflow='hidden';
 }
+function mvFilter(id,v){ State.mgrVFilter=v; mgrReview(id); }
+function mvOverall(id,val){ const sel=document.getElementById('mgr-overall'); if(!sel) return;
+  sel.value=(sel.value===val?'':val);   // tap again to clear
+  document.querySelectorAll('.mv-oc').forEach(b=>b.classList.toggle('on', b.dataset.v===sel.value));
+  mgrSaveVerifyDraft(id); }
+window.mvFilter=mvFilter; window.mvOverall=mvOverall;
 function renderManager(){
   setAccent('#0f766e'); setCrumb('🛡️','Manager Panel','Verify checklists & action today’s issues');
   const todayStr=todayISO();
@@ -4524,7 +4565,7 @@ function accLoad(q){
       <td><button class="btn xs" style="color:var(--bad);border-color:#f3c9c9" onclick="accDelStaff('${ckJS(a.store_id||'')}','${ckJS(a.staff_id||'')}','${ckJS(a.name||'')}')" title="Remove this person from the list">🗑</button></td>
     </tr>`:`<tr class="${a.acct_admin?'acc-row-admin':''}">
       <td><b style="font-family:ui-monospace,Menlo,monospace">${esc(a.id)}</b>${a.acct_admin?' <span class="badge info" title="Account admin">👑</span>':''}</td>
-      <td><b>${esc(a.name||'')}</b></td><td style="font-size:12px">${esc(a.email||'')}</td>
+      <td><b>${esc(a.name||'')}</b>${a.has_staff===false?' <span class="badge warn" style="font-size:9.5px" title="No staff profile in Staff Management yet — it is created automatically when you save any change to this account">⚠ no staff profile</span>':''}</td><td style="font-size:12px">${esc(a.email||'')}</td>
       <td><select class="acc-inp" onchange="accSet('${esc(a.id)}','role',this.value)">${roleSel(a)}</select></td>
       <td><select class="acc-inp" onchange="accSet('${esc(a.id)}','store_id',this.value)">${storeSel(a)}</select></td>
       <td><select class="acc-inp" onchange="accSet('${esc(a.id)}','department',this.value)" ${a.role==='staff'?'':'disabled'}>${deptSel(a)}</select></td>
@@ -4538,7 +4579,7 @@ function accLoad(q){
 }
 function accSet(id,field,val){
   mcqAccountUpdate(id,{[field]:val}).then(r=>{
-    if(r&&r.ok){ toast('✓ Saved'); if(field==='role') accLoad(); }
+    if(r&&r.ok){ toast(['store_id','role','department','name'].includes(field)?'✓ Saved — staff profile synced':'✓ Saved'); if(field==='role'||field==='store_id') accLoad(); }
     else toast('Could not save');
   });
 }
@@ -4698,7 +4739,7 @@ function accAddGo(){
     role:document.getElementById('aa-role')?.value||'employee',
     store:document.getElementById('aa-store')?.value||'',
     department:document.getElementById('aa-dept')?.value||''})
-  .then(r=>{ if(r&&r.ok){ toast('✓ Account '+r.id+' created — they activate with this email'); mcqModalClose(); accLoad(); } else toast((r&&r.error)||'Could not create'); })
+  .then(r=>{ if(r&&r.ok){ toast('✓ Account '+r.id+' created'+(r.staff_created?' · 👥 added to Staff Management':r.staff_id?' · 🔗 linked to staff profile':'')+' — they activate with this email'); mcqModalClose(); accLoad(); } else toast((r&&r.error)||'Could not create'); })
   .catch(()=>toast('Could not create'));
 }
 // assign access to a staff member who has no account yet — creates the pending account by email

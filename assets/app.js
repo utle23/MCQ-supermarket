@@ -1145,7 +1145,8 @@ function recDelete(modId,id,store){
   if(window.persist) window.persist();
   closeDrawer(); toast(`${id} deleted`); buildSidebar(); render();
 }
-function closeDrawer(){ $('#drawer')?.classList.remove('open'); $('#drawer-mask')?.classList.remove('open'); }
+function closeDrawer(){ $('#drawer')?.classList.remove('open'); $('#drawer-mask')?.classList.remove('open');
+  const mv=document.getElementById('mv-ov'); if(mv){ mv.remove(); document.body.style.overflow=''; } }   // verify studio closes through the same paths (✕ / Esc / route change)
 function refreshBell(){ try{ const n=(window.ckAttentionCount?ckAttentionCount():0); const el=$('#tb-bell-n'); if(el){ el.textContent=n>99?'99+':n; el.style.display=n?'':'none'; } const b=$('#tb-bell'); if(b) b.classList.toggle('has',n>0); }catch(e){} }
 
 /* ---------- command palette (Cmd/Ctrl-K) ---------- */

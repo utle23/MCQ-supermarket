@@ -388,6 +388,20 @@ def account_delete():
     db.write_audit(uid(au), '', 'delete', 'account', str(d.get('id')), None, None)
     return jsonify(ok=True)
 
+@api.route('/api/accounts/staff-sync', methods=['POST'])
+def accounts_staff_sync():
+    """Super only. mode='audit' → per-store report of Account↔Staff mismatches (read-only);
+    mode='fix' → create/relink the missing staff profiles and return what was fixed."""
+    au = require_auth()
+    if au['role'] != 'super': abort(403)
+    d = request.get_json(force=True, silent=True) or {}
+    fix = (str(d.get('mode') or 'audit').lower() == 'fix')
+    res = db.staff_sync(fix=fix)
+    if fix:
+        db.write_audit(uid(au), 'ALL', 'sync', 'staff', 'accounts-staff-sync', None,
+                       {'fixed': len(res.get('fixed') or [])})
+    return jsonify(ok=True, mode='fix' if fix else 'audit', **res)
+
 @api.route('/api/account/password', methods=['POST'])
 def account_password():
     au = require_auth()

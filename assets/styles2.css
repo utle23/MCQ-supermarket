@@ -1667,3 +1667,75 @@ html,body{max-width:100%}
   .email-storebar{background:linear-gradient(135deg,#141d2e,#12241a);border-color:#274c6e}
   .esb-label{color:#7ca9f8}.esb-select{background:#1f1913;border-color:#3a5878;color:#cfe0f5}.esb-hint{color:#8fb0d8}
 }
+
+/* ===================== Verify Studio (Manager · Review & Verify) =====================
+   Full-screen review: tasks on the left, assessment on the right. The dark backdrop is
+   NOT clickable-to-close — only ✕ / Esc close it (notes auto-save as a draft). */
+.mv-ov{position:fixed;inset:0;z-index:70;background:rgba(8,15,30,.58);backdrop-filter:blur(6px);display:flex;align-items:center;justify-content:center;padding:20px;animation:mvIn .18s ease}
+@keyframes mvIn{from{opacity:0}to{opacity:1}}
+.mv-panel{--mvc:#0f766e;--mvcd:#08302c;width:min(1160px,100%);height:min(94vh,100%);background:var(--bg,#f4f6fa);border-radius:22px;overflow:hidden;display:flex;flex-direction:column;box-shadow:0 42px 90px rgba(2,10,24,.5);animation:mvUp .24s cubic-bezier(.16,1,.3,1)}
+@keyframes mvUp{from{transform:translateY(16px) scale(.985);opacity:.5}to{transform:none;opacity:1}}
+.mv-head{display:flex;align-items:center;gap:14px;padding:14px 18px;background:linear-gradient(130deg,var(--mvc),var(--mvcd));color:#fff;flex:none}
+.mv-ring{position:relative;width:58px;height:58px;flex:none}
+.mv-ring svg{width:58px;height:58px;transform:rotate(-90deg)}
+.mv-ring circle{fill:none;stroke-width:6}
+.mv-ring .bg{stroke:rgba(255,255,255,.24)}
+.mv-ring .fg{stroke:#fff;stroke-linecap:round}
+.mv-ring b{position:absolute;inset:0;display:grid;place-items:center;font-size:13px}
+.mv-title{flex:1;min-width:0}
+.mv-title h2{margin:0 0 6px;font-size:17.5px;line-height:1.15;color:#fff}
+.mv-chips{display:flex;gap:6px;flex-wrap:wrap}
+.mv-chip{background:rgba(255,255,255,.15);border:1px solid rgba(255,255,255,.24);padding:2.5px 9px;border-radius:99px;font-size:10.8px;white-space:nowrap}
+.mv-chip.ok{background:#16a34a;border-color:#16a34a}
+.mv-save{opacity:0;transition:.25s;font-size:11.5px;background:rgba(255,255,255,.2);padding:4px 11px;border-radius:99px;white-space:nowrap;flex:none}
+.mv-save.show{opacity:1}
+.mv-x{width:42px;height:42px;flex:none;border:0;border-radius:13px;background:rgba(255,255,255,.16);color:#fff;font-size:17px;cursor:pointer;transition:.15s}
+.mv-x:hover{background:rgba(255,255,255,.32)}
+.mv-body{flex:1;min-height:0;display:grid;grid-template-columns:1.35fr 1fr}
+.mv-tasks{min-width:0;display:flex;flex-direction:column;border-right:1px solid var(--line)}
+.mv-filters{display:flex;gap:6px;padding:11px 14px;flex-wrap:wrap;background:var(--surface);border-bottom:1px solid var(--line);flex:none}
+.mv-filters button{border:1px solid var(--line);background:var(--surface);color:var(--muted);padding:5px 12px;border-radius:99px;font-size:12px;cursor:pointer;font-weight:650;transition:.12s}
+.mv-filters button.on{background:var(--mvc);border-color:var(--mvc);color:#fff}
+.mv-filters button.out.on{background:#dc2626;border-color:#dc2626}
+.mv-list{flex:1;overflow:auto;padding:12px 14px;display:flex;flex-direction:column;gap:10px}
+.mv-t{background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:10px 12px}
+.mv-t.todo{border-color:#f3b4b4;box-shadow:inset 3px 0 0 #dc2626}
+.mv-tk{display:flex;align-items:flex-start;gap:9px}
+.mv-check{width:22px;height:22px;flex:none;border-radius:7px;display:grid;place-items:center;font-size:11.5px;font-weight:800;color:#fff;background:#16a34a;margin-top:1px}
+.mv-t.todo .mv-check{background:#dc2626}
+.mv-name{flex:1;min-width:0;font-size:12.8px;font-weight:600;line-height:1.35}
+.mv-name small{display:block;color:var(--muted);font-weight:500;font-size:10.5px;margin-top:1px}
+.mv-tag{flex:none;background:#fee2e2;color:#b91c1c;font-size:9.5px;font-weight:800;padding:2.5px 7px;border-radius:6px;margin-top:2px}
+.mv-side{min-width:0;display:flex;flex-direction:column;overflow:auto;background:var(--surface)}
+.mv-side-h{font-weight:800;font-size:13.5px;padding:13px 16px;border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--surface);z-index:2}
+.mv-side-in{padding:14px 16px;display:flex;flex-direction:column;gap:11px}
+.mv-oc-row{display:flex;gap:8px}
+.mv-oc{flex:1;border:1.5px solid var(--line);background:var(--surface);border-radius:12px;padding:9px 4px;text-align:center;font-size:11px;font-weight:700;cursor:pointer;color:var(--muted);transition:.12s}
+.mv-oc span{display:block;font-size:17px;margin-bottom:3px}
+.mv-oc.on[data-v="Good"]{border-color:#16a34a;color:#15803d;background:#f0fdf4}
+.mv-oc.on[data-v="Need improving"]{border-color:#d97706;color:#b45309;background:#fffbeb}
+.mv-oc.on[data-v="Critical"]{border-color:#dc2626;color:#b91c1c;background:#fef2f2}
+.mv-cta{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--line);padding:12px 16px 14px;margin-top:auto;z-index:2}
+.mv-verify{width:100%;border:0;border-radius:14px;padding:14px;background:linear-gradient(120deg,var(--mvc),#0891b2);color:#fff;font-weight:800;font-size:14.5px;cursor:pointer;box-shadow:0 10px 26px rgba(8,145,178,.35);transition:.15s}
+.mv-verify:hover{filter:brightness(1.08);transform:translateY(-1px)}
+.mv-verified{background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;border-radius:12px;padding:11px 13px;font-size:12.5px;text-align:center}
+@media(max-width:920px){
+  .mv-ov{padding:0}
+  .mv-panel{width:100%;height:100dvh;border-radius:0}
+  .mv-body{display:flex;flex-direction:column;overflow:auto}
+  .mv-tasks{border-right:0;flex:none}
+  .mv-list{overflow:visible}
+  .mv-side{overflow:visible}
+  .mv-head{padding:12px 14px}
+  .mv-ring{width:48px;height:48px}.mv-ring svg{width:48px;height:48px}
+}
+@media(prefers-color-scheme:dark){
+  .mv-panel{background:#0f1726}
+  .mv-t.todo{border-color:#7f1d1d}
+  .mv-tag{background:#450a0a;color:#fca5a5}
+  .mv-oc.on[data-v="Good"]{background:#052e16}
+  .mv-oc.on[data-v="Need improving"]{background:#451a03}
+  .mv-oc.on[data-v="Critical"]{background:#450a0a}
+  .mv-verified{background:#052e16;border-color:#14532d;color:#86efac}
+}
+@media(prefers-reduced-motion:reduce){ .mv-ov,.mv-panel{animation:none} .mv-verify:hover{transform:none} }
