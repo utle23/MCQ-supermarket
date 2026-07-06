@@ -35,6 +35,7 @@ function renderStaffHome(){
         <div class="sh-sub">MCQ ${esc(State.branch)} · ${new Date().toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'short'})}</div></div>
       <div class="sh-badge"><b>${openItems}</b><span>open items</span></div>
     </div>
+    ${profileNudgeHTML()}
     <div class="section-title">What do you need to do?</div>
     <div class="staff-actions">${actions.map(a=>`<button class="sa-tile" style="--c:${a[3]}" onclick="${a[4]}"><span class="sa-ic">${a[0]}</span><span class="sa-txt"><b>${a[1]}</b><small>${a[2]}</small></span><span class="sa-arrow">→</span></button>`).join('')}</div>
     <div class="section-title">Recent at your store</div>
@@ -254,6 +255,28 @@ function myStaff(){
   const a=State.account||{}; const id=a.staffId, nm=a.staffName||a.name;
   return (DB.staff||[]).find(s=>id&&String(s.id)===String(id)) || (DB.staff||[]).find(s=>s.name===nm) || {name:nm||'',store:a.branch||''};
 }
+// first-run onboarding: gently nudge people whose profile is missing key fields
+// (date of birth, role in the company). Shown on their home until completed.
+function profileMissing(){
+  const a=State.account||{}; if(!(a.staffId||a.accountId)) return [];   // master/Chú Ba: no personal profile
+  const s=myStaff(); if(!s||!s.id) return [];
+  const miss=[];
+  if(!String(s.dob||'').trim()) miss.push('date of birth');
+  if(!String(s.role||s.classification||'').trim()) miss.push('your role');
+  return miss;
+}
+function profileNudgeHTML(){
+  try{
+    if(sessionStorage.getItem('mcq_nudge_off')) return '';
+    const miss=profileMissing(); if(!miss.length) return '';
+    const list=miss.length===2?(miss[0]+' and '+miss[1]):miss[0];
+    return `<div class="onb-nudge"><span class="onb-ic">👋</span>
+      <div class="onb-txt"><b>Finish setting up your profile</b><small>We're still missing ${esc(list)}. It only takes a moment.</small></div>
+      <button class="onb-cta" onclick="go('profile')">Complete now →</button>
+      <button class="onb-x" title="Later" onclick="try{sessionStorage.setItem('mcq_nudge_off','1')}catch(e){};this.closest('.onb-nudge').remove()">✕</button></div>`;
+  }catch(e){ return ''; }
+}
+window.profileNudgeHTML=profileNudgeHTML;
 // records in a people-register (violation/reward/raise/birthday…) that belong to me
 function myRegRecords(mod){
   const s=myStaff(), nm=s.name||'', store=s.store||State.branch;
@@ -288,6 +311,7 @@ function renderEmployeeHome(){
         <div class="eh-sub">${esc(s.role||'Staff')} · MCQ ${esc(s.store||State.branch||'')}</div>
         <div class="emp-chips">${chips.join('')||'<span class="emp-chip">Welcome to your workspace</span>'}</div></div>
     </div>
+    ${!needsProfile&&window.profileNudgeHTML?profileNudgeHTML():''}
     <div class="section-title">Quick actions</div>
     <div class="staff-actions">${tiles.map(t=>`<button class="sa-tile" style="--c:${t[3]}" onclick="${t[4]}"><span class="sa-ic">${t[0]}</span><span class="sa-txt"><b>${t[1]}</b><small>${t[2]}</small></span><span class="sa-arrow">→</span></button>`).join('')}</div>`;
 }

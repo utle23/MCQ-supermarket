@@ -839,6 +839,7 @@ function renderHome(){
         <div class="hs"><b>${critical}</b><span>Critical / Major</span></div>
         <div class="hs"><b>${records}</b><span>Records</span></div>
       </div></div>
+    ${window.profileNudgeHTML?profileNudgeHTML():''}
     ${window.ckTodayStripHTML?ckTodayStripHTML():''}
     ${isSuper()?superHomeBlock():''}
     <div class="section-title">Daily Operations</div>
