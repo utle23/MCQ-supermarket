@@ -887,13 +887,44 @@ function annPaint(filter){
         <div class="ann-hmeta"><span class="ann-scope ${isAll?'all':''}">${isAll?'📢 Company-wide':('🏪 '+esc(a.store))}</span>${a.department?`<span class="ann-dept">👥 ${esc(a.department)}</span>`:''}<span class="ann-meta">${pinned?'📌 Pinned · ':''}${esc(who)} · ${esc((a.created_at||'').slice(0,16).replace('T',' '))}</span></div>
         ${canManage?`<span class="ann-actions"><button class="btn xs ${pinned?'ann-pinned':''}" onclick="annPin(${a.id},${pinned?0:1})" title="${pinned?'Unpin':'Pin to top'}">📌</button><button class="btn xs" onclick="annEdit(${a.id})" title="Edit">✎</button><button class="btn xs ann-del" onclick="annDelete(${a.id})" title="Delete">✕</button></span>`:''}
       </div>
-      ${a.title?`<h3 class="ann-title">${esc(a.title)}</h3>`:''}${img}<div class="ann-body">${safeHtml(a.body_html)}</div>${attCards(a.attachments)}</div>`;
+      ${a.title?`<h3 class="ann-title">${esc(a.title)}</h3>`:''}${img}<div class="ann-body">${safeHtml(a.body_html)}</div>${attCards(a.attachments)}
+      <div class="ann-foot">
+        ${canManage
+          ? `<button class="ann-seen" onclick="annSeen(${a.id})" title="See who has read this">👁 Seen by ${a.read_count||0}</button>`
+          : (a.read_me?`<span class="ann-read done">✓ You've read this</span>`
+                      :`<button class="ann-read" onclick="annMarkRead(${a.id})">✓ Mark as read</button>`)}
+      </div></div>`;
   }).join(''):'<div class="empty"><div class="e-ic">📣</div>No announcements yet.</div>';
   feed.innerHTML=deptBar+filterSel+`<div class="ann-list">${cards}</div>`;
   hydratePhotos(feed);   // resolve data-mcq-photo images (embedded editor photos stored as files)
 }
 function annDeptF(v){ window.__annDeptF=v; annPaint(document.getElementById('ann-filter')?.value||''); }
 window.annDeptF=annDeptF;
+// reader acknowledges an announcement → optimistic update, then persist
+function annMarkRead(id){
+  const a=(window.__annCache||[]).find(x=>x.id===id); if(a){ a.read_me=true; a.read_count=(a.read_count||0)+1; annPaint(document.getElementById('ann-filter')?.value||''); }
+  if(window.mcqAnnRead) mcqAnnRead(id).catch(()=>{});
+}
+window.annMarkRead=annMarkRead;
+// manager/super: who has read this + who hasn't (audience = active staff of the store, by dept)
+function annSeen(id){
+  const a=(window.__annCache||[]).find(x=>x.id===id); if(!a) return;
+  const readers=a.readers||[]; const readIds=new Set(readers.map(r=>String(r.id)));
+  // audience: active staff in scope; company-wide = all stores, store post = that store; dept post → that dept
+  const inStore=s=> a.store==='ALL' ? true : s.store===a.store;
+  const inDept=s=> !a.department || staffNorm(s.dept)===staffNorm(a.department) || (Array.isArray(s.roles)&&s.roles.some(r=>staffNorm(r)===staffNorm(a.department)));
+  const audience=(DB.staff||[]).filter(s=>s.active!==0 && !s.archived && inStore(s) && inDept(s));
+  const notYet=audience.filter(s=>!readIds.has(String(s.id)) && !readIds.has(String(s.name)) && !readers.some(r=>String(r.name)===String(s.name)));
+  const readRows=readers.length?readers.map(r=>`<div class="seen-row"><span class="seen-dot ok"></span><b>${esc(r.name||r.id)}</b><small>${esc((r.at||'').slice(0,16).replace('T',' '))}</small></div>`).join(''):'<div class="fhint">No one has marked this read yet.</div>';
+  const pendRows=notYet.length?notYet.map(s=>`<div class="seen-row"><span class="seen-dot"></span><b>${esc(s.name)}</b><small>${esc(s.dept||s.role||'')}</small></div>`).join(''):'<div class="fhint">Everyone in the audience has read it. 🎉</div>';
+  mcqModal('👁 Read receipts', `
+    <div class="seen-tabs"><b>${readers.length}</b> read · <b>${notYet.length}</b> not yet${a.department?` · 👥 ${esc(a.department)}`:''}${a.store!=='ALL'?` · 🏪 ${esc(a.store)}`:' · 📢 company-wide'}</div>
+    <div class="seen-grid">
+      <div><div class="section-title" style="margin-top:0">✓ Read (${readers.length})</div>${readRows}</div>
+      <div><div class="section-title" style="margin-top:0">⏳ Not yet (${notYet.length})</div>${pendRows}</div>
+    </div>`, {wide:true});
+}
+window.annSeen=annSeen;
 function annCompose(editId){
   _annPhoto=null;
   const ed=editId?(window.__annCache||[]).find(x=>x.id===editId):null;

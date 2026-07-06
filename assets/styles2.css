@@ -1631,3 +1631,19 @@ html,body{max-width:100%}
 .mr-body .mr-note{flex:1 1 180px;min-width:160px;margin-top:0}
 .lead-sync-chip{display:inline-flex;flex-direction:column;gap:1px;flex:1;min-width:0;background:#e7f7f0;border:1.4px solid #b6ecd6;border-radius:10px;padding:7px 12px;font-weight:700;font-size:13px;color:#065f46}
 .lead-sync-chip small{font-weight:500;font-size:11px;color:#3e8067;overflow:hidden;text-overflow:ellipsis}
+
+/* ============================================================ ANNOUNCEMENT READ RECEIPTS */
+.ann-foot{margin-top:12px;padding-top:10px;border-top:1px solid var(--line);display:flex;justify-content:flex-end}
+.ann-read{border:1.4px solid #c9b6ea;background:#f6f0ff;color:#6b21a8;border-radius:999px;padding:6px 14px;font:inherit;font-weight:700;font-size:12.5px;cursor:pointer}
+.ann-read:hover{background:#efe4ff}
+.ann-read.done{border-color:#b6ecd6;background:#e7f7f0;color:#065f46;cursor:default}
+.ann-seen{border:1.4px solid var(--line);background:var(--surface-2);color:var(--ink-soft);border-radius:999px;padding:6px 14px;font:inherit;font-weight:700;font-size:12.5px;cursor:pointer}
+.ann-seen:hover{border-color:#7c3aed;color:#7c3aed}
+.seen-tabs{font-size:13px;color:var(--ink-soft);margin-bottom:12px}
+.seen-tabs b{color:var(--ink)}
+.seen-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.seen-row{display:flex;align-items:center;gap:9px;padding:6px 0;border-bottom:1px dashed var(--line);font-size:13px}
+.seen-row small{margin-left:auto;color:var(--ink-faint);font-size:11px}
+.seen-dot{width:9px;height:9px;border-radius:50%;background:var(--line-strong);flex:none}
+.seen-dot.ok{background:#0e9f6e}
+@media(max-width:560px){.seen-grid{grid-template-columns:1fr}}

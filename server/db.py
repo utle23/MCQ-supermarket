@@ -240,6 +240,8 @@ def init_db():
     except Exception: pass
     try: conn.execute("ALTER TABLE announcements ADD COLUMN attachments_json TEXT DEFAULT '[]'")   # announcement files
     except Exception: pass
+    try: conn.execute("ALTER TABLE announcements ADD COLUMN read_by_json TEXT DEFAULT '[]'")       # read/acknowledge receipts
+    except Exception: pass
     try: conn.execute('ALTER TABLE accounts ADD COLUMN reset_code TEXT')          # forgot-password: hashed code
     except Exception: pass
     try: conn.execute('ALTER TABLE accounts ADD COLUMN reset_expires REAL')       # forgot-password: code expiry (epoch)
@@ -1292,8 +1294,13 @@ def send_message(au, store, kind, subject, body_html, to_staff_id=None, to_store
             root = conn.execute('SELECT * FROM messages WHERE thread_id=? ORDER BY id ASC LIMIT 1',
                                 (thread_id,)).fetchone()
             if root is not None:
+                # a reply inherits the ROOT's actual audience — NOT "any management-sent message
+                # → managers group". This keeps a person-to-person thread (lead → one employee)
+                # private to those two; only a message actually addressed to the management group
+                # (to_managers) or the whole store stays shared. Super is reachable by role (no id).
                 ts = 1 if (root['to_super'] or root['from_role'] in ('super', 'ba')) else 0
-                tm = 1 if (root['to_managers'] or root['from_role'] in ('admin', 'staff')) else 0
+                tm = 1 if root['to_managers'] else 0
+                ta = 1 if root['to_store_all'] else 0
                 if not to_staff_id:
                     me = str(au.get('staff_id') or '')
                     if au.get('role') != 'employee':
@@ -1335,7 +1342,14 @@ def _inbox_query(au):
     if r in ('super', 'ba'):
         return ('SELECT * FROM messages WHERE to_super=1 ORDER BY id DESC LIMIT ?', (500,))
     if r in ('admin', 'staff'):
-        return ('SELECT * FROM messages WHERE store_id=? AND to_managers=1 ORDER BY id DESC LIMIT ?', (au['store_id'], 500))
+        # participant-based: the shared management queue (to_managers) + store broadcasts, PLUS
+        # this person's OWN directed mail (sent or received) — so a private lead↔staff thread
+        # never shows in another lead's inbox.
+        sid = str(au.get('staff_id') or '')
+        if sid:
+            return ('SELECT * FROM messages WHERE (store_id=? AND (to_managers=1 OR to_store_all=1)) OR to_staff_id=? OR from_staff_id=? ORDER BY id DESC LIMIT ?',
+                    (au['store_id'], sid, sid, 500))
+        return ('SELECT * FROM messages WHERE store_id=? AND (to_managers=1 OR to_store_all=1) ORDER BY id DESC LIMIT ?', (au['store_id'], 500))
     if r == 'employee':
         # personal mail matches by staff id GLOBALLY (ids are store-prefixed/unique) so a reply
         # from another store's management still reaches the sender; broadcasts stay store-scoped
@@ -1400,8 +1414,10 @@ def thread_messages(au, thread_id):
         key = _reader_key(au); r = au.get('role'); sid = str(au.get('staff_id')); store = au.get('store_id')
         def visible(row):
             if r in ('super', 'ba'): return row['to_super'] == 1 or row['from_role'] in ('super', 'ba')
-            if r in ('admin', 'staff'): return row['store_id'] == store and (row['to_managers'] == 1 or row['from_role'] in ('admin', 'staff'))
-            if r == 'employee': return row['to_staff_id'] == sid or row['from_staff_id'] == sid or (row['store_id'] == store and row['to_store_all'] == 1)
+            if r in ('admin', 'staff'):
+                if row['store_id'] == store and (row['to_managers'] == 1 or row['to_store_all'] == 1): return True
+                return bool(sid) and (str(row['to_staff_id']) == sid or str(row['from_staff_id']) == sid)   # own directed mail only
+            if r == 'employee': return str(row['to_staff_id']) == sid or str(row['from_staff_id']) == sid or (row['store_id'] == store and row['to_store_all'] == 1)
             return False
         return [_msg_dict(x, key) for x in rows if visible(x)]
     finally:
@@ -1428,11 +1444,38 @@ def list_announcements(au):
         else:
             rows = conn.execute("SELECT * FROM announcements WHERE store_id=? OR store_id='ALL' ORDER BY pinned DESC, id DESC LIMIT 200",
                                 (au['store_id'],)).fetchall()
-        return [{'id': r['id'], 'store': r['store_id'], 'title': r['title'], 'body_html': r['body_html'],
+        me = str(au.get('account_id') or au.get('staff_id') or '')
+        def readers(r):
+            try: return json.loads(r['read_by_json']) if ('read_by_json' in r.keys() and r['read_by_json']) else []
+            except Exception: return []
+        out = []
+        for r in rows:
+            rd = readers(r)
+            out.append({'id': r['id'], 'store': r['store_id'], 'title': r['title'], 'body_html': r['body_html'],
                  'image_id': r['image_id'], 'author': r['author'], 'created_at': r['created_at'],
                  'pinned': (r['pinned'] if 'pinned' in r.keys() else 0) or 0,
                  'department': (r['department'] if 'department' in r.keys() else None) or '',
-                 'attachments': (json.loads(r['attachments_json']) if ('attachments_json' in r.keys() and r['attachments_json']) else [])} for r in rows]
+                 'attachments': (json.loads(r['attachments_json']) if ('attachments_json' in r.keys() and r['attachments_json']) else []),
+                 'readers': rd, 'read_count': len(rd), 'read_me': any(str(x.get('id')) == me for x in rd) if me else False})
+        return out
+    finally:
+        conn.close()
+
+def mark_announcement_read(au, ann_id):
+    """Record that this person acknowledged an announcement (id + name + time; once)."""
+    me = str(au.get('account_id') or au.get('staff_id') or '')
+    if not me: return False
+    conn = connect()
+    try:
+        row = conn.execute('SELECT read_by_json FROM announcements WHERE id=?', (ann_id,)).fetchone()
+        if not row: return False
+        try: rb = json.loads(row['read_by_json'] or '[]') if ('read_by_json' in row.keys() and row['read_by_json']) else []
+        except Exception: rb = []
+        if not any(str(x.get('id')) == me for x in rb):
+            rb.append({'id': me, 'name': au.get('staff_name') or au.get('name') or me, 'at': now()})
+            conn.execute('UPDATE announcements SET read_by_json=? WHERE id=?', (json.dumps(rb), ann_id))
+            conn.commit()
+        return True
     finally:
         conn.close()
 

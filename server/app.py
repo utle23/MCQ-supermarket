@@ -571,6 +571,13 @@ def announcement_pin():
     db.emit_event('announcements')
     return jsonify(ok=True)
 
+@api.route('/api/announcement/read', methods=['POST'])
+def announcement_read():
+    au = require_auth()   # any signed-in reader may acknowledge (Chú Ba read-only is fine here)
+    d = request.get_json(force=True, silent=True) or {}
+    ok = db.mark_announcement_read(au, d.get('id'))
+    return jsonify(ok=bool(ok))
+
 # ---------- store list / summary ----------
 @api.route('/api/stores')
 def stores():
