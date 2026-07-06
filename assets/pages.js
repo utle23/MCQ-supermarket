@@ -153,6 +153,26 @@ function ckDraftKey(){ return 'mcq_ckdraft_'+(State.branch||'store')+'_'+ckToday
 let _ckDraftTimer=null;
 function ckWriteDraft(){ try{ if(!State.chk) return; localStorage.setItem(ckDraftKey(), JSON.stringify({state:State.chk.state||{}, resp:State.chk.resp||{}, t:Date.now()})); }catch(e){} }
 function ckSaveDraft(){ clearTimeout(_ckDraftTimer); _ckDraftTimer=setTimeout(ckWriteDraft, 500); }   // debounced
+
+/* ---- offline submit queue: if a checklist is submitted with no connection (or the save
+   fails), the finished submission is stored locally and auto-pushed when back online. ---- */
+function ckQueue(){ try{ return JSON.parse(localStorage.getItem('mcq_ck_queue')||'[]'); }catch(e){ return []; } }
+function ckQueueSave(q){ try{ localStorage.setItem('mcq_ck_queue', JSON.stringify(q||[])); }catch(e){} }
+function ckQueueSub(sub){ if(!sub||!sub.id) return; const q=ckQueue(); if(!q.some(s=>s.id===sub.id)){ q.push(sub); ckQueueSave(q); } }
+async function ckFlushQueue(){
+  if(!navigator.onLine || !window.mcqChecklistSubmit || !(window.localStorage&&localStorage.getItem('mcq_token'))) return;
+  const q=ckQueue(); if(!q.length) return;
+  const remain=[];
+  for(const sub of q){ try{ const r=await mcqChecklistSubmit(sub); if(!(r&&r.ok)) remain.push(sub); }catch(e){ remain.push(sub); } }
+  ckQueueSave(remain);
+  const synced=q.length-remain.length;
+  if(synced>0 && window.toast) toast(`✓ ${synced} offline checklist${synced>1?'s':''} synced`);
+}
+window.ckFlushQueue=ckFlushQueue; window.ckQueueSub=ckQueueSub;
+if(!window._ckQueueInit){ window._ckQueueInit=true;
+  try{ window.addEventListener('online', ()=>{ setTimeout(ckFlushQueue,800); }); }catch(e){}
+  setInterval(()=>{ try{ ckFlushQueue(); }catch(e){} }, 45000);   // safety net while the tab is open
+}
 function ckRestoreDraft(){ try{
   const raw=localStorage.getItem(ckDraftKey()); if(!raw) return;
   const d=JSON.parse(raw);
@@ -167,6 +187,7 @@ if(!window._ckDraftHooked){ window._ckDraftHooked=true;
 }
 function renderChecklist(){
   const C=DB.checklist; setAccent('#0e9f6e');
+  try{ ckFlushQueue(); }catch(e){}   // push any submissions that were made offline
   if(!State.chk){ State.chk={session:'Opening',dept:C.depts[0],area:'ALL',state:{},resp:{}}; ckRestoreDraft(); }
   if(State.chk.dept==='ALL' || !C.depts.includes(State.chk.dept)) State.chk.dept=C.depts[0];
   if(!State.chk.area) State.chk.area='ALL';
@@ -1643,6 +1664,10 @@ function ckDoSubmit(){
   DB.checklistSubs=DB.checklistSubs||[]; DB.checklistSubs.unshift(sub);
   auditLog('create','checklistSubmission',sub.id,sub.store,null,sub,`${sub.dept} ${sub.session}`);
   if(window.persist) window.persist();
+  // append this ONE submission straight to its own row immediately — safe against a concurrent
+  // whole-store save (never lost); the blob save above is the fallback. Queue if offline.
+  if(!navigator.onLine){ ckQueueSub(sub); }
+  else if(window.mcqChecklistSubmit){ mcqChecklistSubmit(sub).then(r=>{ if(!(r&&r.ok)) ckQueueSub(sub); }).catch(()=>ckQueueSub(sub)); }
   if(window.mcqEmail) mcqEmail.notify('checklist', `Checklist submitted · ${sub.dept} ${sub.session} · ${State.branch}`,
     `Department: ${sub.dept}\nSession: ${sub.session}\nStore: ${State.branch}\nProgress: ${doneN}/${totalN} (${sub.progress}%)\nSubmitted by: ${sub.by||'—'}\nResponsible: ${sub.responsible||'—'}${out?`\n⚠️ ${out} temperature alert(s)`:''}`, {dept:sub.dept});
   if(State.chk&&State.chk.reopen) delete State.chk.reopen[sub.dept+'|'+sub.session];   // clear re-open flag so the Done screen shows

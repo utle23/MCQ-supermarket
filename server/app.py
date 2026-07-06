@@ -318,6 +318,21 @@ def accounts_list():
     require_acct_admin()
     return jsonify(ok=True, accounts=db.list_accounts(request.args.get('q', '')))
 
+@api.route('/api/checklist/submit', methods=['POST'])
+def checklist_submit():
+    au = require_auth(); require_write(au)
+    d = request.get_json(force=True, silent=True) or {}
+    sub = d.get('sub') or {}
+    store = (sub.get('store') if au['role'] in ('super', 'ba') else au['store_id']) or au['store_id']
+    if store not in db.STORES: abort(400)
+    require_store(au, store)
+    sub['store'] = store
+    sid = db.save_checklist_submission(store, sub)
+    if not sid: abort(400)
+    db.write_audit(uid(au), store, 'submit', 'checklist', sid, None,
+                   {'dept': sub.get('department'), 'session': sub.get('session'), 'progress': sub.get('progress')})
+    return jsonify(ok=True, id=sid)
+
 @api.route('/api/staff/import', methods=['POST'])
 def staff_import():
     au = require_auth(); require_write(au)

@@ -632,6 +632,21 @@ def _send_overdue_alert(conn, store, session, deadline_txt, missing):
             seen.add(sid); _insert(sid, False)
     conn.commit()
 
+def save_checklist_submission(store, sub):
+    """Append/replace ONE checklist submission immediately (upsert by id), independent of the
+    big store blob — so a submission can never be lost to a concurrent whole-store save."""
+    sid = str((sub or {}).get('id') or '')
+    if not sid or store not in STORES: return None
+    conn = connect()
+    try:
+        conn.execute('''INSERT INTO checklist_submissions(id,store_id,data_json,created_at)
+                        VALUES(?,?,?,?) ON CONFLICT (store_id,id) DO UPDATE SET data_json=excluded.data_json, created_at=excluded.created_at''',
+                     (sid, store, json.dumps(sub), now()))
+        conn.commit()
+        return sid
+    finally:
+        conn.close()
+
 def bulk_import_staff(rows, allowed_stores=None):
     """Import staff from a parsed CSV. rows = [{name,store,email,role,dept,dob}].
     Dedupe by email (existing DB + within the batch); skip rows for stores not allowed.

@@ -70,6 +70,7 @@
   // employee edits ONE staff row (own profile) — patches only, never the whole store blob
   window.mcqStaffProfile=function(store,staffId,patch){ return _authFetch('/api/staff-profile',{method:'POST',body:JSON.stringify({store:store,staff_id:staffId,patch:patch||{}})}); };
   window.mcqStaffImport=function(rows){ return _authFetch('/api/staff/import',{method:'POST',body:JSON.stringify({rows:rows||[]})}); };
+  window.mcqChecklistSubmit=function(sub){ return _authFetch('/api/checklist/submit',{method:'POST',body:JSON.stringify({sub:sub||{}})}); };
   // ---- inbox / messaging ----
   window.mcqMsgSend=function(payload){ return _authFetch('/api/message',{method:'POST',body:JSON.stringify(payload||{})}); };
   window.mcqMsgList=function(){ return _authFetch('/api/messages'); };
