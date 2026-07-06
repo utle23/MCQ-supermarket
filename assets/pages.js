@@ -126,7 +126,11 @@ function staffDisplayForDept(dept,current){
   const names=staffForDept(dept).slice(0,3).map(s=>s.name);
   return names.length?names.join(', '):(cur||'—');
 }
-function ckCanBuild(){ return isAdmin() || (State.account&&State.account.role==='staff'); }   // Dept Lead can build the checklist too
+// Only STORE-SCOPED roles edit the template on this page (Manager + Dept Lead) — their edits
+// save to their own store's blob only, so stores stay isolated. Super does NOT build here
+// (the client shares one template array; a Super edit would propagate to every store) — Super
+// edits each store's template safely & independently via Store Config.
+function ckCanBuild(){ return State.account && (State.account.role==='admin' || State.account.role==='staff'); }
 window.ckCanBuild=ckCanBuild;
 function ckItem(it,i){ return {i,dept:it[0],area:it[1],task:it[2],when:it[3],photo:photoSpec(it[4]),meta:it[5]||{}}; }
 function ckStoreOk(r,store){
@@ -219,7 +223,7 @@ function renderChecklist(){
    </div>
    <div class="ck-toolbar"><div class="dept-chips">${chips}</div></div>
    ${areaChips}
-   ${viewing?`<div class="ck-build-hint" style="border-color:#bcd; background:#eff6ff; color:#1e40af"><i class="fas fa-clock-rotate-left"></i> Viewing the submitted <b>${esc(s.session)}</b> checklist for <b>${esc(s.date)}</b> (read-only).</div>`:(ckCanBuild()?`<div class="ck-build-hint"><i class="fas fa-wand-magic-sparkles"></i> <b>Builder mode</b> — double-click a department, section or task to rename / delete · tap <b>+</b> to add</div>`:'')}
+   ${viewing?`<div class="ck-build-hint" style="border-color:#bcd; background:#eff6ff; color:#1e40af"><i class="fas fa-clock-rotate-left"></i> Viewing the submitted <b>${esc(s.session)}</b> checklist for <b>${esc(s.date)}</b> (read-only).</div>`:(ckCanBuild()?`<div class="ck-build-hint"><i class="fas fa-wand-magic-sparkles"></i> <b>Builder mode</b> — double-click a department, section or task to rename / delete · tap <b>+</b> to add</div>`:(isSuper()?`<div class="ck-build-hint" style="border-color:#c9b6ea;background:#f6f0ff;color:#6b21a8"><i class="fas fa-store"></i> To edit a store's checklist tasks, use <b><a href="#/storeconfig" style="color:#6b21a8;text-decoration:underline">Store Config</a></b> — each store is edited independently, so changes never affect other stores.</div>`:''))}
    ${(viewing||submitted)?'':`<div class="ck-bulk"><button class="btn sm ghost" onclick="ckAll(true)"><i class="fas fa-check-double"></i>&nbsp; Check all done</button><button class="btn sm ghost" onclick="ckAll(false)"><i class="fas fa-rotate-left"></i>&nbsp; Uncheck all</button></div>`}
    <div id="chk-prog" class="ck-progbar"></div>
    <div id="ck-temp-report"></div>
