@@ -199,8 +199,9 @@ function renderChecklist(){
   if(!State.chk.resp) State.chk.resp={};
   const s=State.chk;
   const today=ckTodayStr(); if(!s.date) s.date=today; const viewing=s.date!==today;
-  const reopened=!!(State.chk.reopen && State.chk.reopen[s.dept+'|'+s.session]);
-  const submitted=!viewing && !isAdmin() && ckSubmittedFor(s.dept,s.session,today) && !reopened;   // show the Done screen for staff after submit
+  const bestSub=ckBestSubmission(s.dept,s.session,today);
+  const reopened=!!(State.chk.reopen && State.chk.reopen[s.dept+'|'+s.session]) && !ckIsVerifiedSub(bestSub);
+  const submitted=!viewing && !isAdmin() && !!bestSub && !reopened;   // show the Done screen for staff after submit
   setCrumb('✅','Store Operation Checklist',`${superScopeLabel()} · ${s.session}${viewing?' · '+s.date:''}`);
   const chips=C.depts.map(d=>{ const m=C.deptMeta[d]||{}; const col=m.color||'#0e9f6e';
     return `<button class="dept-chip ${d===s.dept?'active':''}" style="--dc:${col}" ${ckCanBuild()?`ondblclick="ckDeptHEdit('${ckJS(d)}')" title="Double-click to rename / delete"`:''} onclick="ckDept('${ckJS(d)}')">${m.icon?`<i class="fas ${m.icon}"></i> `:''}${esc(d)}</button>`; }).join('')
@@ -1052,15 +1053,27 @@ function renderBaView(){
     </div>
     <div class="ba-list">${cards||`<div class="empty"><div class="e-ic">📅</div>No checklists submitted for ${esc(b.store)} on ${esc(b.date)}.</div>`}</div>`;
 }
-function ckSubmittedFor(dept,session,date){ return (DB.checklistSubs||[]).some(x=>(isSuper()||x.store===State.branch)&&x.dept===dept&&x.session===session&&x.date===date); }
+function ckIsVerifiedSub(s){ return String((s&&s.status)||'').trim().toLowerCase()==='verified' || !!(s&&(s.verifiedAt||s.verifiedBy)); }
+function ckIsPendingVerifySub(s){ return !ckIsVerifiedSub(s); }
+function ckSubDept(s){ return (s&&(s.dept||s.department))||''; }
+function ckSubStamp(s){ return String((s&&(s.verifiedAt||s.created||s.id))||''); }
+function ckBetterSub(a,b){
+  if(!a) return b;
+  if(ckIsVerifiedSub(a)!==ckIsVerifiedSub(b)) return ckIsVerifiedSub(a)?a:b;
+  return ckSubStamp(b)>ckSubStamp(a)?b:a;
+}
+function ckBestSubmission(dept,session,date,store){
+  return (DB.checklistSubs||[]).filter(x=>(store?x.store===store:(isSuper()||x.store===State.branch))&&ckSubDept(x)===dept&&x.session===session&&x.date===date).reduce(ckBetterSub,null);
+}
+function ckSubmittedFor(dept,session,date){ return !!ckBestSubmission(dept,session,date); }
 function ckPastHTML(){
   const s=State.chk;
-  const subs=(DB.checklistSubs||[]).filter(x=>(isSuper()||x.store===State.branch)&&x.dept===s.dept&&x.session===s.session&&x.date===s.date);
+  const subs=(DB.checklistSubs||[]).filter(x=>(isSuper()||x.store===State.branch)&&ckSubDept(x)===s.dept&&x.session===s.session&&x.date===s.date);
   if(!subs.length) return `<div class="empty"><div class="e-ic">📅</div>No ${esc(s.session)} submission for ${esc(s.dept)} on ${esc(s.date)}.</div>`;
   let html='';
   subs.forEach(rec=>{
-    html+=`<div class="ck-dept"><div class="ck-dept-h"><span class="chk-dot" style="background:#0e9f6e"></span>${esc(rec.store)} · ${esc(rec.dept)} · ${esc(rec.session)}<span class="ck-dept-n">${rec.done||0}/${rec.total||0} · ${rec.progress||0}%</span></div>
-      <div class="ck-resp-card" style="margin:6px 0 4px"><span class="badge ${rec.status==='Verified'?'ok':'warn'}">${esc(rec.status||'Submitted')}</span>${rec.by?' · by '+esc(rec.by):''}${rec.verifiedBy?' · verified by '+esc(rec.verifiedBy):''}${rec.verifyNote?`<div style="margin-top:6px;color:#64748b">📝 ${esc(rec.verifyNote)}</div>`:''}</div>`;
+    html+=`<div class="ck-dept"><div class="ck-dept-h"><span class="chk-dot" style="background:#0e9f6e"></span>${esc(rec.store)} · ${esc(ckSubDept(rec))} · ${esc(rec.session)}<span class="ck-dept-n">${rec.done||0}/${rec.total||0} · ${rec.progress||0}%</span></div>
+      <div class="ck-resp-card" style="margin:6px 0 4px"><span class="badge ${ckIsVerifiedSub(rec)?'ok':'warn'}">${esc(ckIsVerifiedSub(rec)?'Verified':(rec.status||'Submitted'))}</span>${rec.by?' · by '+esc(rec.by):''}${rec.verifiedBy?' · verified by '+esc(rec.verifiedBy):''}${rec.verifyNote?`<div style="margin-top:6px;color:#64748b">📝 ${esc(rec.verifyNote)}</div>`:''}</div>`;
     const byArea={}; (rec.items||[]).forEach(it=>{(byArea[it.area||'General']=byArea[it.area||'General']||[]).push(it);});
     Object.entries(byArea).forEach(([area,items])=>{
       html+=`<div class="ck-area-h">${esc(area)}</div>`;
@@ -1074,18 +1087,21 @@ function ckPastHTML(){
   });
   return html;
 }
-function ckReopen(dept,session){ State.chk.reopen=State.chk.reopen||{}; State.chk.reopen[dept+'|'+session]=1; renderChecklist(); }
+function ckReopen(dept,session){
+  if(ckIsVerifiedSub(ckBestSubmission(dept,session,ckTodayStr(),State.branch))){ toast('This checklist has been verified and is locked.'); return; }
+  State.chk.reopen=State.chk.reopen||{}; State.chk.reopen[dept+'|'+session]=1; renderChecklist();
+}
 function ckDoneHTML(dept,session){
-  const subs=(DB.checklistSubs||[]).filter(x=>x.store===State.branch&&x.dept===dept&&x.session===session&&x.date===ckTodayStr());
-  const s=subs[0]||{done:0,total:0,progress:0};
+  const s=ckBestSubmission(dept,session,ckTodayStr(),State.branch)||{done:0,total:0,progress:0};
   const out=(s.items||[]).filter(it=>!it.done);
+  const verified=ckIsVerifiedSub(s);
   return `<div class="ck-done">
       <div class="ck-done-ring"><svg viewBox="0 0 52 52"><circle class="cs-circle" cx="26" cy="26" r="24"/><path class="cs-check" d="M14.5 27l7.5 7.5 16-16.5"/></svg></div>
       <h3>${esc(dept)} · ${esc(session)} — Submitted ✓</h3>
-      <p>${s.done||0}/${s.total||0} done · ${s.progress||0}%${s.by?` · by ${esc(s.by)}`:''}${s.status==='Verified'?' · ✅ Verified':''}</p>
+      <p>${s.done||0}/${s.total||0} done · ${s.progress||0}%${s.by?` · by ${esc(s.by)}`:''}${verified?' · ✅ Verified':''}</p>
       ${out.length?`<div class="ck-done-out">⚠️ ${out.length} not completed: ${esc(out.slice(0,8).map(it=>it.task).join(', '))}${out.length>8?'…':''}</div>`:'<div class="ck-done-ok">All tasks completed. Great work! 🎉</div>'}
       <div class="ck-done-actions">
-        <button class="btn" onclick="ckReopen('${ckJS(dept)}','${ckJS(session)}')"><i class="fas fa-pen"></i>&nbsp; Re-open to edit</button>
+        ${verified?'<span class="badge ok">Verified — locked</span>':`<button class="btn" onclick="ckReopen('${ckJS(dept)}','${ckJS(session)}')"><i class="fas fa-pen"></i>&nbsp; Re-open to edit</button>`}
         <button class="btn primary" onclick="ckSharePDF('${ckJS(session)}')"><i class="fab fa-whatsapp"></i>&nbsp; Share PDF</button>
       </div>
     </div>
@@ -3110,14 +3126,25 @@ function mgrSynthSubs(){
   State._synthSubs=out; return out;
 }
 function mcqDemoMode(){ try{ return localStorage.getItem('mcq_demo')==='1'; }catch(e){ return false; } }
+function mgrSubKey(s){
+  const dept=staffNorm((s&&s.department)||ckSubDept(s));
+  if(!(s&&s.store&&s.date&&dept&&s.session)) return 'id|'+((s&&s.id)||[s&&s.store,s&&s.date,dept,s&&s.session].join('|'));
+  return [s.store,s.date,dept,s.session].join('|');
+}
+function mgrDedupeSubs(list){
+  const byKey={};
+  (list||[]).forEach(s=>{ const k=mgrSubKey(s); byKey[k]=ckBetterSub(byKey[k],s); });
+  return Object.values(byKey);
+}
 /* REAL submitted checklists only (demo history is opt-in via localStorage.mcq_demo='1') */
 function mgrSubs(){
   const real=(DB.checklistSubs||[]).map(s=>({ id:s.id, date:s.date, dayName:s.dayName||new Date(s.date+'T00:00').toLocaleDateString(undefined,{weekday:'long'}),
-    store:s.store, department:s.dept, session:s.session, by:s.by||s.responsible||'Staff', created:s.created||'',
-    total:s.total, done:s.done, progress:s.progress, status:s.status||'Submitted', real:true, items:s.items,
+    store:s.store, department:ckSubDept(s), session:s.session, by:s.by||s.responsible||'Staff', created:s.created||'',
+    total:s.total, done:s.done, progress:s.progress, status:ckIsVerifiedSub(s)?'Verified':(String(s.status||'Submitted').trim()||'Submitted'), real:true, items:s.items,
     verifyNote:s.verifyNote||'', verifiedAt:s.verifiedAt||'', verifiedBy:s.verifiedBy||'',
     overallResult:s.overallResult||'', issuesFound:s.issuesFound||'', actionResponsible:s.actionResponsible||'', verifyPhotos:s.verifyPhotos||[] }));
-  return mcqDemoMode() ? real.concat(mgrSynthSubs()) : real;
+  const out=mgrDedupeSubs(real);
+  return mcqDemoMode() ? out.concat(mgrSynthSubs()) : out;
 }
 /* ---------- daily operations pulse + "needs attention" (real data only) ---------- */
 function ckTodayStr(){ const d=new Date(); return d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0'); }   // LOCAL date (toISOString is UTC — wrong for Perth between midnight and 8am)
@@ -3142,14 +3169,14 @@ function ckOpsPulse(){
       pct:Math.min(100,Math.round(submitted/expectedPer*100)),
       overdue: ckDeadlinePassed(sess) && submitted<expectedPer };
   });
-  const pendingVerify=subs.filter(s=>s.status!=='Verified').length;
+  const pendingVerify=subs.filter(ckIsPendingVerifySub).length;
   let tempAlerts=0; todaySubs.forEach(s=>(s.items||[]).forEach(it=>{ if(it.temp&&it.temp.inRange===false) tempAlerts++; }));
   const overdue=sessions.reduce((n,s)=>n+(s.overdue?(s.expected-s.submitted):0),0);
   return {sessions, pendingVerify, tempAlerts, overdue, today};
 }
 function ckAttentionItems(){
   const out=[], today=ckTodayStr(), subs=mgrSubs().filter(s=>ckMyScope(s.store));
-  subs.filter(s=>s.status!=='Verified').slice(0,40).forEach(s=>out.push({icon:'fa-clipboard-check',accent:'#0e9f6e',title:'Verify · '+s.department+' '+s.session,sub:s.store+' · '+s.date+' · '+(s.progress||0)+'%',go:"go('manager')"}));
+  subs.filter(ckIsPendingVerifySub).slice(0,40).forEach(s=>out.push({icon:'fa-clipboard-check',accent:'#0e9f6e',title:'Verify · '+s.department+' '+s.session,sub:s.store+' · '+s.date+' · '+(s.progress||0)+'%',go:"go('manager')"}));
   ckOpsPulse().sessions.filter(s=>s.overdue).forEach(s=>out.push({icon:'fa-clock',accent:'#ef4444',title:'Overdue · '+s.key+' checklist',sub:(s.expected-s.submitted)+' of '+s.expected+' not submitted',go:"go('checklist')"}));
   subs.filter(s=>s.date===today).forEach(s=>(s.items||[]).forEach(it=>{ if(it.temp&&it.temp.inRange===false) out.push({icon:'fa-temperature-half',accent:'#f59e0b',title:'Temp out of range',sub:s.store+' · '+s.department+' · '+(it.temp.value!=null?it.temp.value+'°C':'')+' · '+String(it.task||'').slice(0,40),go:"go('manager')"}); }));
   ['issue','maintenance','incident','complaint'].forEach(id=>{ const m=DB.modules[id]; if(!m) return;
@@ -3271,7 +3298,7 @@ function mgrTaskNote(idx,val){ State.mgrV=State.mgrV||{}; State.mgrV.taskNotes=S
   if(State.mgrV.id) mgrSaveVerifyDraft(State.mgrV.id); }
 window.mgrTaskNote=mgrTaskNote;
 function mgrSaveVerifyDraft(id){
-  const s=mgrSubs().find(x=>x.id===id); if(!s||s.status==='Verified') return;
+  const s=mgrSubs().find(x=>x.id===id); if(!s||ckIsVerifiedSub(s)) return;
   const a=mgrAssessment();
   try{ localStorage.setItem(mgrVfKey(s), JSON.stringify({verifiedBy:a.verifiedBy,overallResult:a.overallResult,issuesFound:a.issuesFound,actionResponsible:a.actionResponsible,verifyNote:a.verifyNote,photos:a.verifyPhotos,taskNotes:a.taskNotes,ts:Date.now()})); }catch(e){}
 }
@@ -3420,7 +3447,8 @@ function mgrReview(id){
   const meta=(((DB.checklist&&DB.checklist.deptMeta)||{})[s.department])||{color:'#0f766e'};
   const doneN=tasks.filter(t=>t.done).length, outN=tasks.length-doneN, photoN=tasks.reduce((n,t)=>n+t.photos.length,0);
   // restore an in-progress draft (saved if the manager closed the drawer without verifying)
-  const draft=s.status==='Verified'?null:mgrLoadVerifyDraft(s);
+  const verified=ckIsVerifiedSub(s);
+  const draft=verified?null:mgrLoadVerifyDraft(s);
   const existingNote=(draft&&draft.verifyNote)||s.verifyNote||'';
   State.mgrV={id:s.id, photos:((draft&&draft.photos)||s.verifyPhotos||[]).slice(),
     taskNotes:Object.assign({}, (draft&&draft.taskNotes)||s.taskNotes||{})};
@@ -3429,7 +3457,7 @@ function mgrReview(id){
   (DB.staff||[]).filter(x=>x.store===s.store && (staffIsAdmin(x)||/manager|supervisor/i.test(x.role||''))).forEach(x=>{ if(x.name&&!seenN[x.name]){seenN[x.name]=1;mgrNames.push(x.name);} });
   const curName=(State.account&&State.account.name)||'Manager'; if(!seenN[curName]) mgrNames.unshift(curName);
   const verifiedBy=(draft&&draft.verifiedBy)||s.verifiedBy||curName, overall=(draft&&draft.overallResult)||s.overallResult||'', issues=(draft&&draft.issuesFound)||s.issuesFound||'', action=(draft&&draft.actionResponsible)||s.actionResponsible||'';
-  const disabled=s.status==='Verified'?'disabled':'';
+  const disabled=verified?'disabled':'';
   if(draft) setTimeout(()=>toast('📝 Draft restored — your unsaved notes are back'),300);
   const mnotes=(State.mgrV&&State.mgrV.taskNotes)||{};
   const rows=tasks.map((t,idx)=>{
@@ -3440,7 +3468,7 @@ function mgrReview(id){
     const evidence=t.photos.length?`<div class="mr-body">${photoHtml}${noteHtml}</div>`
       :(noteHtml||(t.photoReq&&!t.done?`<div class="mr-nophoto">📷 Photo required — not attached</div>`:''));
     const mnote=mnotes[idx]||'';
-    const noteInput=s.status==='Verified'
+    const noteInput=verified
       ? (mnote?`<div class="mr-mnote-ro">🗒️ ${esc(mnote)}</div>`:'')
       : `<input class="mr-tnote" value="${esc(mnote)}" placeholder="🗒️ Add your note for this task…" oninput="mgrTaskNote(${idx},this.value)">`;
     return `<div class="mr-task ${t.done?'done':'todo'}${mnote?' has-mnote':''}">
@@ -3452,7 +3480,7 @@ function mgrReview(id){
   $('#drawer').innerHTML=`<div class="drawer-head"><div class="dh-ic" style="background:${meta.color}1f;color:${meta.color}">✅</div>
     <div><div style="font-weight:840;font-size:16px">${esc(s.department)} · ${esc(s.session)}</div>
     <div style="color:var(--muted);font-size:12.5px">${esc(s.store)} · ${esc(s.date)} (${esc(s.dayName)}) · by ${esc(s.by)}${subTime?` · ⏱ submitted ${esc(subTime)}`:''}</div>
-    <div style="margin-top:7px;display:flex;gap:6px;flex-wrap:wrap"><span class="badge ok">${doneN} done</span>${outN?`<span class="badge warn">${outN} outstanding</span>`:''}<span class="badge info">📷 ${photoN}</span><span class="badge ${s.status==='Verified'?'ok':'warn'}">${esc(s.status)}</span></div></div>
+    <div style="margin-top:7px;display:flex;gap:6px;flex-wrap:wrap"><span class="badge ok">${doneN} done</span>${outN?`<span class="badge warn">${outN} outstanding</span>`:''}<span class="badge info">📷 ${photoN}</span><span class="badge ${verified?'ok':'warn'}">${esc(verified?'Verified':s.status)}</span></div></div>
     <button class="x-btn" onclick="closeDrawer()">✕</button></div>
     <div class="drawer-body">
       <div class="mr-prog"><span class="pbar" style="flex:1"><i style="width:${s.progress}%;background:${meta.color}"></i></span><b>${s.progress}%</b></div>
@@ -3469,11 +3497,11 @@ function mgrReview(id){
         <div class="field"><label>Manager note</label>
           <textarea id="mgr-note" ${disabled} oninput="mgrSaveVerifyDraft('${s.id}')" placeholder="Additional note for the store manager / department lead">${esc(existingNote)}</textarea></div>
         <div class="field"><label>Attach photos (annotate problem areas)</label>
-          ${s.status==='Verified'?'':'<input type="file" id="mgr-photo-in" accept="image/*" multiple onchange="mgrAddVerifyPhotos(event)">'}
-          <div id="mgr-vphotos" class="mr-photos" style="margin-top:8px">${(State.mgrV.photos||[]).map(p=>`<span style="position:relative;display:inline-block"><img src="${imgSrc(p)}" onclick="openLightbox('${ckJS(imgSrc(p))}')" style="cursor:zoom-in">${s.status==='Verified'?'':`<span class="ck-rm" onclick="mgrRmVerifyPhoto('${ckJS(p)}')">✕</span>`}</span>`).join('')}</div>
+          ${verified?'':'<input type="file" id="mgr-photo-in" accept="image/*" multiple onchange="mgrAddVerifyPhotos(event)">'}
+          <div id="mgr-vphotos" class="mr-photos" style="margin-top:8px">${(State.mgrV.photos||[]).map(p=>`<span style="position:relative;display:inline-block"><img src="${imgSrc(p)}" onclick="openLightbox('${ckJS(imgSrc(p))}')" style="cursor:zoom-in">${verified?'':`<span class="ck-rm" onclick="mgrRmVerifyPhoto('${ckJS(p)}')">✕</span>`}</span>`).join('')}</div>
         </div>
       </div>
-      ${s.status==='Verified'
+      ${verified
         ? `<div class="rail-tip" style="margin-top:16px">✅ Verified by ${esc(s.verifiedBy||'—')}${s.overallResult?' · '+esc(s.overallResult):''}.</div>`
         : `<button class="btn primary block lg" style="margin-top:16px" onclick="mgrVerify('${s.id}')"><i class="fas fa-check-double"></i>&nbsp; Verify &amp; notify department lead</button>
            ${outN?`<div class="fhint" style="text-align:center;margin-top:8px">⚠️ ${outN} task(s) still outstanding</div>`:''}`}
@@ -3490,23 +3518,23 @@ function renderManager(){
   const inStore=store=>isSuper()?(storeScope==='ALL'||store===storeScope):store===State.branch;
   const allSubs=mgrSubs();
   const subs=allSubs.filter(s=>inStore(s.store));
-  const allPending=subs.filter(s=>s.status==='Submitted');
+  const allPending=subs.filter(ckIsPendingVerifySub);
   const pending=allPending.filter(s=>s.date===State.mgr.date).sort((a,b)=>State.mgr.sort==='newest'?b.id.localeCompare(a.id):a.id.localeCompare(b.id));
   const doneStat=['Closed','Cancelled','Resolved','Store Confirmed','Completed'];
   let issues=[]; ['maintenance','incident','complaint','violation','issue'].forEach(id=>{const m=DB.modules[id]; (m.records||[]).forEach(r=>{ if(inStore(r.store)&&!doneStat.includes(r.status)) issues.push({mod:id,icon:m.icon,short:m.short,...r}); });});
   issues.sort((a,b)=>String(b.created||b.date||'').localeCompare(String(a.created||a.date||'')));
-  const verifiedToday=subs.filter(s=>s.date===todayStr&&s.status==='Verified').length;
+  const verifiedToday=subs.filter(s=>s.date===todayStr&&ckIsVerifiedSub(s)).length;
   const critical=issues.filter(r=>['Critical','Major'].includes(r.severity)||['Critical','Urgent'].includes(r.priority)||r.step==='Final Warning').length;
   const stats=[['🕒',allPending.length,'Awaiting verification','warn'],['✅',verifiedToday,'Verified today','ok'],['🚩',issues.length,'Open issues','info'],['🔴',critical,'Critical / urgent','bad']];
   const dm=(DB.checklist&&DB.checklist.deptMeta)||{}; const capN=18, shown=pending.slice(0,capN);
   const storeTitle=isSuper()?(storeScope==='ALL'?'all stores':storeScope):State.branch;
   const storeCards=isSuper()?`<div class="mgr-store-grid">
     <button class="mgr-store-card ${storeScope==='ALL'?'active':''}" onclick="mgrStore('ALL')">
-      <span class="ms-ic">🏪</span><b>All stores</b><small>${allSubs.filter(s=>s.status==='Submitted'&&s.date===State.mgr.date).length} pending today</small>
+      <span class="ms-ic">🏪</span><b>All stores</b><small>${allSubs.filter(s=>ckIsPendingVerifySub(s)&&s.date===State.mgr.date).length} pending today</small>
     </button>
     ${DB.stores.map((st,i)=>{
-      const stSubs=allSubs.filter(s=>s.store===st), stPending=stSubs.filter(s=>s.status==='Submitted'&&s.date===State.mgr.date).length;
-      const stAllPending=stSubs.filter(s=>s.status==='Submitted').length;
+      const stSubs=allSubs.filter(s=>s.store===st), stPending=stSubs.filter(s=>ckIsPendingVerifySub(s)&&s.date===State.mgr.date).length;
+      const stAllPending=stSubs.filter(ckIsPendingVerifySub).length;
       let stIssues=0; ['maintenance','incident','complaint','violation','issue'].forEach(id=>{const m=DB.modules[id]; (m.records||[]).forEach(r=>{ if(r.store===st&&!doneStat.includes(r.status)) stIssues++; });});
       return `<button class="mgr-store-card ${storeScope===st?'active':''}" style="--c:${PALETTE[i%PALETTE.length]}" onclick="mgrStore('${ckJS(st)}')">
         <span class="ms-ic">🏬</span><b>${esc(st)}</b><small>${stPending} pending today · ${stAllPending} total · ${stIssues} issues</small>
@@ -3545,7 +3573,7 @@ function mgrRecRender(){
   const date=State.mgr.recDate||($('#mgr-rec-date')&&$('#mgr-rec-date').value)||State.mgr.date;
   const storeScope=isSuper()?(($('#mgr-rec-store')&&$('#mgr-rec-store').value)||State.mgr.store||'ALL'):State.branch;
   const inStore=store=>isSuper()?(storeScope==='ALL'||store===storeScope):store===State.branch;
-  const recs=mgrSubs().filter(s=>s.status==='Verified'&&s.date===date&&inStore(s.store))
+  const recs=mgrSubs().filter(s=>ckIsVerifiedSub(s)&&s.date===date&&inStore(s.store))
     .sort((a,b)=>String(b.verifiedAt||'').localeCompare(String(a.verifiedAt||'')));
   const tone=r=>r==='Critical'?'bad':r==='Need improving'?'warn':'ok';
   el.innerHTML = recs.length ? recs.map(s=>`<div class="card" style="margin-bottom:10px"><div class="card-pad">
@@ -3897,16 +3925,18 @@ function renderEmail(){
   const syncedAll=window.__deptLeads[leadStore]||[];
   const leadBlocks=chkDepts.map(d=>{ const meta=dm[d]||{}; const list=leadList(leadStore,d); const staffOpts=leadStaffFor(leadStore,d);
     const dlId='lead-dl-'+String(d).replace(/\W+/g,'');
-    const synced=syncedAll.filter(l=>staffNorm(l.department)===staffNorm(d));
+    const manualEmails=new Set(list.map(l=>String(l.email||'').trim().toLowerCase()).filter(Boolean));
+    const synced=syncedAll.filter(l=>staffNorm(l.department)===staffNorm(d) && !manualEmails.has(String(l.email||'').trim().toLowerCase()));
     const syncedRows=synced.map(l=>`<div class="email-row lead-synced" style="gap:8px;padding:6px 0">
         <span class="lead-sync-chip" title="Automatically synced from this person's access (Dept Lead · ${esc(d)})">🔗 ${esc(l.name)}<small>${esc(l.email)}</small></span>
         <span class="badge ok" style="flex:none">from access</span>
       </div>`).join('');
-    const rows=list.map((l,i)=>`<div class="email-row" style="gap:8px;padding:6px 0">
+    const rows=list.map((l,i)=>{ const accessHit=String(l.email||'').trim() && syncedAll.some(x=>staffNorm(x.department)===staffNorm(d) && String(x.email||'').trim().toLowerCase()===String(l.email||'').trim().toLowerCase()); return `<div class="email-row" style="gap:8px;padding:6px 0">
         <input class="login-input" list="${dlId}" style="flex:1;min-width:120px" value="${esc(l.name||'')}" placeholder="🔍 Type to search staff…" onchange="leadPickName('${ckJS(leadStore)}','${ckJS(d)}',${i},this)">
         <input class="login-input" style="flex:1.4;min-width:150px" type="email" value="${esc(l.email||'')}" placeholder="lead@email.com" oninput="leadSet('${ckJS(leadStore)}','${ckJS(d)}',${i},'email',this.value)">
+        ${accessHit?'<span class="badge ok" style="flex:none">synced to access</span>':''}
         <button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="leadDel('${ckJS(leadStore)}','${ckJS(d)}',${i})">🗑</button>
-      </div>`).join('');
+      </div>`; }).join('');
     return `<div class="card" style="margin-bottom:10px"><div class="card-head"><h3 style="font-size:14px"><i class="fas ${meta.icon||'fa-list-check'}" style="color:${meta.color||'#0e9f6e'}"></i>&nbsp; ${esc(d)}</h3><span class="ch-sub">${synced.length+list.length} lead(s)${synced.length?` · ${synced.length} synced`:''}</span></div>
       <div class="card-pad">
         <datalist id="${dlId}">${staffOpts.map(sm=>`<option value="${esc(sm.name)}">${esc(sm.role||'')}</option>`).join('')}</datalist>
@@ -3954,8 +3984,27 @@ function recipDel(key){ if(!confirm('Remove this recipient?')) return; DB.emailR
 /* ---- per-store department-lead emails ---- */
 function leadList(store,dept){ const m=DB.checklistLeadEmails||(DB.checklistLeadEmails={}); return ((m[store]||{})[dept])||[]; }
 function leadAdd(store,dept){ const m=DB.checklistLeadEmails=DB.checklistLeadEmails||{}; m[store]=m[store]||{}; m[store][dept]=m[store][dept]||[]; m[store][dept].push({name:'',email:''}); if(window.persist) window.persist(); renderEmail(); }
-function leadSet(store,dept,i,field,val){ const a=leadList(store,dept); if(a[i]){ a[i][field]=val; if(window.persist) window.persist(); } }
+function leadSet(store,dept,i,field,val){ const a=leadList(store,dept); if(a[i]){ a[i][field]=val; if(window.persist) window.persist(); if(field==='email'||field==='name') leadSyncAccount(store,dept,a[i]); } }
 function leadDel(store,dept,i){ const a=leadList(store,dept); if(i>=0&&i<a.length){ a.splice(i,1); if(window.persist) window.persist(); renderEmail(); } }
+const _leadSyncTimers={}, _leadSyncSeen={};
+function leadSyncAccount(store,dept,lead,opts){
+  if(!window.mcqDeptLeadAssign||!lead) return;
+  const email=String(lead.email||'').trim(), name=String(lead.name||'').trim();
+  if(!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return;
+  const key=store+'|'+dept+'|'+email.toLowerCase();
+  const sig=key+'|'+name;
+  if(_leadSyncSeen[key]===sig) return;
+  clearTimeout(_leadSyncTimers[key]);
+  _leadSyncTimers[key]=setTimeout(()=>{
+    mcqDeptLeadAssign({store,department:dept,name,email}).then(r=>{
+      if(r&&r.ok){
+        _leadSyncSeen[key]=sig;
+        if(window.__deptLeads) delete window.__deptLeads[store];
+        if(State.route&&State.route.mod==='email') renderEmail();
+      }else if(r&&r.error) toast(r.error);
+    }).catch(()=>toast('Could not update Account Management'));
+  }, opts&&opts.now?80:700);
+}
 // staff that belong to a checklist department, for a SPECIFIC store (super may pick any store)
 function leadStaffFor(store,dept){
   const all=(DB.staff||[]).filter(s=>s.active!==0 && s.store===store && s.name);
@@ -3970,13 +4019,13 @@ function leadPick(store,dept,i,sel){ const a=leadList(store,dept); if(!a[i]) ret
   a[i].name=sel.value;
   const opt=sel.options[sel.selectedIndex], email=opt&&opt.getAttribute('data-email');
   if(email) a[i].email=email;   // auto-fill from the staff record (admin can still edit)
-  if(window.persist) window.persist(); renderEmail(); }
+  if(window.persist) window.persist(); leadSyncAccount(store,dept,a[i],{now:true}); renderEmail(); }
 // type-to-search picker (datalist): match the typed name to a staff record and auto-fill the email
 function leadPickName(store,dept,i,inp){ const a=leadList(store,dept); if(!a[i]) return;
   const name=String(inp.value||'').trim(); a[i].name=name;
   const hit=(DB.staff||[]).find(x=>x.store===store && x.name===name) || (DB.staff||[]).find(x=>x.name===name);
   if(hit&&hit.email) a[i].email=hit.email;   // auto-fill; admin can still edit
-  if(window.persist) window.persist(); renderEmail(); }
+  if(window.persist) window.persist(); leadSyncAccount(store,dept,a[i],{now:true}); renderEmail(); }
 window.leadPickName=leadPickName;
 function emailLeadStore(s){ State.emailLeadStore=s; renderEmail(); }
 /* ---- super-admin daily-digest recipients (server-side settings) ---- */

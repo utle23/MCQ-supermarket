@@ -641,13 +641,44 @@ def get_dept_leads(store):
     try:
         out = []
         for r in conn.execute("""SELECT name,email,department FROM accounts
-                                 WHERE role='staff' AND store_id=? AND activated=1""", (store,)).fetchall():
+                                 WHERE role='staff' AND store_id=?""", (store,)).fetchall():
             if (r['email'] or '').strip():
                 out.append({'name': r['name'] or '', 'email': r['email'].strip(),
                             'department': (r['department'] or '').strip()})
         return out
     finally:
         conn.close()
+
+def _checklist_verified(sub):
+    if not isinstance(sub, dict): return False
+    return (str(sub.get('status') or '').strip().lower() == 'verified'
+            or bool(sub.get('verifiedAt')) or bool(sub.get('verifiedBy')))
+
+def _checklist_stamp(sub):
+    if not isinstance(sub, dict): return ''
+    return str(sub.get('verifiedAt') or sub.get('created') or sub.get('date') or '')
+
+def _normalize_checklist_submission(sub):
+    out = dict(sub or {})
+    if not out.get('dept') and out.get('department'):
+        out['dept'] = out.get('department')
+    if _checklist_verified(out):
+        out['status'] = 'Verified'
+    elif not str(out.get('status') or '').strip():
+        out['status'] = 'Submitted'
+    return out
+
+def _merge_checklist_submission(existing_json, incoming):
+    """Never let an older/stale Submitted save downgrade a verified checklist."""
+    incoming = _normalize_checklist_submission(incoming)
+    try: existing = _normalize_checklist_submission(json.loads(existing_json or '{}'))
+    except Exception: existing = {}
+    if _checklist_verified(existing) and not _checklist_verified(incoming):
+        return existing
+    if _checklist_verified(existing) and _checklist_verified(incoming):
+        if _checklist_stamp(existing) > _checklist_stamp(incoming):
+            return existing
+    return incoming
 
 def save_checklist_submission(store, sub):
     """Append/replace ONE checklist submission immediately (upsert by id), independent of the
@@ -656,9 +687,12 @@ def save_checklist_submission(store, sub):
     if not sid or store not in STORES: return None
     conn = connect()
     try:
+        row = conn.execute('SELECT data_json FROM checklist_submissions WHERE store_id=? AND id=?',
+                           (store, sid)).fetchone()
+        payload = _merge_checklist_submission(row['data_json'] if row else None, sub)
         conn.execute('''INSERT INTO checklist_submissions(id,store_id,data_json,created_at)
                         VALUES(?,?,?,?) ON CONFLICT (store_id,id) DO UPDATE SET data_json=excluded.data_json, created_at=excluded.created_at''',
-                     (sid, store, json.dumps(sub), now()))
+                     (sid, store, json.dumps(payload), now()))
         conn.commit()
         return sid
     finally:
@@ -911,6 +945,51 @@ def add_account(email, name, role, store, department=''):
                       email, department or '', now(), now()))
         conn.commit()
         return {'id': aid, 'matched': bool(hit)}
+    finally:
+        conn.close()
+
+def assign_dept_lead(store, department, email, name='', allow_admin=False):
+    """Assign a person as a Dept Lead from the Email Notifications page.
+
+    This is the reverse sync for the existing Access -> Email lead list: a manual
+    lead row with a valid email should also become role='staff' in central accounts.
+    """
+    store = str(store or '').strip()
+    department = str(department or '').strip()
+    email = str(email or '').strip()
+    name = str(name or '').strip()
+    if store not in STORES: return {'error': 'Unknown store'}
+    if not department: return {'error': 'Choose a department'}
+    if not email or '@' not in email: return {'error': 'Enter a valid email address'}
+    conn = connect()
+    try:
+        hit = _store_staff_by_email(conn, store, email)
+        acc = conn.execute('SELECT * FROM accounts WHERE lower(email)=lower(?)', (email,)).fetchone()
+        if acc:
+            if acc['acct_admin'] or acc['role'] == 'super' or (acc['role'] == 'admin' and not allow_admin):
+                return {'error': 'Manager/Super Admin accounts cannot be changed from Email Notifications'}
+            if acc['store_id'] and acc['store_id'] != store:
+                return {'error': 'This email already belongs to another store'}
+            staff_id = (hit or {}).get('staff_id') or acc['staff_id']
+            display_name = name or (hit or {}).get('name') or acc['name'] or email.split('@')[0].replace('.', ' ').title()
+            conn.execute('''UPDATE accounts
+                            SET role='staff', store_id=?, staff_id=?, name=?, email=?, department=?, updated_at=?
+                            WHERE id=?''',
+                         (store, staff_id, display_name, email, department, now(), acc['id']))
+            conn.execute('UPDATE tokens SET role=?, store_id=?, staff_id=?, staff_name=? WHERE account_id=?',
+                         ('staff', store, staff_id, display_name, acc['id']))
+            conn.commit()
+            return {'id': acc['id'], 'created': False, 'matched': bool(hit), 'role': 'staff',
+                    'store': store, 'department': department, 'name': display_name, 'email': email}
+        aid = _gen_account_id(conn, store)
+        display_name = name or (hit or {}).get('name') or email.split('@')[0].replace('.', ' ').title()
+        conn.execute('''INSERT INTO accounts(id,password,role,store_id,staff_id,name,email,department,activated,created_at,updated_at)
+                        VALUES(?,?,?,?,?,?,?,?,0,?,?)''',
+                     (aid, '', 'staff', store, (hit or {}).get('staff_id'),
+                      display_name, email, department, now(), now()))
+        conn.commit()
+        return {'id': aid, 'created': True, 'matched': bool(hit), 'role': 'staff',
+                'store': store, 'department': department, 'name': display_name, 'email': email}
     finally:
         conn.close()
 
@@ -1581,8 +1660,11 @@ def save_state(store_id, state, user):
         if isinstance(subs, list):
             for i, s in enumerate(subs):
                 cid = str((isinstance(s, dict) and s.get('id')) or ('c#' + str(i)))
+                row = conn.execute('SELECT data_json FROM checklist_submissions WHERE store_id=? AND id=?',
+                                   (store_id, cid)).fetchone()
+                payload = _merge_checklist_submission(row['data_json'] if row else None, s if isinstance(s, dict) else {})
                 conn.execute('INSERT INTO checklist_submissions(id,store_id,data_json,created_at) VALUES(?,?,?,?) ON CONFLICT (store_id,id) DO UPDATE SET data_json=excluded.data_json, created_at=excluded.created_at',
-                             (cid, store_id, json.dumps(s), now()))
+                             (cid, store_id, json.dumps(payload), now()))
         # schedule history (merge/upsert by client record id, deduped via rec_id index)
         sh = _parse(state.get('scheduleHistory'))
         if isinstance(sh, list):
