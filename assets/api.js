@@ -72,6 +72,7 @@
   window.mcqStaffImport=function(rows){ return _authFetch('/api/staff/import',{method:'POST',body:JSON.stringify({rows:rows||[]})}); };
   window.mcqChecklistSubmit=function(sub){ return _authFetch('/api/checklist/submit',{method:'POST',body:JSON.stringify({sub:sub||{}})}); };
   window.mcqDeptLeads=function(store){ return _authFetch('/api/dept-leads/'+encodeURIComponent(store)); };
+  window.mcqDeptLeadRemove=function(payload){ return _authFetch('/api/dept-lead/remove',{method:'POST',body:JSON.stringify(payload||{})}); };
   // ---- inbox / messaging ----
   window.mcqMsgSend=function(payload){ return _authFetch('/api/message',{method:'POST',body:JSON.stringify(payload||{})}); };
   window.mcqMsgList=function(){ return _authFetch('/api/messages'); };

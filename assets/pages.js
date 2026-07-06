@@ -3426,7 +3426,7 @@ function mgrVerify(id){
   (async()=>{
     let synced=[];
     try{ if(window.mcqDeptLeads){ const r=await mcqDeptLeads(s.store);
-      synced=((r&&r.leads)||[]).filter(l=>l.email && staffNorm(l.department)===staffNorm(s.department) && !leadIsExcluded(s.store,s.department,l.email)); } }catch(e){}
+      synced=((r&&r.leads)||[]).filter(l=>l.email && staffNorm(l.department)===staffNorm(s.department)); } }catch(e){}
     const seen={}; const leads=[...manualLeads,...synced].filter(l=>{ const e=String(l.email).toLowerCase(); if(seen[e]) return false; seen[e]=1; return true; });
     if(leads.length){ try{ mgrSendLeadPDF(s,a,leads); }catch(err){} }
   })();
@@ -4075,16 +4075,15 @@ function renderEmail(){
     mcqDeptLeads(leadStore).then(r=>{ window.__deptLeads[leadStore]=(r&&r.leads)||[]; if(State.route&&State.route.mod==='email') renderEmail(); }).catch(()=>{ window.__deptLeads[leadStore]=[]; });
   }
   const syncedAll=window.__deptLeads[leadStore]||[];
+  const canDeleteSyncedLead=!!(State.account&&State.account.acctAdmin);
   const leadBlocks=chkDepts.map(d=>{ const meta=dm[d]||{}; const list=leadList(leadStore,d); const staffOpts=leadStaffFor(leadStore,d);
     const dlId='lead-dl-'+String(d).replace(/\W+/g,'');
-    const hiddenSynced=syncedAll.filter(l=>staffNorm(l.department)===staffNorm(d) && leadIsExcluded(leadStore,d,l.email));
-    const synced=syncedAll.filter(l=>staffNorm(l.department)===staffNorm(d) && !leadIsExcluded(leadStore,d,l.email));
+    const synced=syncedAll.filter(l=>staffNorm(l.department)===staffNorm(d));
     const syncedRows=synced.map(l=>`<div class="email-row lead-synced" style="gap:8px;padding:6px 0">
         <span class="lead-sync-chip" title="Automatically synced from this person's access (Dept Lead · ${esc(d)})">🔗 ${esc(l.name)}<small>${esc(l.email)}</small></span>
         <span class="badge ok" style="flex:none">from access</span>
-        <button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" title="Remove from Email Notifications only — Account Management is unchanged" onclick="leadExclude('${ckJS(leadStore)}','${ckJS(d)}','${ckJS(l.email||'')}','${ckJS(l.name||'')}')">🗑</button>
+        ${canDeleteSyncedLead?`<button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" title="Delete Dept Lead access from Account Management" onclick="leadRemoveAccess('${ckJS(leadStore)}','${ckJS(d)}','${ckJS(l.email||'')}','${ckJS(l.name||'')}')">🗑</button>`:''}
       </div>`).join('');
-    const hiddenTools=hiddenSynced.length?`<div class="fhint" style="margin-top:8px">${hiddenSynced.length} access lead(s) hidden from Email Notifications. <button class="btn xs" onclick="leadUnhideAll('${ckJS(leadStore)}','${ckJS(d)}')">Show again</button></div>`:'';
     const rows=list.map((l,i)=>`<div class="email-row" style="gap:8px;padding:6px 0">
         <input class="login-input" list="${dlId}" style="flex:1;min-width:120px" value="${esc(l.name||'')}" placeholder="🔍 Type to search staff…" onchange="leadPickName('${ckJS(leadStore)}','${ckJS(d)}',${i},this)">
         <input class="login-input" style="flex:1.4;min-width:150px" type="email" value="${esc(l.email||'')}" placeholder="lead@email.com" oninput="leadSet('${ckJS(leadStore)}','${ckJS(d)}',${i},'email',this.value)">
@@ -4094,7 +4093,7 @@ function renderEmail(){
       <div class="card-pad">
         <datalist id="${dlId}">${staffOpts.map(sm=>`<option value="${esc(sm.name)}">${esc(sm.role||'')}</option>`).join('')}</datalist>
         ${syncedRows}${rows||(synced.length?'':'<div class="fhint" style="margin:0 0 8px">No leads yet for this department.</div>')}
-        <button class="btn sm" style="margin-top:6px" onclick="leadAdd('${ckJS(leadStore)}','${ckJS(d)}')">＋ Add lead</button>${hiddenTools}</div></div>`;
+        <button class="btn sm" style="margin-top:6px" onclick="leadAdd('${ckJS(leadStore)}','${ckJS(d)}')">＋ Add lead</button></div></div>`;
   }).join('');
   // super: daily-digest recipients (server scheduled 9pm)
   const digestCard=isSuper()?`<div class="card" style="margin-bottom:16px"><div class="card-head"><h3><i class="fas fa-clock"></i>&nbsp; Daily summary recipients (Super Admin)</h3><span class="ch-sub">Automatic 9 PM all-store PDF digest is emailed to these addresses</span></div>
@@ -4139,17 +4138,14 @@ function leadList(store,dept){ const m=DB.checklistLeadEmails||(DB.checklistLead
 function leadAdd(store,dept){ const m=DB.checklistLeadEmails=DB.checklistLeadEmails||{}; m[store]=m[store]||{}; m[store][dept]=m[store][dept]||[]; m[store][dept].push({name:'',email:''}); if(window.persist) window.persist(); renderEmail(); }
 function leadSet(store,dept,i,field,val){ const a=leadList(store,dept); if(a[i]){ a[i][field]=val; if(window.persist) window.persist(); } }
 function leadDel(store,dept,i){ const a=leadList(store,dept); if(i>=0&&i<a.length){ a.splice(i,1); if(window.persist) window.persist(); renderEmail(); } }
-function leadExcludeList(store,dept){ const m=DB.checklistLeadExcludes||(DB.checklistLeadExcludes={}); return ((m[store]||{})[dept])||[]; }
-function leadIsExcluded(store,dept,email){ const e=String(email||'').trim().toLowerCase(); return !!(e && leadExcludeList(store,dept).includes(e)); }
-function leadExclude(store,dept,email,name){
-  const e=String(email||'').trim().toLowerCase(); if(!e) return;
-  if(!confirm('Remove '+(name||email)+' from Email Notifications for '+dept+'?\\n\\nTheir Account Management access will NOT change.')) return;
-  const m=DB.checklistLeadExcludes=DB.checklistLeadExcludes||{}; m[store]=m[store]||{}; m[store][dept]=m[store][dept]||[];
-  if(!m[store][dept].includes(e)) m[store][dept].push(e);
-  if(window.persist) window.persist(); renderEmail();
-}
-function leadUnhideAll(store,dept){
-  const m=DB.checklistLeadExcludes||{}; if(m[store]&&m[store][dept]){ delete m[store][dept]; if(window.persist) window.persist(); renderEmail(); }
+function leadRemoveAccess(store,dept,email,name){
+  if(!(State.account&&State.account.acctAdmin)){ toast('Account admin only'); return; }
+  if(!window.mcqDeptLeadRemove){ toast('Server API not ready'); return; }
+  if(!confirm('Delete '+(name||email)+' as '+dept+' Dept Lead?\\n\\nThis updates Account Management and changes them back to Member (Staff).')) return;
+  mcqDeptLeadRemove({store,department:dept,email}).then(r=>{
+    if(r&&r.ok){ toast('Dept Lead access removed'); if(window.__deptLeads) delete window.__deptLeads[store]; renderEmail(); }
+    else toast((r&&r.error)||'Could not delete Dept Lead access');
+  }).catch(()=>toast('Could not delete Dept Lead access'));
 }
 // staff that belong to a checklist department, for a SPECIFIC store (super may pick any store)
 function leadStaffFor(store,dept){

@@ -951,6 +951,36 @@ def add_account(email, name, role, store, department=''):
     finally:
         conn.close()
 
+def remove_dept_lead(store, department, email):
+    """Remove a Dept Lead assignment from Email Notifications.
+
+    Deleting a synced lead means the Account Management source row is no longer a Dept Lead.
+    The account remains; it is downgraded to a normal staff member for the same store.
+    """
+    store = str(store or '').strip()
+    department = str(department or '').strip()
+    email = str(email or '').strip()
+    if store not in STORES: return {'error': 'Unknown store'}
+    if not department: return {'error': 'Choose a department'}
+    if not email or '@' not in email: return {'error': 'Enter a valid email address'}
+    conn = connect()
+    try:
+        acc = conn.execute("""SELECT * FROM accounts
+                              WHERE lower(email)=lower(?) AND store_id=? AND role='staff'
+                              AND lower(COALESCE(department,''))=lower(?)""",
+                           (email, store, department)).fetchone()
+        if not acc:
+            return {'error': 'This person is not assigned as this department lead'}
+        conn.execute("""UPDATE accounts SET role='employee', department='', updated_at=? WHERE id=?""",
+                     (now(), acc['id']))
+        conn.execute("""UPDATE tokens SET role='employee' WHERE account_id=?""", (acc['id'],))
+        conn.execute("""UPDATE device_creds SET role='employee' WHERE account_id=?""", (acc['id'],))
+        conn.commit()
+        return {'id': acc['id'], 'email': acc['email'], 'name': acc['name'], 'store': store,
+                'department': department, 'role': 'employee'}
+    finally:
+        conn.close()
+
 def update_account(aid, patch):
     """Account admin edits: role / store / department / password / name."""
     allowed = {'role', 'store_id', 'department', 'password', 'name'}

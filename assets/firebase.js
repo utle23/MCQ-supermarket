@@ -158,7 +158,6 @@
       feedback:(DB.feedback||[]).filter(f=>!scoped||f.store===store).map(clone),
       // dept-lead emails are per-store; keep only this store's subtree when scoped (isolation), full map for super
       checklistLeadEmails: scoped ? {[store]:clone((DB.checklistLeadEmails||{})[store]||{})} : clone(DB.checklistLeadEmails||{}),
-      checklistLeadExcludes: scoped ? {[store]:clone((DB.checklistLeadExcludes||{})[store]||{})} : clone(DB.checklistLeadExcludes||{}),
       updatedAt:Date.now() };
   }
   function applyState(d){
@@ -192,7 +191,6 @@
     if(Array.isArray(d.emailLog)) DB.emailLog=clone(d.emailLog);
     if(Array.isArray(d.feedback)) DB.feedback=clone(d.feedback);
     if(d.checklistLeadEmails && typeof d.checklistLeadEmails==='object'){ DB.checklistLeadEmails=DB.checklistLeadEmails||{}; Object.keys(d.checklistLeadEmails).forEach(st=>{ DB.checklistLeadEmails[st]=clone(d.checklistLeadEmails[st]); }); }
-    if(d.checklistLeadExcludes && typeof d.checklistLeadExcludes==='object'){ DB.checklistLeadExcludes=DB.checklistLeadExcludes||{}; Object.keys(d.checklistLeadExcludes).forEach(st=>{ DB.checklistLeadExcludes[st]=clone(d.checklistLeadExcludes[st]); }); }
   }
   async function seedStoreState(store){
     resetToBase();
@@ -237,14 +235,12 @@
     RECORD_MODS.forEach(m=>{ if(DB.modules[m]) DB.modules[m].records=[]; });
     DB.staff=[]; DB.checklistSubs=[]; DB.auditLogs=[]; DB.scheduleHistory=[]; DB.binAdmin=DB.binAdmin||{activeDays:['Tue','Thu','Fri'],checklist:[],records:[]}; DB.binAdmin.records=[];
     DB.checklistLeadEmails={};   // per-store dept-lead emails — rebuilt from each store's blob
-    DB.checklistLeadExcludes={};  // per-store hidden access leads — rebuilt from each store's blob
     DB.feedback=[];              // Share-Your-Thought — collected from every store for the Super inbox
     const seenStaff=new Set(), seenSubs=new Set(), seenAudit=new Set(), seenBin=new Set(), seenSched=new Set(), seenRec={}, seenFb=new Set();
     rows.forEach(row=>{
       const d=row.data||{}, store=row.store;
       // per-store config: dept-lead emails (keep each store's own), + global-ish recipients/log (last non-empty wins)
       if(d.checklistLeadEmails && typeof d.checklistLeadEmails==='object'){ const sub=d.checklistLeadEmails[store]||d.checklistLeadEmails; if(sub&&typeof sub==='object') DB.checklistLeadEmails[store]=clone(sub); }
-      if(d.checklistLeadExcludes && typeof d.checklistLeadExcludes==='object'){ const sub=d.checklistLeadExcludes[store]||d.checklistLeadExcludes; if(sub&&typeof sub==='object') DB.checklistLeadExcludes[store]=clone(sub); }
       (Array.isArray(d.feedback)?d.feedback:[]).forEach(f=>{ const rec=Object.assign({store},clone(f)); const key=rec.store+'|'+(rec.id||rec.ts); if(!seenFb.has(key)){ seenFb.add(key); DB.feedback.push(rec); } });
       if(Array.isArray(d.emailRecipients)&&d.emailRecipients.length) DB.emailRecipients=clone(d.emailRecipients);
       if(Array.isArray(d.emailLog)&&d.emailLog.length) DB.emailLog=clone(d.emailLog);
