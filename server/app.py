@@ -257,6 +257,28 @@ def _deputy_late_effects(m, ev, res, dept_name=''):
         except Exception: pass
     return rec['id']
 
+def _deputy_over_reminder(m, ev, dept_name=''):
+    """Clocked out PAST the rostered finish → a personalised inbox REMINDER (deliberately
+    NOT a violation — Khoi's rule: only late clock-ins go on the record)."""
+    over = ev.get('over_min') or 0
+    out_hm = _fmt_hm(ev.get('actual_end')) if ev.get('actual_end') else ''
+    end_hm = _fmt_hm(ev.get('scheduled_end')) if ev.get('scheduled_end') else ''
+    subj = '⏰ Reminder — clocked out %d min past your rostered finish' % over
+    body_html = ('<p>Hi %s — you clocked out <b>%d minutes past</b> your rostered finish%s%s%s.</p>'
+                 '<p>This is a <b>friendly reminder only</b> (not a violation). Please try to finish on time, '
+                 'or check with your manager if extra time was needed.</p>'
+                 % (esc_html(m.get('name') or ''), over,
+                    (' at <b>' + out_hm + '</b>') if out_hm else '',
+                    (' (rostered ' + end_hm + ')') if end_hm else '',
+                    (' · Deputy department: <b>' + esc_html(dept_name) + '</b>') if dept_name else ''))
+    au = {'role': 'super', 'store_id': None, 'staff_id': None, 'staff_name': '⏱ Attendance'}
+    try:
+        db.send_message(au, m['store'], 'message', subj, body_html, to_staff_id=m['id'], to_super=False, to_managers=False)
+    except Exception: pass
+
+def esc_html(s):
+    return str(s or '').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
 # ---------- Deputy POLLING (no webhook needed): cron-job.org hits this every ~10 min ----------
 _dep_emp_cache = {}
 def _deputy_get(host, token, path):
@@ -299,36 +321,53 @@ def _deputy_poll():
     rows = json.loads(urllib.request.urlopen(req, timeout=25, context=_TLS).read().decode())
     if not isinstance(rows, list):
         return {'error': 'unexpected Deputy response', 'processed': 0}
-    seen = skipped = late_n = processed = 0
+    seen = skipped = late_n = over_n = processed = 0
     for t in rows:
         if not isinstance(t, dict): continue
         ts_id = str(t.get('Id') or '')
         actual_start = db._to_epoch(t.get('StartTime'))
+        actual_end = db._to_epoch(t.get('EndTime'))
         if not ts_id or not actual_start: continue
-        if db.attendance_seen(ts_id): seen += 1; continue
+        need_in = not db.attendance_seen(ts_id, 'clockin')
+        need_out = bool(actual_end) and not db.attendance_seen(ts_id, 'clockout')
+        if not need_in and not need_out: seen += 1; continue
         email, dep_name = _deputy_employee_email(host, token, t.get('Employee'))
         ou = t.get('OperationalUnitObject') if isinstance(t.get('OperationalUnitObject'), dict) else {}
         dept_name = str(ou.get('OperationalUnitName') or '')
         m = db._match_staff_for_deputy(email, dep_name, t.get('Employee'))
         if not m or not m.get('id'): skipped += 1; continue   # gmail not in MCQ → not ours to notify
-        sched_start = None
+        sched_start = sched_end = None
         if t.get('Roster'):
             try:
                 ro = _deputy_get(host, token, '/api/v1/resource/Roster/' + str(t['Roster']))
-                sched_start = db._to_epoch(ro.get('StartTime'))
+                sched_start = db._to_epoch(ro.get('StartTime')); sched_end = db._to_epoch(ro.get('EndTime'))
             except Exception: pass
-        late = max(0, round((actual_start - sched_start) / 60)) if sched_start else 0
-        ev = {'ts_id': ts_id, 'event': 'clockin', 'store_id': m['store'], 'staff_id': m['id'],
-              'staff_name': m['name'], 'deputy_employee': str(t.get('Employee') or ''),
-              'scheduled_start': sched_start, 'actual_start': actual_start,
-              'scheduled_end': None, 'actual_end': None, 'late_min': late, 'over_min': 0}
-        res = db.record_attendance(ev)
-        processed += 1
-        if res['late_min'] > db.LATE_GRACE_MIN:
-            late_n += 1
-            try: _deputy_late_effects(m, ev, res, dept_name=dept_name)
-            except Exception: pass
-    return {'processed': processed, 'late': late_n, 'already_seen': seen, 'skipped_unmatched': skipped, 'timesheets': len(rows), 'date': today}
+        if need_in:
+            late = max(0, round((actual_start - sched_start) / 60)) if sched_start else 0
+            ev = {'ts_id': ts_id, 'event': 'clockin', 'store_id': m['store'], 'staff_id': m['id'],
+                  'staff_name': m['name'], 'deputy_employee': str(t.get('Employee') or ''),
+                  'scheduled_start': sched_start, 'actual_start': actual_start,
+                  'scheduled_end': sched_end, 'actual_end': None, 'late_min': late, 'over_min': 0}
+            res = db.record_attendance(ev)
+            processed += 1
+            if res['late_min'] > db.LATE_GRACE_MIN:
+                late_n += 1
+                try: _deputy_late_effects(m, ev, res, dept_name=dept_name)
+                except Exception: pass
+        if need_out:
+            over = max(0, round((actual_end - sched_end) / 60)) if sched_end else 0
+            ev = {'ts_id': ts_id, 'event': 'clockout', 'store_id': m['store'], 'staff_id': m['id'],
+                  'staff_name': m['name'], 'deputy_employee': str(t.get('Employee') or ''),
+                  'scheduled_start': sched_start, 'actual_start': actual_start,
+                  'scheduled_end': sched_end, 'actual_end': actual_end, 'late_min': 0, 'over_min': over}
+            db.record_attendance(ev)
+            processed += 1
+            if over > db.LATE_GRACE_MIN:   # a friendly REMINDER only — clocking out late is NOT a violation
+                over_n += 1
+                try: _deputy_over_reminder(m, ev, dept_name=dept_name)
+                except Exception: pass
+    return {'processed': processed, 'late': late_n, 'overtime_reminders': over_n,
+            'already_seen': seen, 'skipped_unmatched': skipped, 'timesheets': len(rows), 'date': today}
 
 @api.route('/api/cron/deputy-late', methods=['GET', 'POST'])
 def cron_deputy_late():
@@ -788,24 +827,42 @@ def post_state(store_id):
 # ---------- store config ----------
 @api.route('/api/store-config/<store_id>', methods=['GET'])
 def get_config(store_id):
+    """Store Config shows the store's LIVE workspace in real time — the same checklist
+    template / staff / schedule the store is using right now (from its state blob),
+    not a separate copy."""
     au = require_auth(); require_store(au, store_id)
-    conn = db.connect()
-    row = conn.execute('SELECT config_json FROM store_config WHERE store_id=?', (store_id,)).fetchone()
-    conn.close()
-    return jsonify(ok=True, store=store_id, config=json.loads(row['config_json']) if row and row['config_json'] else None)
+    state = db.load_state(store_id) or {}
+    items = state.get('checklistItems')
+    if isinstance(items, str):
+        try: items = json.loads(items)
+        except Exception: items = []
+    sched = state.get('scheduleTasks')
+    if isinstance(sched, str):
+        try: sched = json.loads(sched)
+        except Exception: sched = []
+    cfg = {'store': store_id,
+           'staff': state.get('staff') or [],
+           'checklistItems': items if isinstance(items, list) else [],
+           'scheduleTasks': sched if isinstance(sched, list) else [],
+           'auditLogs': (state.get('auditLogs') or [])[:50]}
+    return jsonify(ok=True, store=store_id, config=cfg)
 
 @api.route('/api/store-config/<store_id>', methods=['POST'])
 def post_config(store_id):
+    """Saving Store Config applies straight to the store's LIVE workspace (template
+    version-bumped so every device at that store picks it up) — one store only."""
     au = require_auth(); require_write(au); require_store(au, store_id)
     d = request.get_json(force=True, silent=True) or {}
     cfg = d.get('config', d)
+    res = db.apply_store_config(store_id, cfg if isinstance(cfg, dict) else {})
+    # keep a copy in store_config as a change-history trail
     conn = db.connect()
     conn.execute("""INSERT INTO store_config(store_id,config_json,updated_at) VALUES(?,?,?)
                     ON CONFLICT (store_id) DO UPDATE SET config_json=excluded.config_json, updated_at=excluded.updated_at""",
                  (store_id, json.dumps(cfg), db.now()))
     conn.commit(); conn.close()
-    db.write_audit(uid(au), store_id, 'save', 'store_config', store_id, None, None)
-    return jsonify(ok=True, store=store_id)
+    db.write_audit(uid(au), store_id, 'save', 'store_config', store_id, None, res)
+    return jsonify(ok=True, store=store_id, **res)
 
 # ---------- message attachments (Gmail-style, 30 MB per file) ----------
 MAX_FILE_BYTES = 30 * 1024 * 1024

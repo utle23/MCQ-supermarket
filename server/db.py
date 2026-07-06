@@ -643,6 +643,59 @@ def _archive_staff(conn, store, staff_id):
     d['archived'] = 1; d['active'] = 0
     conn.execute('UPDATE staff SET data_json=? WHERE store_id=? AND id=?', (json.dumps(d), store, str(staff_id)))
 
+def apply_store_config(store_id, cfg):
+    """Store Config (Super) edits the LIVE store workspace: the checklist template and
+    schedule tasks go straight into this store's state blob (template version bumped so
+    every client at the store picks the change up on next sync), and staff rows are
+    upserted with the same one-gmail-per-store guard as normal saves. ONE store only."""
+    conn = connect()
+    try:
+        row = conn.execute('SELECT state_json FROM store_state WHERE store_id=?', (store_id,)).fetchone()
+        state = {}
+        if row and row['state_json']:
+            try: state = json.loads(row['state_json'])
+            except Exception: state = {}
+        out = {}
+        if isinstance(cfg.get('checklistItems'), list):
+            state['checklistItems'] = json.dumps(cfg['checklistItems'])
+            state['checklistTemplateVersion'] = int(state.get('checklistTemplateVersion') or 0) + 1
+            out['checklistItems'] = len(cfg['checklistItems']); out['templateVersion'] = state['checklistTemplateVersion']
+        if isinstance(cfg.get('scheduleTasks'), list):
+            state['scheduleTasks'] = json.dumps(cfg['scheduleTasks'])
+            out['scheduleTasks'] = len(cfg['scheduleTasks'])
+        conn.execute("""INSERT INTO store_state(store_id,state_json,updated_at,updated_by) VALUES(?,?,?,?)
+                        ON CONFLICT (store_id) DO UPDATE SET state_json=excluded.state_json,
+                        updated_at=excluded.updated_at, updated_by=excluded.updated_by""",
+                     (store_id, json.dumps(state), now(), 'store-config'))
+        staff = cfg.get('staff')
+        if isinstance(staff, list) and staff:
+            email_owner = {}
+            for r0 in conn.execute('SELECT id,data_json FROM staff WHERE store_id=?', (store_id,)).fetchall():
+                try: d0 = json.loads(r0['data_json'] or '{}')
+                except Exception: d0 = {}
+                e0 = str(d0.get('email') or '').strip().lower()
+                if e0 and e0 not in email_owner:
+                    email_owner[e0] = (str(r0['id']), bool(d0.get('archived') or d0.get('active') == 0))
+            n = 0
+            for i, s in enumerate(staff):
+                if not isinstance(s, dict): continue
+                sid = str(s.get('id') or s.get('code') or ('s#' + str(i)))
+                e = str(s.get('email') or '').strip().lower()
+                if e:
+                    own = email_owner.get(e)
+                    if own and own[0] != sid:
+                        if not own[1]: continue                # live owner elsewhere → duplicate gmail
+                        sid = own[0]; s = dict(s); s['id'] = sid; s['archived'] = 0; s['active'] = 1
+                    email_owner[e] = (sid, bool(s.get('archived') or s.get('active') == 0))
+                conn.execute('INSERT INTO staff(id,store_id,data_json) VALUES(?,?,?) ON CONFLICT (store_id,id) DO UPDATE SET data_json=excluded.data_json', (sid, store_id, json.dumps(s)))
+                n += 1
+            _sync_accounts_from_staff(conn, store_id)
+            out['staff'] = n
+        conn.commit()
+        return out
+    finally:
+        conn.close()
+
 def staff_sync(fix=False, only=None):
     """Audit (and optionally repair) Account Management ↔ Staff Management per store.
     Audit lists, per store: accounts with NO staff profile, name mismatches between the
@@ -739,6 +792,8 @@ def check_overdue_and_alert():
             try: st = json.loads(row['state_json'])
             except Exception: continue
             deadlines = st.get('checklistDeadlines') or {}
+            if now_p.weekday() == 6:   # Sunday runs a later schedule at every store
+                deadlines = {'Opening': '12:30 PM', 'Mid-afternoon': '3:30 PM', 'Closing': '7:30 PM'}
             items = st.get('checklistItems')
             if isinstance(items, str):
                 try: items = json.loads(items)
@@ -1440,11 +1495,15 @@ def late_ladder_step(conn, store, staff_id):
             else 'Final Warning' if nth == 5 else 'Termination Referral')
     return nth, step
 
-def attendance_seen(ts_id):
-    """Has this Deputy timesheet already been processed (webhook or a previous poll)?"""
+def attendance_seen(ts_id, event=None):
+    """Has this Deputy timesheet (optionally: this specific clock-in/clock-out event)
+    already been processed by the webhook or a previous poll?"""
     if not ts_id: return False
     conn = connect()
-    try: return bool(conn.execute('SELECT 1 FROM attendance WHERE ts_id=? LIMIT 1', (str(ts_id),)).fetchone())
+    try:
+        if event:
+            return bool(conn.execute('SELECT 1 FROM attendance WHERE ts_id=? AND event=? LIMIT 1', (str(ts_id), event)).fetchone())
+        return bool(conn.execute('SELECT 1 FROM attendance WHERE ts_id=? LIMIT 1', (str(ts_id),)).fetchone())
     finally: conn.close()
 
 def deputy_cfg():

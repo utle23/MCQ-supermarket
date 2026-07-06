@@ -10,15 +10,21 @@ const cap=s=>String(s||'').replace(/\b\w/g,c=>c.toUpperCase());
 const STEP_COLOR={'Verbal Discussion':'#FBC02D','Written Warning':'#FB8C00','Final Warning':'#D32F2F','Termination Referral':'#7B1B1B'};
 
 /* ============================================================ VIOLATION RULES */
+// Violations are confidential: Dept Leads (role 'staff') may only REPORT a new case —
+// records & stats stay with the Manager (own store) and Super (all stores).
+// Staff see their own record in My Violations.
+function vioReportOnly(){ return !!(State.account && State.account.role==='staff'); }
 function renderViolation(){
   if(!State.vio) State.vio={rule:'',sev:'Minor',step:'Verbal Discussion',tab:'stats'};
   setAccent('#c62828');
+  if(vioReportOnly()){ State.vio.tab='new'; return vioNew(); }
   const tab=State.vio.tab||'stats';
   if(tab==='new') return vioNew();
   if(tab==='records') return vioRecords();
   return vioStats();
 }
-function vioSeg(a){ return `<div class="seg seg-light"><button class="seg-btn ${a==='stats'?'active':''}" onclick="vioTab('stats')">📊 Stats</button><button class="seg-btn ${a==='records'?'active':''}" onclick="vioTab('records')">📋 Records</button><button class="seg-btn ${a==='new'?'active':''}" onclick="vioTab('new')">➕ New Case</button></div>`; }
+function vioSeg(a){ if(vioReportOnly()) return `<div class="seg seg-light"><button class="seg-btn active">➕ Report violation</button></div>`;
+  return `<div class="seg seg-light"><button class="seg-btn ${a==='stats'?'active':''}" onclick="vioTab('stats')">📊 Stats</button><button class="seg-btn ${a==='records'?'active':''}" onclick="vioTab('records')">📋 Records</button><button class="seg-btn ${a==='new'?'active':''}" onclick="vioTab('new')">➕ New Case</button></div>`; }
 function vioTab(t){ State.vio.tab=t; renderViolation(); }
 function vioDrill(cat){ State.vio.drillCat = State.vio.drillCat===cat?null:cat; vioStats(); }
 function vioHead(a){ return `<div class="page-head"><div class="ph-ic" style="background:#fdeaea">⚠️</div><div><h2>Violation Rules</h2><p>Log staff rule breaches and manage the Verbal → Written → Final escalation.</p></div><div class="ph-actions">${vioSeg(a)}</div></div>`; }

@@ -901,6 +901,10 @@ function renderModule(modId,tab){
   let tabs = isAdmin()? [['overview','📊','Overview'],['records','📋','Records & Review'],['new','➕','New']]
                       : [['records','📋','My Records'],['new','➕','New']];
   if(m.noNew) tabs=tabs.filter(t=>t[0]!=='new');
+  // Violations are confidential: Dept Leads may REPORT a new case but never browse the
+  // store's records/stats (staff see their own in My Violations; Manager sees the store;
+  // Super sees all stores).
+  if(modId==='violation' && State.account && State.account.role==='staff'){ tabs=[['new','➕','Report violation']]; tab='new'; }
   const tabBar=`<div class="seg seg-light">${tabs.map(([t,ic,l])=>`<button class="seg-btn ${t===tab?'active':''}" onclick="go('${modId}','${t}')">${ic} ${l}</button>`).join('')}</div>`;
   $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">${m.icon}</div>
     <div><h2>${esc(m.label)}</h2><p>${esc(m.desc)}</p></div><div class="ph-actions">${tabBar}</div></div><div id="view"></div>`;
