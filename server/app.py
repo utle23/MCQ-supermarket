@@ -396,10 +396,11 @@ def accounts_staff_sync():
     if au['role'] != 'super': abort(403)
     d = request.get_json(force=True, silent=True) or {}
     fix = (str(d.get('mode') or 'audit').lower() == 'fix')
-    res = db.staff_sync(fix=fix)
+    only = d.get('only') if isinstance(d.get('only'), list) else None
+    res = db.staff_sync(fix=fix, only=only)
     if fix:
         db.write_audit(uid(au), 'ALL', 'sync', 'staff', 'accounts-staff-sync', None,
-                       {'fixed': len(res.get('fixed') or [])})
+                       {'fixed': len(res.get('fixed') or []), 'only': only})
     return jsonify(ok=True, mode='fix' if fix else 'audit', **res)
 
 @api.route('/api/account/password', methods=['POST'])

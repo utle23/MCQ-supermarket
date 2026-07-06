@@ -643,11 +643,13 @@ def _archive_staff(conn, store, staff_id):
     d['archived'] = 1; d['active'] = 0
     conn.execute('UPDATE staff SET data_json=? WHERE store_id=? AND id=?', (json.dumps(d), store, str(staff_id)))
 
-def staff_sync(fix=False):
+def staff_sync(fix=False, only=None):
     """Audit (and optionally repair) Account Management ↔ Staff Management per store.
     Audit lists, per store: accounts with NO staff profile, name mismatches between the
     account and its linked profile, dangling staff_id links, and (info) how many staff
-    have no login account. fix=True runs _ensure_staff_for_account for every account."""
+    have no login account. fix=True runs _ensure_staff_for_account for every account —
+    or ONLY the account ids in `only` (targeted repair approved case-by-case)."""
+    only = {str(x) for x in only} if only else None
     conn = connect()
     try:
         staff_ids, staff_names, staff_emails = set(), {}, {}
@@ -689,7 +691,7 @@ def staff_sync(fix=False):
                 sn = staff_names.get((store, sid), ''); an = str(a.get('name') or '').strip()
                 if an and sn and an.lower() != sn.lower():
                     b['name_mismatch'].append({'id': a['id'], 'account_name': an, 'staff_name': sn})
-            if fix and store in STORES:
+            if fix and store in STORES and (only is None or str(a['id']) in only):
                 nid = _ensure_staff_for_account(conn, a)
                 if nid: fixed.append({'account': a['id'], 'staff_id': nid, 'store': store})
         for (store, sid) in staff_ids:
