@@ -2464,10 +2464,10 @@ let MCQ_LOGO_URL='';
 function checklistExportMenu(){
   return `<div class="exp-dd"><button class="btn sm exp-trigger" style="background:#25d366;border-color:#1eb155;color:#fff" onclick="expToggle(this,event)"><i class="fab fa-whatsapp"></i>&nbsp; Share PDF <i class="fas fa-caret-down"></i></button>
     <div class="exp-menu">
-      <button onclick="ckSharePDF('Opening')">☀️ Opening — share PDF</button>
-      <button onclick="ckSharePDF('Mid-afternoon')">🌤️ Mid-afternoon — share PDF</button>
-      <button onclick="ckSharePDF('Closing')">🌙 Closing — share PDF</button>
-      ${isSuper()?`<button onclick="ckAllStoresPDF()">🏪 All-stores report (PDF)</button>`:''}
+      <button onclick="ckSharePDF('Opening')">☀️ Opening — share PDF${isSuper()?' (all stores)':''}</button>
+      <button onclick="ckSharePDF('Mid-afternoon')">🌤️ Mid-afternoon — share PDF${isSuper()?' (all stores)':''}</button>
+      <button onclick="ckSharePDF('Closing')">🌙 Closing — share PDF${isSuper()?' (all stores)':''}</button>
+      ${isSuper()?`<button onclick="ckAllStoresPDF()">🏪 Full day — all stores (PDF)</button>`:''}
     </div></div>
    <div class="exp-dd"><button class="btn sm exp-trigger" onclick="expToggle(this,event)"><i class="fas fa-print"></i>&nbsp; Export paper checklist <i class="fas fa-caret-down"></i></button>
     <div class="exp-menu">
@@ -2476,36 +2476,47 @@ function checklistExportMenu(){
       <button onclick="ckPaperPDF('Closing')">🌙 Closing — print template</button>
     </div></div>`;
 }
-/* Super Admin: one branded PDF covering EVERY store's submitted checklists for a date,
-   with an overall cover, a per-store cover with stats, incomplete items and photos. */
-async function ckAllStoresPDF(){
-  toast('Building all-stores report…');
+/* Super Admin: ONE branded PDF covering EVERY store for the date — every task shown
+   ticked or unticked, with notes, temperature readings and REAL photo evidence
+   (each photo is fetched from the server before embedding — never the "loading…" tile).
+   Pass a session ('Opening' / 'Mid-afternoon' / 'Closing') to report that session only;
+   omit it for the full day. Shared to WhatsApp when the device supports file sharing. */
+async function ckAllStoresPDF(session){
+  toast('Building '+(session?session+' ':'')+'all-stores report…');
   try{ if(window.ensureJsPDF) await ensureJsPDF(); }catch(e){}
   if(!(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine not ready — try again'); return; }
   const date=(State.chk&&State.chk.date)||todayISO();
-  const subs=(DB.checklistSubs||[]).filter(s=>s.date===date);
-  if(!subs.length){ toast('No checklists submitted on '+date); return; }
-  const stores=[...new Set(subs.map(s=>s.store))].sort();
+  const ORD={'Opening':0,'Mid-afternoon':1,'Closing':2};
+  let subs=(DB.checklistSubs||[]).filter(s=>s.date===date&&(!session||s.session===session));
+  if(!subs.length){ toast('No '+(session?session+' ':'')+'checklists submitted on '+date); return; }
+  // keep ONE submission per store+dept+session (verified/most recent wins) so re-submits don't duplicate
+  const bestMap={}; subs.forEach(s=>{ const k=s.store+'|'+ckSubDept(s)+'|'+s.session; bestMap[k]=ckBetterSub(bestMap[k],s); });
+  subs=Object.values(bestMap).sort((a,b)=>String(a.store).localeCompare(String(b.store))||((ORD[a.session]??9)-(ORD[b.session]??9))||ckSubDept(a).localeCompare(ckSubDept(b)));
+  const stores=[...new Set(subs.map(s=>s.store))];
   const urls=[]; subs.forEach(s=>(s.items||[]).forEach(it=>(it.photos||[]).forEach(u=>urls.push(u))));
-  const pmap={}; await Promise.all([...new Set(urls)].slice(0,140).map(async u=>{ const d=await ckImgData(imgSrc(u),1200); if(d) pmap[u]=d; }));
+  const {pmap,missing}=await ckPhotoMap(urls.slice(0,220),1000);
   const { jsPDF }=window.jspdf; const doc=new jsPDF({unit:'pt',format:'a4'});
   const PW=doc.internal.pageSize.getWidth(), PH=doc.internal.pageSize.getHeight(), M=40; let y=0;
-  const ensure=h=>{ if(y+h>PH-40){ doc.addPage(); y=44; } };
+  const ensure=h=>{ if(y+h>PH-46){ doc.addPage(); y=46; } };
   const totalTasks=subs.reduce((n,s)=>n+(s.total||0),0), doneTasks=subs.reduce((n,s)=>n+(s.done||0),0);
   const tempBad=subs.reduce((n,s)=>n+((s.items||[]).filter(it=>it.temp&&it.temp.inRange===false).length),0);
   // ---- overall cover ----
   doc.setFillColor(14,159,110); doc.rect(0,0,PW,PH,'F'); doc.setFillColor(11,125,143); doc.rect(0,PH-84,PW,84,'F');
-  if(MCQ_LOGO_URL){ try{ doc.addImage(MCQ_LOGO_URL,'PNG',PW/2-40,PH/2-176,80,80); }catch(e){} }
-  doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(27); doc.text('MCQ Supermarket',PW/2,PH/2-70,{align:'center'});
-  doc.setFontSize(15); doc.text('All-Stores Checklist Report',PW/2,PH/2-44,{align:'center'});
-  doc.setFont('helvetica','normal'); doc.setFontSize(12); doc.text(date+'   ·   '+stores.length+' store(s)',PW/2,PH/2-20,{align:'center'});
+  if(MCQ_LOGO_URL){ try{ doc.addImage(MCQ_LOGO_URL,'PNG',PW/2-40,PH/2-186,80,80); }catch(e){} }
+  doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(27); doc.text('MCQ Supermarket',PW/2,PH/2-80,{align:'center'});
+  doc.setFontSize(15); doc.text('All-Stores Checklist Report',PW/2,PH/2-54,{align:'center'});
+  doc.setFont('helvetica','normal'); doc.setFontSize(12); doc.text((session?session+' session':'Full day — Opening · Mid-afternoon · Closing'),PW/2,PH/2-32,{align:'center'});
+  doc.setFontSize(11); doc.text(date+'   ·   '+stores.length+' store(s)',PW/2,PH/2-12,{align:'center'});
   const tiles=[['Stores',String(stores.length)],['Checklists',String(subs.length)],['Tasks done',doneTasks+'/'+totalTasks],['Temp alerts',String(tempBad)]];
-  const tw=120,gap=12,span=tiles.length*tw+(tiles.length-1)*gap,sx=PW/2-span/2,ty=PH/2+6;
+  const tw=120,gap=12,span=tiles.length*tw+(tiles.length-1)*gap,sx=PW/2-span/2,ty=PH/2+12;
   tiles.forEach((t,i)=>{ const x=sx+i*(tw+gap); doc.setFillColor(255,255,255); doc.roundedRect(x,ty,tw,58,8,8,'F');
     doc.setTextColor(i===3&&tempBad?185:14,i===3&&tempBad?28:159,i===3&&tempBad?28:110); doc.setFont('helvetica','bold'); doc.setFontSize(17); doc.text(String(t[1]),x+tw/2,ty+30,{align:'center'});
     doc.setTextColor(100); doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.text(t[0],x+tw/2,ty+46,{align:'center'}); });
+  if(missing){ doc.setTextColor(255,237,213); doc.setFontSize(9.5); doc.text(missing+' photo(s) still syncing from a device — will appear in later reports',PW/2,ty+82,{align:'center'}); }
   doc.setTextColor(255); doc.setFontSize(9); doc.text('Generated '+new Date().toLocaleString()+'  ·  MCQ International',PW/2,PH-32,{align:'center'});
-  // ---- per store ----
+  // ---- per store: FULL checklist, every task ticked/unticked ----
+  const sessionsInScope=session?[session]:['Opening','Mid-afternoon','Closing'];
+  const tplRows=DB.checklist.items.map(ckItem);
   stores.forEach(store=>{
     doc.addPage(); y=44;
     const ss=subs.filter(s=>s.store===store);
@@ -2513,47 +2524,122 @@ async function ckAllStoresPDF(){
     doc.setFillColor(14,159,110); doc.rect(0,0,PW,64,'F');
     let tx=M; if(MCQ_LOGO_URL){ try{ doc.addImage(MCQ_LOGO_URL,'PNG',M,12,42,42); tx=M+54; }catch(e){} }
     doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(16); doc.text(String(store),tx,30);
-    doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.text(date+'  ·  '+sDone+'/'+sTot+' tasks done  ·  '+sBad+' temp alert(s)',tx,48);
+    doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.text(date+(session?'  ·  '+session:'')+'  ·  '+sDone+'/'+sTot+' tasks done  ·  '+sBad+' temp alert(s)',tx,48);
     y=84;
+    // departments that have tasks for this store but did NOT submit in the covered session(s)
+    const missSubs=[];
+    sessionsInScope.forEach(sess=>{ [...new Set(tplRows.filter(r=>ckStoreOk(r,store)&&ckInSession(r,sess)).map(r=>r.dept))].forEach(dp=>{ if(!ss.some(s=>ckSubDept(s)===dp&&s.session===sess)) missSubs.push(dp+' · '+sess); }); });
+    if(missSubs.length){ const lines=doc.splitTextToSize('NOT SUBMITTED: '+missSubs.join('   ·   '),PW-2*M-20);
+      ensure(lines.length*11+16); doc.setFillColor(255,251,235); doc.setDrawColor(217,119,6); doc.setLineWidth(0.7); doc.roundedRect(M,y,PW-2*M,lines.length*11+10,4,4,'FD'); doc.setLineWidth(0.2);
+      doc.setTextColor(180,83,9); doc.setFont('helvetica','bold'); doc.setFontSize(8.5); doc.text(lines,M+10,y+12); y+=lines.length*11+18; }
     ss.forEach(s=>{
-      ensure(24); doc.setFillColor(236,253,245); doc.roundedRect(M,y,PW-2*M,20,4,4,'F'); doc.setTextColor(15,118,110); doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text(String(s.dept)+' · '+String(s.session)+'   ('+(s.done||0)+'/'+(s.total||0)+' · '+(s.progress||0)+'%)',M+8,y+14); y+=26;
-      const out=(s.items||[]).filter(it=>!it.done);
-      if(out.length){ ensure(14); doc.setTextColor(185,28,28); doc.setFont('helvetica','bold'); doc.setFontSize(9.5); doc.text('Incomplete ('+out.length+'):',M+8,y+9); y+=13;
-        doc.setTextColor(80); doc.setFont('helvetica','normal'); doc.setFontSize(9);
-        out.slice(0,25).forEach(it=>{ const l=doc.splitTextToSize('• '+String(it.task)+(it.note?('  — '+it.note):''),PW-2*M-16); ensure(l.length*11); doc.text(l,M+14,y+8); y+=l.length*11; }); y+=6;
-      } else { ensure(12); doc.setTextColor(21,128,61); doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.text('✓ All tasks completed.',M+8,y+8); y+=14; }
-      const ph=(s.items||[]).reduce((a,it)=>a.concat((it.photos||[])),[]).map(u=>pmap[u]).filter(Boolean);
-      if(ph.length){ const box=120,th=90,gp=8; let x=M+8; ensure(th+10); ph.slice(0,12).forEach(d=>{ if(x+box>PW-M){ x=M+8; y+=th+gp; ensure(th+10); } const ar=(d.w&&d.h)?d.w/d.h:4/3; let iw=box,ih=iw/ar; if(ih>th){ ih=th; iw=ih*ar; } try{ doc.addImage(d.data,'JPEG',x,y,iw,ih); }catch(e){} doc.setDrawColor(210); doc.rect(x,y,iw,ih); x+=box+gp; }); y+=th+14; }
+      const col=ckHexToRgb(((DB.checklist.deptMeta&&DB.checklist.deptMeta[ckSubDept(s)])||{}).color);
+      ensure(34); doc.setFillColor(col.r,col.g,col.b); doc.roundedRect(M,y,PW-2*M,22,4,4,'F');
+      doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text(ckSubDept(s)+' · '+String(s.session)+'   ('+(s.done||0)+'/'+(s.total||0)+' · '+(s.progress||0)+'%)',M+8,y+15);
+      doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.text((ckIsVerifiedSub(s)?'VERIFIED':'Submitted')+(s.by?' · '+String(s.by):''),PW-M-8,y+15,{align:'right'}); y+=30;
+      const byArea={}; (s.items||[]).forEach(it=>{(byArea[it.area||'General']=byArea[it.area||'General']||[]).push(it);});
+      Object.entries(byArea).forEach(([area,items])=>{
+        ensure(18); doc.setTextColor(100); doc.setFont('helvetica','bold'); doc.setFontSize(8.5); doc.text(String(area).toUpperCase(),M+4,y+8); y+=14;
+        items.forEach(it=>{
+          const ok=!!it.done;
+          const taskLines=doc.splitTextToSize(String(it.task),PW-2*M-(ok?26:88));
+          const tline=it.temp?(it.temp.defrosting?'Defrosting':((it.temp.value!=null?Number(it.temp.value).toFixed(1)+' C':'')+(it.temp.inRange===false?'  OUT OF RANGE':''))):'';
+          const noteLines=it.note?doc.splitTextToSize('Note: '+it.note,PW-2*M-30):[];
+          ensure(taskLines.length*11+(tline?11:0)+noteLines.length*10+8);
+          // tick box: green ✓ when done, red box with X when not
+          doc.setDrawColor(ok?21:220,ok?128:38,ok?61:38); doc.setFillColor(ok?21:254,ok?128:242,ok?61:242);
+          doc.roundedRect(M+4,y-1,11,11,2,2,'FD');
+          if(ok){ doc.setDrawColor(255); doc.setLineWidth(1.4); doc.line(M+6.3,y+4.4,M+8.4,y+6.9); doc.line(M+8.4,y+6.9,M+12.4,y+1.6); doc.setLineWidth(0.2); }
+          else { doc.setDrawColor(220,38,38); doc.setLineWidth(1.1); doc.line(M+6.4,y+1.4,M+12.6,y+7.6); doc.line(M+12.6,y+1.4,M+6.4,y+7.6); doc.setLineWidth(0.2); }
+          doc.setTextColor(ok?30:60); doc.setFont('helvetica','normal'); doc.setFontSize(9); doc.text(taskLines,M+22,y+7);
+          if(!ok){ doc.setFillColor(254,226,226); doc.roundedRect(PW-M-56,y-1,56,11,3,3,'F'); doc.setTextColor(185,28,28); doc.setFont('helvetica','bold'); doc.setFontSize(7); doc.text('NOT DONE',PW-M-28,y+7,{align:'center'}); }
+          let yy=y+7+(taskLines.length-1)*11;
+          if(tline){ const bad=it.temp&&it.temp.inRange===false; doc.setTextColor(bad?185:20,bad?28:120,40); doc.setFont('helvetica','bold'); doc.setFontSize(8.5); doc.text('Temp: '+tline,M+22,yy+11); yy+=11; }
+          if(noteLines.length){ doc.setTextColor(115); doc.setFont('helvetica','italic'); doc.setFontSize(8.5); doc.text(noteLines,M+22,yy+11); yy+=noteLines.length*10; }
+          y=yy+8;
+          const ph=(it.photos||[]).map(u=>pmap[u]).filter(Boolean);
+          if(ph.length){ const box=118,th=88,gp=8; let x=M+22; ensure(th+10);
+            ph.slice(0,8).forEach(d=>{ if(x+box>PW-M){ x=M+22; y+=th+gp; ensure(th+10); }
+              const ar=(d.w&&d.h)?d.w/d.h:4/3; let iw=box,ih=iw/ar; if(ih>th){ ih=th; iw=ih*ar; }
+              try{ doc.addImage(d.data,'JPEG',x,y,iw,ih); }catch(e){} doc.setDrawColor(205); doc.setLineWidth(0.6); doc.rect(x,y,iw,ih); doc.setLineWidth(0.2); x+=box+gp; });
+            y+=th+12; }
+        });
+      });
+      y+=6;
     });
   });
-  const n=doc.internal.getNumberOfPages(); for(let i=2;i<=n;i++){ doc.setPage(i); doc.setFontSize(8); doc.setTextColor(150); doc.text('MCQ Supermarket · All-stores checklist report · Confidential',M,PH-16); doc.text('Page '+i+' / '+n,PW-M,PH-16,{align:'right'}); }
-  const blob=doc.output('blob'); expDownload(blob,'MCQ_AllStores_Checklists_'+date+'.pdf'); toast('📄 All-stores report saved');
+  const n=doc.internal.getNumberOfPages(); for(let i=2;i<=n;i++){ doc.setPage(i); doc.setFontSize(8); doc.setTextColor(150); doc.text('MCQ Supermarket · All-stores checklist report'+(session?' · '+session:'')+' · Confidential',M,PH-16); doc.text('Page '+i+' / '+n,PW-M,PH-16,{align:'right'}); }
+  const fileName='MCQ_AllStores_'+(session?session.replace(/\s+/g,''):'FullDay')+'_'+date+'.pdf';
+  const blob=doc.output('blob'); const file=new File([blob],fileName,{type:'application/pdf'});
+  const caption='*MCQ All Stores — '+(session||'Full day')+' Checklist Report*\n'+date+' · '+stores.length+' store(s) · '+doneTasks+'/'+totalTasks+' tasks done'+(tempBad?'\n⚠️ '+tempBad+' temperature alert(s)':'');
+  try{ if(navigator.canShare && navigator.canShare({files:[file]})){ await navigator.share({files:[file],title:fileName,text:caption}); toast('Shared ✓'); return; } }catch(e){ if(e&&e.name==='AbortError') return; }
+  expDownload(blob,fileName); toast('📄 All-stores report saved — open WhatsApp and attach it'); try{ window.open('https://wa.me/?text='+encodeURIComponent(caption),'_blank'); }catch(e){}
 }
 function ckHexToRgb(hex){ const m=/^#?([0-9a-f]{6})$/i.exec(hex||''); if(!m) return {r:14,g:159,b:110}; const n=parseInt(m[1],16); return {r:(n>>16)&255,g:(n>>8)&255,b:n&255}; }
-function ckImgData(url,max,quality){ max=max||1400; quality=quality||0.9; return new Promise(res=>{ const img=new Image(); img.onload=()=>{ const s=Math.min(1,max/Math.max(img.width||max,img.height||max)); const w=Math.max(1,Math.round((img.width||max)*s)), h=Math.max(1,Math.round((img.height||max)*s)); try{ const c=document.createElement('canvas'); c.width=w; c.height=h; const ctx=c.getContext('2d'); ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high'; ctx.drawImage(img,0,0,w,h); res({data:c.toDataURL('image/jpeg',quality),w,h}); }catch(e){ res(null); } }; img.onerror=()=>res(null); img.src=url; }); }
+function ckImgData(url,max,quality){ max=max||1400; quality=quality||0.9; return new Promise(res=>{ if(!url) return res(null); const img=new Image(); img.onload=()=>{ const s=Math.min(1,max/Math.max(img.width||max,img.height||max)); const w=Math.max(1,Math.round((img.width||max)*s)), h=Math.max(1,Math.round((img.height||max)*s)); try{ const c=document.createElement('canvas'); c.width=w; c.height=h; const ctx=c.getContext('2d'); ctx.imageSmoothingEnabled=true; ctx.imageSmoothingQuality='high'; ctx.drawImage(img,0,0,w,h); res({data:c.toDataURL('image/jpeg',quality),w,h}); }catch(e){ res(null); } }; img.onerror=()=>res(null); img.src=url; }); }
+/* Resolve photo refs into embeddable JPEGs for PDF / print builders. Each photo is
+   FETCHED from the server first (photoSrcAsync) — the old path snapshotted whatever
+   imgSrc() returned, which for a not-yet-downloaded photo was the grey "loading…"
+   placeholder, so shared PDFs showed loading boxes instead of pictures. */
+async function ckPhotoMap(urls,max){
+  const uniq=[...new Set(urls)].filter(Boolean);
+  const pmap={}; let missing=0;
+  await Promise.all(uniq.map(async u=>{
+    const src=window.photoSrcAsync?await photoSrcAsync(u):imgSrc(u);
+    const d=src?await ckImgData(src,max||1200):null;
+    if(d) pmap[u]=d; else missing++;
+  }));
+  return {pmap,missing};
+}
+/* Report data for one session: this device's live ticks OVERLAID with today's SUBMITTED
+   checklists (synced via the server). Without the overlay a manager's WhatsApp/PDF report
+   only contained what was ticked on their own phone — staff submissions made on other
+   devices were invisible. Submissions are matched per dept (verified/newest wins). */
+function ckReportState(session,store){
+  const branch=store||State.branch, date=todayISO();
+  const rows=DB.checklist.items.map(ckItem).filter(r=>ckStoreOk(r,branch)&&ckInSession(r,session));
+  const st={}; rows.forEach(r=>{ const live=(State.chk&&State.chk.state&&State.chk.state[r.i])||{};
+    st[r.i]={done:!!live.done,note:live.note||'',photos:(live.photos||[]).slice(),temp:live.temp||null}; });
+  const byKey={}, byAlt={};
+  rows.forEach(r=>{ byKey[r.dept+'|'+r.area+'|'+r.task]=r; if(!byAlt[r.dept+'|'+r.task]) byAlt[r.dept+'|'+r.task]=r; });
+  [...new Set(rows.map(r=>r.dept))].forEach(dept=>{
+    const sub=ckBestSubmission(dept,session,date,branch); if(!sub) return;
+    (sub.items||[]).forEach(it=>{
+      const r=byKey[dept+'|'+(it.area||'')+'|'+it.task]||byAlt[dept+'|'+it.task]; if(!r) return;
+      const cur=st[r.i];
+      cur.done=cur.done||!!it.done;
+      if(it.note) cur.note=cur.note&&cur.note!==it.note?(it.note+' · '+cur.note):it.note;
+      (it.photos||[]).forEach(u=>{ if(u&&!cur.photos.includes(u)) cur.photos.push(u); });
+      if(it.temp&&!cur.temp) cur.temp=it.temp;
+    });
+  });
+  return {rows,st};
+}
 /* Build a branded, photo-rich PDF for ONE session (Opening / Mid-afternoon /
    Closing) across all departments of the store, then share it to WhatsApp.
    Each of the three menu items generates its own session deliberately, so you
    can pick any session at any time. */
 async function ckSharePDF(session){
+  if(isSuper()) return ckAllStoresPDF(session);   // super shares the all-stores report (per-store live drafts don't exist for super)
   const C=DB.checklist;
-  const rows=C.items.map(ckItem).filter(r=>ckStoreOk(r)&&ckInSession(r,session));
+  // live device state + today's submitted checklists from OTHER devices, merged
+  const RD=ckReportState(session), rows=RD.rows, RS=RD.st;
   if(!rows.length){ toast('No '+session+' tasks for this store'); return; }
   toast('Building '+session+' PDF…');
   try{ if(window.ensureJsPDF) await ensureJsPDF(); }catch(e){}
-  if(!(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine loading — using printable report'); return ckSessionPrint(session,rows); }
+  if(!(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine loading — using printable report'); return ckSessionPrint(session,rows,RS); }
   const date=todayISO();
-  const store=isSuper()?'All stores':State.branch;
-  let outCount=0; rows.forEach(r=>{ const st=State.chk.state[r.i]||{}; if(st.temp&&st.temp.inRange===false) outCount++; });
-  // preload + downscale photos
-  const urls=[]; rows.forEach(r=>{ const st=State.chk.state[r.i]||{}; (st.photos||[]).forEach(u=>urls.push(u)); });
-  const pmap={}; await Promise.all([...new Set(urls)].map(async u=>{ const d=await ckImgData(imgSrc(u),1400); if(d) pmap[u]=d; }));
+  const store=State.branch;
+  let outCount=0; rows.forEach(r=>{ const st=RS[r.i]||{}; if(st.temp&&st.temp.inRange===false) outCount++; });
+  // preload photos — each fetched from the server first, so the PDF embeds REAL pictures
+  const urls=[]; rows.forEach(r=>{ const st=RS[r.i]||{}; (st.photos||[]).forEach(u=>urls.push(u)); });
+  const {pmap,missing}=await ckPhotoMap(urls,1400);
   const { jsPDF }=window.jspdf; const doc=new jsPDF({unit:'pt',format:'a4',orientation:'landscape'});
   const PW=doc.internal.pageSize.getWidth(), PH=doc.internal.pageSize.getHeight(), M=40; let y=96;
   const ensure=h=>{ if(y+h>PH-44){ doc.addPage(); y=44; } };
   // ---- branded cover page with statistics ----
   (function cover(){
-    const total=rows.length; let dn=0; rows.forEach(r=>{ const st=State.chk.state[r.i]||{}; if(st.done) dn++; });
+    const total=rows.length; let dn=0; rows.forEach(r=>{ const st=RS[r.i]||{}; if(st.done) dn++; });
     doc.setFillColor(14,159,110); doc.rect(0,0,PW,PH,'F');
     doc.setFillColor(11,125,143); doc.rect(0,PH-90,PW,90,'F');
     if(MCQ_LOGO_URL){ try{ doc.addImage(MCQ_LOGO_URL,'PNG',PW/2-40,PH/2-158,80,80); }catch(e){} }
@@ -2578,6 +2664,7 @@ async function ckSharePDF(session){
   }
   header();
   if(outCount>0){ ensure(26); doc.setFillColor(254,242,242); doc.setDrawColor(220,38,38); doc.setLineWidth(0.8); doc.roundedRect(M,y,PW-2*M,22,4,4,'FD'); doc.setLineWidth(0.2); doc.setTextColor(185,28,28); doc.setFont('helvetica','bold'); doc.setFontSize(11); doc.text('TEMPERATURE ALERTS: '+outCount+' reading(s) OUT OF SAFE RANGE — see highlighted tasks below',M+12,y+15); y+=32; }
+  if(missing>0){ ensure(24); doc.setFillColor(255,251,235); doc.setDrawColor(217,119,6); doc.setLineWidth(0.7); doc.roundedRect(M,y,PW-2*M,20,4,4,'FD'); doc.setLineWidth(0.2); doc.setTextColor(180,83,9); doc.setFont('helvetica','bold'); doc.setFontSize(9.5); doc.text(missing+' photo(s) still syncing from a device — not embedded in this report',M+12,y+13); y+=28; }
   const groups={}; rows.forEach(r=>{(groups[r.dept]=groups[r.dept]||{})[r.area]=(groups[r.dept][r.area]||[]);groups[r.dept][r.area].push(r);});
   let total=0,done=0;
   Object.entries(groups).forEach(([dept,areas])=>{
@@ -2586,14 +2673,17 @@ async function ckSharePDF(session){
     doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.text(String(dept),M+10,y+15); y+=30;
     Object.entries(areas).forEach(([area,items])=>{
       ensure(20); doc.setTextColor(90); doc.setFont('helvetica','bold'); doc.setFontSize(9.5); doc.text(String(area).toUpperCase(),M+4,y+9); y+=16;
-      items.forEach(r=>{ const st=State.chk.state[r.i]||{}; const ok=!!st.done; total++; if(ok)done++;
-        const taskLines=doc.splitTextToSize(String(r.task),PW-2*M-30);
+      items.forEach(r=>{ const st=RS[r.i]||{}; const ok=!!st.done; total++; if(ok)done++;
+        const taskLines=doc.splitTextToSize(String(r.task),PW-2*M-(ok?30:100));
         const tline = st.temp ? (st.temp.defrosting?'Defrosting':((st.temp.value!=null?st.temp.value.toFixed(1)+' C':'')+(st.temp.inRange===false?'  OUT OF RANGE':''))) : '';
         const noteLines=st.note?doc.splitTextToSize('Note: '+st.note,PW-2*M-30):[];
         ensure(16+taskLines.length*12+(tline?12:0)+noteLines.length*11);
-        doc.setDrawColor(ok?21:170,ok?128:170,ok?61:170); doc.setFillColor(ok?21:255,ok?128:255,ok?61:255);
-        doc.roundedRect(M+4,y-1,12,12,2,2,ok?'FD':'D');
+        // tick box: green ✓ when done, red box with X when not — untick reads at a glance
+        doc.setDrawColor(ok?21:220,ok?128:38,ok?61:38); doc.setFillColor(ok?21:254,ok?128:242,ok?61:242);
+        doc.roundedRect(M+4,y-1,12,12,2,2,'FD');
         if(ok){ doc.setDrawColor(255); doc.setLineWidth(1.6); doc.line(M+6.5,y+5,M+9,y+8); doc.line(M+9,y+8,M+13.5,y+2.5); doc.setLineWidth(0.2); }
+        else { doc.setDrawColor(220,38,38); doc.setLineWidth(1.2); doc.line(M+6.6,y+1.6,M+13.4,y+8.4); doc.line(M+13.4,y+1.6,M+6.6,y+8.4); doc.setLineWidth(0.2);
+          doc.setFillColor(254,226,226); doc.roundedRect(PW-M-62,y-1,62,12,3,3,'F'); doc.setTextColor(185,28,28); doc.setFont('helvetica','bold'); doc.setFontSize(7.5); doc.text('NOT DONE',PW-M-31,y+7.5,{align:'center'}); }
         doc.setTextColor(30); doc.setFont('helvetica','normal'); doc.setFontSize(10); doc.text(taskLines,M+24,y+8); let yy=y+8+taskLines.length*12-4;
         if(tline){ const bad=st.temp&&st.temp.inRange===false; doc.setTextColor(bad?185:20,bad?28:120,40); doc.setFont('helvetica','bold'); doc.setFontSize(9.5); doc.text('Temp: '+tline,M+24,yy+10); yy+=12; }
         if(noteLines.length){ doc.setTextColor(115); doc.setFont('helvetica','italic'); doc.setFontSize(9); doc.text(noteLines,M+24,yy+10); yy+=noteLines.length*11; }
@@ -2620,16 +2710,19 @@ async function ckSharePDF(session){
   // device can't share files directly (e.g. desktop) → save the real PDF file so it can be attached
   expDownload(blob,fileName); toast('📄 PDF saved to your device — open WhatsApp and attach it'); try{ window.open('https://wa.me/?text='+encodeURIComponent(caption),'_blank'); }catch(e){}
 }
-/* fallback (no jsPDF): branded printable report with photos */
-function ckSessionPrint(session,rows){
+/* fallback (no jsPDF): branded printable report with photos (fetched first — no "loading…" tiles) */
+async function ckSessionPrint(session,rows,RS){
+  RS=RS||((State.chk&&State.chk.state)||{});
+  const allUrls=[]; rows.forEach(r=>{ ((RS[r.i]||{}).photos||[]).forEach(u=>allUrls.push(u)); });
+  const {pmap}=await ckPhotoMap(allUrls,1000);
   const groups={}; rows.forEach(r=>{(groups[r.dept]=groups[r.dept]||{})[r.area]=(groups[r.dept][r.area]||[]);groups[r.dept][r.area].push(r);});
   let done=0,total=0; let body='<tbody>';
   Object.entries(groups).forEach(([dept,areas])=>{
     body+=`<tr><td colspan="3" style="background:#0e9f6e;color:#fff;font-weight:800">${esc(dept)}</td></tr>`;
     Object.entries(areas).forEach(([area,items])=>{
       body+=`<tr><td colspan="3" style="background:#ecfdf5;color:#047857;font-weight:700">${esc(area)}</td></tr>`;
-      items.forEach(r=>{ const st=State.chk.state[r.i]||{}, ok=!!st.done; total++; if(ok)done++;
-        const imgs=(st.photos||[]).map(u=>`<img src="${imgSrc(u)}" style="height:150px;border-radius:8px;margin:3px;border:1px solid #ddd">`).join('');
+      items.forEach(r=>{ const st=RS[r.i]||{}, ok=!!st.done; total++; if(ok)done++;
+        const imgs=(st.photos||[]).map(u=>pmap[u]).filter(Boolean).map(d=>`<img src="${d.data}" style="height:150px;border-radius:8px;margin:3px;border:1px solid #ddd">`).join('');
         const t=st.temp?`<div style="color:${st.temp.inRange===false?'#b91c1c':'#047857'};font-weight:700">Temp: ${st.temp.defrosting?'Defrosting':(st.temp.value!=null?st.temp.value.toFixed(1)+' C':'')}${st.temp.inRange===false?' (OUT OF RANGE)':''}</div>`:'';
         body+=`<tr><td style="text-align:center;font-size:16px">${ok?'☑':'☐'}</td><td>${esc(r.task)}${t}${st.note?`<div style="color:#64748b">${esc(st.note)}</div>`:''}</td><td>${imgs||'—'}</td></tr>`;
       });
@@ -3407,7 +3500,7 @@ async function mgrSendLeadPDF(s,a,leads){
       doc.setTextColor(60); doc.setFont('helvetica','normal'); doc.setFontSize(10); out.slice(0,30).forEach(t=>{ const l=doc.splitTextToSize('• '+t.task+(t.area?(' ('+t.area+')'):''),PW-2*M); ensure(l.length*12); doc.text(l,M,y); y+=l.length*12+2; }); y+=6; }
     // annotated photos from the manager
     const photoIds=(a.verifyPhotos||[]); if(photoIds.length){ ensure(16); doc.setTextColor(90); doc.setFont('helvetica','bold'); doc.setFontSize(10.5); doc.text('Manager photos',M,y); y+=14;
-      const pmap={}; await Promise.all([...new Set(photoIds)].map(async u=>{ const d=await ckImgData(imgSrc(u),1400); if(d) pmap[u]=d; }));
+      const {pmap}=await ckPhotoMap(photoIds,1400);
       const box=230, th=173, gap=12; let x=M; photoIds.forEach(u=>{ const d=pmap[u]; if(!d) return; if(x+box>PW-M){ x=M; y+=th+gap; } ensure(th+12);
         const ar=(d.w&&d.h)?d.w/d.h:4/3; let iw=box, ih=iw/ar; if(ih>th){ ih=th; iw=ih*ar; } try{ doc.addImage(d.data,'JPEG',x,y,iw,ih); }catch(e){} doc.setDrawColor(205); doc.rect(x,y,iw,ih); x+=box+gap; }); y+=th+14; }
     const n=doc.internal.getNumberOfPages(); for(let i=1;i<=n;i++){ doc.setPage(i); doc.setFontSize(8); doc.setTextColor(150); doc.text('MCQ Supermarket · '+s.store+' · Confidential',M,PH-18); doc.text('Page '+i+' / '+n,PW-M,PH-18,{align:'right'}); }
@@ -3691,14 +3784,19 @@ function renderPhotos(){
 
 /* ============================================================ WHATSAPP DAILY SHARE */
 function renderWhatsapp(){
-  setAccent('#128C7E'); setCrumb('💬','Daily Share',`${isSuper()?'All stores':State.branch} · WhatsApp report`);
+  if(isSuper()) return renderWhatsappSuper();
+  setAccent('#128C7E'); setCrumb('💬','Daily Share',`${State.branch} · WhatsApp report`);
   if(!State.wa) State.wa={period:'Opening'};
   const period=State.wa.period, C=DB.checklist;
+  // live device ticks + today's SUBMITTED checklists (other phones) merged — the report
+  // reflects the whole store, not just what was ticked on this device
+  const RD=ckReportState(period), RS=RD.st;
   const byDept={};
-  C.items.forEach((it,i)=>{ const r=ckItem(it,i); if(!ckStoreOk(r)) return; const when=it[3], inP=period==='Opening'?(when==='O'||when==='A'):period==='Mid-afternoon'?(when==='M'):(when==='C'||when==='A'); if(!inP) return;
-    const dept=it[0], ps=photoSpec(it[4]), st=(State.chk&&State.chk.state[i])||{};
-    const d=byDept[dept]=byDept[dept]||{total:0,done:0,photos:[],reqMissing:0,tempBad:0,meta:C.deptMeta[dept]||{}};
-    d.total++; if(st.done)d.done++; (st.photos||[]).forEach(u=>d.photos.push(u)); if(ps&&ps.req&&!(st.photos||[]).length)d.reqMissing++; if(st.temp&&st.temp.inRange===false)d.tempBad++; });
+  RD.rows.forEach(r=>{ const st=RS[r.i]||{};
+    const d=byDept[r.dept]=byDept[r.dept]||{total:0,done:0,photos:[],reqMissing:0,tempBad:0,meta:C.deptMeta[r.dept]||{}};
+    d.total++; if(st.done)d.done++; (st.photos||[]).forEach(u=>d.photos.push(u));
+    if(!r.meta.temp&&r.photo&&r.photo.req&&!(st.photos||[]).length)d.reqMissing++;
+    if(st.temp&&st.temp.inRange===false)d.tempBad++; });
   const tempBadTotal=Object.values(byDept).reduce((n,d)=>n+(d.tempBad||0),0);
   const snap=[
     ['💬','Complaints',DB.modules.complaint.records.filter(r=>r.status==='Open').length,'open','#ec4899'],
@@ -3709,7 +3807,7 @@ function renderWhatsapp(){
   const date=new Date().toLocaleDateString();
   const deptCards=Object.entries(byDept).map(([dept,d])=>{
     const pct=d.total?Math.round(d.done/d.total*100):0;
-    const realThumbs=d.photos.map(u=>`<img src="${imgSrc(u)}">`).join('');
+    const realThumbs=d.photos.map(u=>`<img src="${imgSrc(u)}" loading="lazy">`).join('');
     const ph=d.photos.length?'':Array.from({length:Math.max(2,Math.min(5,d.reqMissing))}).map(()=>`<span class="wa-ph" style="background:${d.meta.color||'#888'}"><i class="fas ${d.meta.icon||'fa-camera'}"></i></span>`).join('');
     return `<div class="wa-card"><span class="wa-stripe" style="background:${d.meta.color||'#888'}"></span>
       <div class="wa-body"><div class="wa-pills">
@@ -3725,7 +3823,7 @@ function renderWhatsapp(){
     <div class="wa-hero">
       <div class="wa-date">📅 ${date} · ${period} report</div>
       <h2><i class="fab fa-whatsapp"></i>&nbsp; ${period} Report — ready to share</h2>
-      <p>Auto-built from today’s checklist, photo evidence and open items. Tap Share to send it straight to your team WhatsApp group.</p>
+      <p>Auto-built from today’s checklist (including checklists submitted from other phones), photo evidence and open items. Tap Share to send it straight to your team WhatsApp group.</p>
       <div class="wa-toggle"><button class="${period==='Opening'?'active':''}" onclick="waPeriod('Opening')">☀️ Opening</button><button class="${period==='Mid-afternoon'?'active':''}" onclick="waPeriod('Mid-afternoon')">🌤️ Mid-afternoon</button><button class="${period==='Closing'?'active':''}" onclick="waPeriod('Closing')">🌙 Closing</button></div>
       <div class="wa-actions"><button class="wa-share" onclick="waSharePDF()"><i class="fab fa-whatsapp"></i>&nbsp; Share PDF to WhatsApp</button>
         <button class="wa-dl" onclick="waCopy()"><i class="fas fa-copy"></i>&nbsp; Copy summary</button></div>
@@ -3735,13 +3833,67 @@ function renderWhatsapp(){
     <div class="wa-cards">${deptCards||'<div class="empty">No checklist tasks for this period.</div>'}</div>
     <div class="section-title">Operations snapshot</div>
     <div class="kpi-grid">${snap.map(s=>`<div class="kpi"><div class="k-top"><div class="k-ic" style="background:${s[4]}1f;color:${s[4]}">${s[0]}</div></div><div class="k-val" style="color:${s[4]}">${s[2]}</div><div class="k-lbl">${s[1]} ${s[3]}</div></div>`).join('')}</div>
-    ${allPhotos.length?`<div class="section-title">Photo evidence · ${allPhotos.length}</div><div class="wa-gallery">${allPhotos.map(u=>`<img src="${imgSrc(u)}" onclick="openLightbox('${ckJS(imgSrc(u))}')" style="cursor:zoom-in">`).join('')}</div>`:''}
+    ${allPhotos.length?`<div class="section-title">Photo evidence · ${allPhotos.length}</div><div class="wa-gallery">${allPhotos.map(u=>`<img src="${imgSrc(u)}" loading="lazy" onclick="openLightbox('${ckJS(imgSrc(u))}')" style="cursor:zoom-in">`).join('')}</div>`:''}
     <div class="section-title">Message preview</div>
     <div class="card card-pad"><textarea id="wa-msg" style="min-height:170px;font-family:monospace">${esc(msg)}</textarea>
-      <div class="fhint" style="margin-top:8px">💡 <b>Share PDF</b> builds a branded report (checklist + photos + temperature alerts) for the selected period and opens the WhatsApp share sheet. “Copy summary” copies the text version.</div></div>`;
+      <div class="fhint" style="margin-top:8px">💡 <b>Share PDF</b> builds a branded report (every task ticked/unticked + photos + temperature alerts) for the selected period and opens the WhatsApp share sheet. “Copy summary” copies the text version.</div></div>`;
+}
+/* Super Admin Daily Share: one card per store built from today's SUBMITTED checklists,
+   with the all-stores PDF (per session or full day) ready to share. */
+function renderWhatsappSuper(){
+  setAccent('#128C7E'); setCrumb('💬','Daily Share','All stores · WhatsApp report');
+  if(!State.wa) State.wa={period:'Opening'};
+  const period=State.wa.period, C=DB.checklist, date=todayISO();
+  const ORDS=['Opening','Mid-afternoon','Closing'];
+  const tplRows=C.items.map(ckItem);
+  const storeCards=[], msgLines=[]; let allPhotos=[], grandDone=0, grandTotal=0, tempBadTotal=0;
+  (DB.branches||[]).forEach(store=>{
+    const expDepts=[...new Set(tplRows.filter(r=>ckStoreOk(r,store)&&ckInSession(r,period)).map(r=>r.dept))];
+    if(!expDepts.length) return;
+    const best={}; expDepts.forEach(dp=>{ const s=ckBestSubmission(dp,period,date,store); if(s) best[dp]=s; });
+    const subs=Object.values(best);
+    const done=subs.reduce((n,s)=>n+(s.done||0),0), total=subs.reduce((n,s)=>n+(s.total||0),0);
+    const tempBad=subs.reduce((n,s)=>n+((s.items||[]).filter(it=>it.temp&&it.temp.inRange===false).length),0);
+    const photos=[]; subs.forEach(s=>(s.items||[]).forEach(it=>(it.photos||[]).forEach(u=>photos.push(u))));
+    const missing=expDepts.filter(dp=>!best[dp]);
+    const pct=total?Math.round(done/total*100):0;
+    grandDone+=done; grandTotal+=total; tempBadTotal+=tempBad; allPhotos=allPhotos.concat(photos);
+    const thumbs=photos.slice(0,8).map(u=>`<img src="${imgSrc(u)}" loading="lazy">`).join('');
+    storeCards.push(`<div class="wa-card"><span class="wa-stripe" style="background:${subs.length?(pct>=90?'#43A047':'#FB8C00'):'#ef4444'}"></span>
+      <div class="wa-body"><div class="wa-pills">
+        <span class="wa-pill" style="background:#128C7E">${esc(store)}</span>
+        ${subs.length?`<span class="wa-pill" style="background:${pct>=90?'#43A047':'#FB8C00'}">${done}/${total} · ${pct}%</span>
+        <span class="wa-pill" style="background:#1A1A2E">📷 ${photos.length} photos</span>
+        ${tempBad?`<span class="wa-pill" style="background:#ef4444">🌡️ ${tempBad} temp alert${tempBad>1?'s':''}</span>`:''}`
+        :`<span class="wa-pill" style="background:#ef4444">No ${esc(period)} submission yet</span>`}
+        ${missing.length&&subs.length?`<span class="wa-pill" style="background:#d97706">⏳ ${esc(missing.join(', '))}</span>`:''}</div>
+        ${thumbs?`<div class="wa-thumbs">${thumbs}</div>`:''}</div></div>`);
+    msgLines.push(`• ${store}: ${subs.length?`${done}/${total} done (${pct}%)${tempBad?` · 🌡️ ${tempBad}`:''}${missing.length?` · waiting: ${missing.join(', ')}`:''}`:`no ${period} submission yet`}`);
+  });
+  const dateLbl=new Date().toLocaleDateString();
+  const msg=`*MCQ All Stores — ${period} Report (${dateLbl})*\n`+msgLines.join('\n')+
+    (tempBadTotal?`\n\n⚠️ TEMPERATURE ALERTS: ${tempBadTotal} reading(s) OUT OF RANGE`:'')+
+    `\n\n✅ Company-wide: ${grandDone}/${grandTotal} tasks done\n📷 Photos: ${allPhotos.length}\n\n_Sent from MCQ Supermarket_`;
+  $('#content').innerHTML=`
+    <div class="wa-hero">
+      <div class="wa-date">📅 ${dateLbl} · ${period} · all stores</div>
+      <h2><i class="fab fa-whatsapp"></i>&nbsp; All-Stores ${period} Report</h2>
+      <p>Built from every store’s submitted checklists — each task ticked/unticked, notes, temperatures and photo evidence in one branded PDF.</p>
+      <div class="wa-toggle">${ORDS.map(p=>`<button class="${period===p?'active':''}" onclick="waPeriod('${ckJS(p)}')">${p==='Opening'?'☀️':p==='Closing'?'🌙':'🌤️'} ${p}</button>`).join('')}</div>
+      <div class="wa-actions"><button class="wa-share" onclick="ckAllStoresPDF('${ckJS(period)}')"><i class="fab fa-whatsapp"></i>&nbsp; Share ${period} — all stores (PDF)</button>
+        <button class="wa-share" style="background:#0b7d8f" onclick="ckAllStoresPDF()"><i class="fas fa-layer-group"></i>&nbsp; Full day — all stores (PDF)</button>
+        <button class="wa-dl" onclick="waCopy()"><i class="fas fa-copy"></i>&nbsp; Copy summary</button></div>
+    </div>
+    ${tempBadTotal?`<div class="rail-tip" style="margin-top:14px;background:#fef2f2;border-color:#f3c9c9;color:#b91c1c">⚠️ <b>${tempBadTotal} temperature reading(s) out of range</b> today — included in the report.</div>`:''}
+    <div class="section-title">Store status — ${period} · ${date}</div>
+    <div class="wa-cards">${storeCards.join('')||'<div class="empty">No checklist tasks for this period.</div>'}</div>
+    ${allPhotos.length?`<div class="section-title">Photo evidence · ${allPhotos.length}</div><div class="wa-gallery">${allPhotos.slice(0,60).map(u=>`<img src="${imgSrc(u)}" loading="lazy" onclick="openLightbox('${ckJS(imgSrc(u))}')" style="cursor:zoom-in">`).join('')}</div>`:''}
+    <div class="section-title">Message preview</div>
+    <div class="card card-pad"><textarea id="wa-msg" style="min-height:170px;font-family:monospace">${esc(msg)}</textarea>
+      <div class="fhint" style="margin-top:8px">💡 <b>Share PDF</b> builds the all-stores report (every task ticked/unticked + photos) and opens the WhatsApp share sheet. Photos are fetched from the server before embedding, so they always appear.</div></div>`;
 }
 function waPeriod(p){ State.wa.period=p; renderWhatsapp(); }
-function waSharePDF(){ const p=(State.wa&&State.wa.period)||'Opening'; return ckSharePDF(p); }   // builds branded PDF (checklist + photos + temp alerts) and shares
+function waSharePDF(){ const p=(State.wa&&State.wa.period)||'Opening'; return ckSharePDF(p); }   // builds branded PDF (checklist + photos + temp alerts) and shares; super → all-stores report
 function waShare(){ const txt=$('#wa-msg')?$('#wa-msg').value:''; const t=encodeURIComponent(txt);
   if(navigator.share){ navigator.share({title:'MCQ Daily Report',text:txt}).catch(()=>window.open('https://wa.me/?text='+t,'_blank')); }
   else window.open('https://wa.me/?text='+t,'_blank'); }

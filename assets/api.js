@@ -276,6 +276,16 @@
       for(var i=0;i<n;i++) arr[i]=bin.charCodeAt(i);
       return new Blob([arr],{type:mime}); }catch(e){ return null; }
   }
+  // upload with retries — a dropped request used to lose the photo silently, so other
+  // devices saw "loading…" forever. Retries on failure and again when back online.
+  function postPhotoRetry(fd, tries){
+    fetch(api('/api/photos'), {method:'POST', headers:headers(), body:fd})
+      .then(function(r){ if(!r.ok) throw new Error('photo post '+r.status); })
+      .catch(function(){
+        if(tries>0) setTimeout(function(){ postPhotoRetry(fd, tries-1); }, 6000);
+        else { try{ window.addEventListener('online', function once(){ window.removeEventListener('online', once); postPhotoRetry(fd, 2); }); }catch(e){} }
+      });
+  }
   FB.savePhoto = function(dataUrl){
     var id='p_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
     PS[id]=dataUrl;
@@ -285,7 +295,7 @@
       // send as a real file part — form FIELDS are capped at 500KB by Werkzeug (413), files are not
       var blob=dataUrlToBlob(dataUrl);
       if(blob){ fd.append('image', blob, id+'.jpg'); } else { fd.append('dataUrl', dataUrl); }
-      fetch(api('/api/photos'), {method:'POST', headers:headers(), body:fd}).catch(function(){});
+      postPhotoRetry(fd, 3);
     }catch(e){}
     return id;
   };
@@ -305,13 +315,36 @@
   };
   // batch photo-driven re-renders: many images loading in a burst → ONE re-render, not N (smooth)
   var _photoRR; function photoRerenderSoon(){ clearTimeout(_photoRR); _photoRR=setTimeout(function(){ if(FB.rerenderApp) FB.rerenderApp(); }, 180); }
+  // photos that keep failing (e.g. the upload from another device hasn't landed yet) are
+  // paused for a while instead of re-fetching on every render — the UI shows a clean
+  // "photo syncing" tile instead of an eternal "loading…" box, and retries later.
+  var photoFails = {};
+  var PHOTO_WAIT_IMG='data:image/svg+xml;utf8,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="90" height="70"><rect width="100%" height="100%" rx="8" fill="#fff7ed" stroke="#fdba74"/><text x="50%" y="46%" font-size="9" fill="#c2410c" text-anchor="middle" font-family="sans-serif">photo syncing</text><text x="50%" y="66%" font-size="8" fill="#ea580c" text-anchor="middle" font-family="sans-serif">from other device…</text></svg>');
   FB.fetchPhoto = function(id){
-    if(!id || PS[id] || pending[id]) return;
+    if(!id || pending[id]) return;
+    if(PS[id] && PS[id]!==PHOTO_WAIT_IMG) return;
+    var f=photoFails[id];
+    if(f && f.count>=3 && (Date.now()-f.at)<60000) return;   // back off 60s after 3 misses
     pending[id]=true;
     fetch(api('/api/photos/'+encodeURIComponent(id)), {headers:headers()})
       .then(function(r){ if(!r.ok) throw new Error('photo '+r.status); return r.blob(); })
-      .then(function(b){ PS[id]=URL.createObjectURL(b); delete pending[id]; photoRerenderSoon(); })
-      .catch(function(){ delete pending[id]; });
+      .then(function(b){ PS[id]=URL.createObjectURL(b); delete pending[id]; delete photoFails[id]; photoRerenderSoon(); })
+      .catch(function(){ delete pending[id];
+        var g=photoFails[id]=photoFails[id]||{count:0,at:0}; g.count++; g.at=Date.now();
+        if(g.count>=3){ PS[id]=PHOTO_WAIT_IMG; photoRerenderSoon(); setTimeout(function(){ if(PS[id]===PHOTO_WAIT_IMG){ delete PS[id]; } }, 65000); }
+      });
+  };
+  // resolve a photo ref to a REAL displayable src (blob/data URL), waiting for the server
+  // instead of returning the "loading…" placeholder. PDF / print / share builders use this
+  // so reports embed actual photos. Resolves null when the photo truly isn't available.
+  window.photoSrcAsync = function(ref){
+    if(!ref) return Promise.resolve(null);
+    if(/^(data:|blob:|https?:|assets\/|\/)/.test(ref)) return Promise.resolve(ref);
+    if(PS[ref] && PS[ref]!==PHOTO_WAIT_IMG) return Promise.resolve(PS[ref]);
+    return fetch(api('/api/photos/'+encodeURIComponent(ref)), {headers:headers()})
+      .then(function(r){ if(!r.ok) throw new Error('photo '+r.status); return r.blob(); })
+      .then(function(b){ PS[ref]=URL.createObjectURL(b); delete photoFails[ref]; return PS[ref]; })
+      .catch(function(){ return null; });
   };
 
   // keep retrying a failed save until the server confirms (covers transient drops / offline)
