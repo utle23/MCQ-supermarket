@@ -3806,18 +3806,20 @@ function storeEmailCompose(){
 }
 function storeEmailSend(){
   const stores=[...document.querySelectorAll('.se-store:checked')].map(c=>c.value);
-  if(!stores.length){ toast('Pick at least one store'); return; }
+  const testcc=!!document.getElementById('se-testcc')?.checked;
+  if(!stores.length && !testcc){ toast('Pick at least one store (or tick the test copy to send only to yourself)'); return; }
   const subj=(document.getElementById('se-subj')?.value||'').trim();
   const body=(window.ckHtml?ckHtml('mail-body'):(document.getElementById('mail-body')?.value||''));
   if(!subj){ toast('Add a subject'); return; }
   if(!msgHasContent(body)){ toast('Write a message'); return; }
   const to=[], seen={};
   stores.forEach(s=>storeStaffEmails(s).forEach(r=>{ const e=String(r.email||'').toLowerCase(); if(e&&!seen[e]){ seen[e]=1; to.push(r); } }));
-  if(document.getElementById('se-testcc')?.checked && !seen['utle23.23@gmail.com']){ seen['utle23.23@gmail.com']=1; to.push({name:'Test',email:'utle23.23@gmail.com'}); }
+  if(testcc && !seen['utle23.23@gmail.com']){ seen['utle23.23@gmail.com']=1; to.push({name:'Test',email:'utle23.23@gmail.com'}); }
   if(!to.length){ toast('No staff email addresses for the selected store(s)'); return; }
-  const allStaff=stores.length===(DB.stores||[]).length;
-  const sent=mcqEmail.sendHtml(to, subj, `<p style="color:#64748b;font-size:12px">To: ${allStaff?'all MCQ staff':esc(stores.join(', '))} · ${to.length} recipient(s)</p>`+body);
-  if(sent){ toast(`📧 Emailing ${to.length} staff at ${stores.length} store(s)…`); mcqModalClose(); }
+  const allStaff=stores.length&&stores.length===(DB.stores||[]).length;
+  const scopeLbl=stores.length?(allStaff?'all MCQ staff':esc(stores.join(', '))):'test only';
+  const sent=mcqEmail.sendHtml(to, subj, `<p style="color:#64748b;font-size:12px">To: ${scopeLbl} · ${to.length} recipient(s)</p>`+body);
+  if(sent){ toast(stores.length?`📧 Emailing ${to.length} staff at ${stores.length} store(s)…`:'📧 Test email sent to you…'); mcqModalClose(); }
 }
 window.storeEmailCompose=storeEmailCompose; window.storeEmailSend=storeEmailSend;
 function mgrEmailVerifyNote(s,note){
