@@ -737,7 +737,7 @@ DB.modules.issue = {
 
 /* ---------- navigation groups (sidebar) ---------- */
 DB.navGroups = [
-  { id:'ops',    label:'Operations', icon:'fa-clipboard-list', items:['handover','history','binadmin','schedules','delivery'] },
+  { id:'ops',    label:'Operations', icon:'fa-clipboard-list', items:['handover','schedules'] },
   { id:'hr',     label:'Staff & HR', icon:'fa-users',          items:['structure','staff','schedule','performance','training','reward','raise','birthday'], admin:true },
   { id:'mgmt',   label:'Management', icon:'fa-user-shield',     items:['manager','storeconfig','analytics','photos','whatsapp','email','data','auditlog'], admin:true },
   { id:'reports',label:'Reports & Rules', icon:'fa-flag',       items:['rules'] },

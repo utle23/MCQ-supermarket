@@ -206,7 +206,7 @@ function staffDisplayForDept(dept,current){
 // save to their own store's blob only, so stores stay isolated. Super does NOT build here
 // (the client shares one template array; a Super edit would propagate to every store) — Super
 // edits each store's template safely & independently via Store Config.
-function ckCanBuild(){ return State.account && (State.account.role==='admin' || State.account.role==='staff'); }
+function ckCanBuild(){ return State.account && State.account.role==='admin'; }   // Manager only — Dept Leads can no longer edit checklist tasks
 window.ckCanBuild=ckCanBuild;
 function ckItem(it,i){ return {i,dept:it[0],area:it[1],task:it[2],when:it[3],photo:photoSpec(it[4]),meta:it[5]||{}}; }
 /* Super with a HOME STORE (set in Account Management): the whole Checklist module works
@@ -539,20 +539,40 @@ function empBirthdayInfo(dob){
     return days===0?`Happy birthday! (${md})`:`Birthday ${md} · ${days} day${days>1?'s':''} away`;
   }catch(e){ return ''; }
 }
+/* ---- disciplinary ladder — COUNT-BASED & dynamic --------------------------------
+   A staff member's standing is derived from how many ACTIVE violations they have RIGHT
+   NOW (not the highest step ever logged): 1–3 = Verbal Discussion, 4 = Written Warning,
+   5 = Final Warning, 6+ = Termination Referral. When a manager removes/waives a
+   violation the active count drops, so the standing automatically steps back down. */
+const VIO_STEPS=['Verbal Discussion','Written Warning','Final Warning','Termination Referral'];
+const VIO_STEP_COL=['#f59e0b','#fb8c00','#d32f2f','#7b1b1b'];
+function vioStepIdxForCount(n){ return n<=0?-1 : n<=3?0 : n===4?1 : n===5?2 : 3; }
+function vioIsActive(r){ return !['Resolved','Cancelled','Removed','Waived'].includes(String((r&&r.status)||'')); }
+function vioRecordsFor(name,store){
+  return (((DB.modules||{}).violation||{}).records||[]).filter(r=>r.staffName===name&&(!store||r.store===store));
+}
+function vioStandingFromRecords(recs){
+  const active=(recs||[]).filter(vioIsActive), idx=vioStepIdxForCount(active.length);
+  return {count:active.length, total:(recs||[]).length, idx, step:idx>=0?VIO_STEPS[idx]:null, color:idx>=0?VIO_STEP_COL[idx]:'#0e9f6e', active};
+}
+function vioStanding(name,store){ return vioStandingFromRecords(vioRecordsFor(name,store)); }
+function vioLadderHTML(idx){
+  return `<div class="vio-ladder">${VIO_STEPS.map((s,i)=>`<div class="vio-step-pill ${(idx>=0&&i<=idx)?'on':''} ${i===idx?'cur':''}" style="--sc:${VIO_STEP_COL[i]}"><span class="vsp-dot">${i<idx?'✓':(i===idx?'●':'')}</span>${esc(s)}</div>`).join('')}</div>`;
+}
+window.vioStanding=vioStanding; window.vioStandingFromRecords=vioStandingFromRecords; window.vioLadderHTML=vioLadderHTML; window.vioIsActive=vioIsActive; window.VIO_STEPS=VIO_STEPS;
 function renderMyViolations(){
   setAccent('#b45309'); setCrumb('⚖️','My Violations','Your standing & record');
   const rows=myRegRecords('violation').slice().sort((a,b)=>String(b.created||b.date||'').localeCompare(String(a.created||a.date||'')));
-  // current warning level = the highest escalation step reached across the staff's violations
-  const steps=(typeof DB!=='undefined'&&DB.warningSteps)||['Verbal Discussion','Written Warning','Final Warning','Termination Referral'];
-  const COL=['#f59e0b','#fb8c00','#d32f2f','#7b1b1b'];
-  const idx=rows.reduce((mx,r)=>Math.max(mx, steps.indexOf(r.step||r.status||'')), -1);
-  const level=idx>=0?steps[idx]:null, sc=idx>=0?COL[Math.min(idx,COL.length-1)]:'#0e9f6e';
-  const ladder=steps.map((s,i)=>`<div class="vio-step-pill ${i<=idx?'on':''} ${i===idx?'cur':''}" style="--sc:${COL[Math.min(i,COL.length-1)]}"><span class="vsp-dot">${i<idx?'✓':(i===idx?'●':'')}</span>${esc(s)}</div>`).join('');
+  const COL=VIO_STEP_COL, steps=VIO_STEPS;
+  // count-based standing: only ACTIVE (not removed/resolved) violations count toward the level
+  const st=vioStandingFromRecords(rows), idx=st.idx;
+  const level=st.step, sc=st.color;
+  const ladder=vioLadderHTML(idx);
   const standing = level
     ? `<div class="vio-standing" style="--sc:${sc}">
          <div class="vio-standing-h"><span class="vio-standing-badge">${esc(level)}</span>
-           <div class="vio-standing-txt"><b>Your current warning level</b><small>${rows.length} violation${rows.length>1?'s':''} on record</small></div></div>
-         <div class="vio-ladder">${ladder}</div>
+           <div class="vio-standing-txt"><b>Your current warning level</b><small>${st.count} active violation${st.count>1?'s':''}${st.total>st.count?` · ${st.total-st.count} removed`:''}</small></div></div>
+         ${ladder}
          ${idx>=2?`<div class="vio-standing-warn">⚠️ This is a serious stage. Please speak with your manager as soon as possible.</div>`:''}
        </div>`
     : `<div class="vio-standing good"><div class="vio-standing-h"><span class="vio-standing-badge ok">✓ Good standing</span>

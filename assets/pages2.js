@@ -36,11 +36,11 @@ function vioStats(){
   const byStaff={}; active.forEach(r=>{(byStaff[r.staffName]=byStaff[r.staffName]||[]).push(r);});
   const TH=3, watch=Object.entries(byStaff).filter(([n,v])=>v.length>=2).sort((a,b)=>b[1].length-a[1].length);
   const total=recs.length, open=active.length, serious=recs.filter(r=>['Major','Critical'].includes(r.severity)).length, resolved=recs.filter(r=>r.status==='Resolved').length, rate=total?Math.round(resolved/total*100):0;
-  const strikeHtml = watch.length?`<div class="card"><div class="card-head"><h3><i class="fas fa-user-shield" style="color:#b71c1c"></i>&nbsp; Staff Strike Standings</h3><span class="ch-sub">${TH}+ active = review for termination</span></div>
-    <div class="card-pad"><div class="strike-grid">${watch.map(([name,vs])=>{const crit=vs.length>=TH; return `<div class="strike-card ${crit?'crit':'warn'}">
-      <div class="strike-top"><b>${esc(name)}</b><span class="badge ${crit?'bad':'warn'}">${crit?'REVIEW FOR TERMINATION':'WARNING'}</span></div>
-      <div class="strike-dots">${Array.from({length:TH}).map((_,i)=>`<span class="sdot ${i<vs.length?'on':''}">${i+1}</span>`).join('')}<b style="margin-left:6px">${vs.length} active</b></div>
-      <div class="strike-sev">${[...new Set(vs.map(v=>v.step))].map(s=>`<span class="badge ${toneOf(s)}">${esc(s)}</span>`).join(' ')}</div></div>`;}).join('')}</div></div></div>`:'';
+  const strikeHtml = watch.length?`<div class="card"><div class="card-head"><h3><i class="fas fa-user-shield" style="color:#b71c1c"></i>&nbsp; Staff Strike Standings</h3><span class="ch-sub">click a card for the full record</span></div>
+    <div class="card-pad"><div class="strike-grid">${watch.map(([name,vs])=>{const stn=vioStandingFromRecords(vs); const crit=stn.idx>=2; return `<div class="strike-card ${crit?'crit':'warn'}" style="cursor:pointer" onclick="vioPerson('${ckJS(name)}')">
+      <div class="strike-top"><b>${esc(name)}</b><span class="badge ${crit?'bad':'warn'}" style="background:${stn.color};color:#fff">${esc(stn.step||'')}</span></div>
+      <div class="strike-dots">${Array.from({length:Math.max(TH,stn.count)}).map((_,i)=>`<span class="sdot ${i<stn.count?'on':''}">${i+1}</span>`).join('')}<b style="margin-left:6px">${stn.count} active</b></div>
+      <div class="strike-sev"><span class="btn xs">View record →</span></div></div>`;}).join('')}</div></div></div>`:'';
   const catCount={}; recs.forEach(r=>{const c=r.category||'Other';catCount[c]=(catCount[c]||0)+1;});
   const catEnt=Object.entries(catCount).sort((a,b)=>b[1]-a[1]);
   const dc=State.vio.drillCat||null;
@@ -52,6 +52,10 @@ function vioStats(){
       <div class="card-pad"><div class="chart-grid cols-2"><div><div class="mini-h">${isSuper()?'By store':'This store'}</div><div class="chart-box"><canvas id="vd-store"></canvas></div></div><div><div class="mini-h">By warning step</div><div class="chart-box"><canvas id="vd-step"></canvas></div></div></div></div></div>`; }
   const superCmp = isSuper()?`<div class="card"><div class="card-head"><h3>Store comparison</h3><span class="ch-sub">stacked by step</span></div><div class="card-pad"><div class="chart-box"><canvas id="vio-bystore"></canvas></div></div></div>`:'';
   $('#content').innerHTML=`${vioHead('stats')}
+    <div class="card" style="margin-bottom:14px"><div class="card-pad vio-lookup-bar">
+      <span class="vio-lookup-lbl">🔎 Look up a staff member — see all their violations &amp; current standing:</span>
+      ${staffPick('vio-lookup','','','Search staff…',{onchange:'vioLookup()'})}
+      <button class="btn sm primary" onclick="vioLookup()">View record</button></div></div>
     ${strikeHtml}
     <div class="kpi-grid" style="margin-top:${strikeHtml?'16px':'0'}">
       <div class="kpi tone-info"><div class="k-top"><div class="k-ic">📋</div></div><div class="k-val">${total}</div><div class="k-lbl">Total violations</div></div>
@@ -148,7 +152,7 @@ function mcqCreateViolation(o){
   if(window.persist) window.persist();
   // email the employee + office recipients
   try{
-    const body=`Dear ${staff},\n\nA violation has been recorded against you:\n\n• Store: ${store}\n• Rule: ${ruleTitle}\n• Severity: ${severity}\n• Warning step: ${step}\n• Date: ${rec.created}\n\nDescription:\n${desc}\n${action?('\nAction taken: '+action):''}${followUp?('\nFollow-up date: '+followUp):''}\n\nPlease speak with your manager. This is a formal record.\n\n— MCQ Management`;
+    const body=`Dear ${staff},\n\nA violation has been recorded against you:\n\n• Store: ${store}\n• Rule: ${ruleTitle}\n• Severity: ${severity}\n• Warning step: ${step}\n• Date: ${rec.created}\n\nDescription:\n${desc}\n${action?('\nAction taken: '+action):''}${followUp?('\nFollow-up date: '+followUp):''}\n\nPlease speak with your manager — if they accept your reason they will remove the violation. This is a formal record.\n\n— MCQ Management`;
     const subject=`MCQ ${store} · Violation notice — ${ruleTitle} (${step})`;
     const sm=(typeof staffByName==='function')&&staffByName(staff);
     if(sm&&sm.email&&window.mcqEmail){ mcqEmail._brevo([{email:sm.email,name:sm.name}],subject,body,mcqEmail.cfg()); toast('📧 Violation emailed to '+sm.name); }
@@ -172,23 +176,62 @@ function vioSubmit(){
   if(!rec) return;
   State.vio={rule:'',sev:'Minor',step:'Verbal Discussion',tab:'records'}; toast(`✓ Violation logged · ${step}`); buildSidebar(); renderViolation();
 }
-/* Auto-suggest the next escalation step from the staff's history (Verbal→Written→Final→Termination) */
+/* Auto-suggest the step from the staff's ACTIVE violation COUNT (count-based ladder):
+   after this new one, standing = ladder(activeCount + 1). 1-3 Verbal, 4 Written, 5 Final, 6+ Termination. */
 function vioStaffChange(){
   const staff=$('#vio-staff').value, wrap=$('#vio-suggest-wrap'), hint=$('#vio-suggest'), tag=$('#vio-step-auto');
   if(!staff){ if(wrap)wrap.style.display='none'; if(tag)tag.style.display='none'; return; }
-  const hist=DB.modules.violation.records.filter(r=>r.staffName===staff);
-  const active=hist.filter(r=>!['Resolved','Cancelled'].includes(r.status));
-  const idx=hist.reduce((mx,r)=>Math.max(mx,DB.warningSteps.indexOf(r.step)),-1);
-  const nextIdx=Math.min(idx+1,DB.warningSteps.length-1), next=DB.warningSteps[nextIdx];
+  const cur=vioStanding(staff), afterIdx=vioStepIdxForCount(cur.count+1), next=VIO_STEPS[afterIdx];
   const sel=$('#vio-step'); if(sel) sel.value=next; State.vio.step=next;
   if(tag) tag.style.display='';
-  const tone=nextIdx>=2?'bad':nextIdx===1?'warn':'info';
+  const tone=afterIdx>=2?'bad':afterIdx===1?'warn':'info';
   if(wrap&&hint){ wrap.style.display=''; hint.className='vio-suggest tone-'+tone;
-    hint.innerHTML = hist.length
-      ? `🔁 <b>${esc(staff)}</b> has <b>${hist.length}</b> prior violation(s)${active.length?` · ${active.length} active`:''}. Highest reached: <b>${idx>=0?esc(DB.warningSteps[idx]):'none'}</b> → auto-suggested next step: <b>${esc(next)}</b>${nextIdx>=2?' ⚠️':''}`
-      : `🟢 <b>${esc(staff)}</b> has a clean record — suggested step: <b>${esc(next)}</b> (first warning).`;
+    hint.innerHTML = cur.count
+      ? `🔁 <b>${esc(staff)}</b> currently has <b>${cur.count}</b> active violation(s) → <b>${esc(cur.step)}</b>. Logging this one makes it <b>${cur.count+1}</b> → new standing: <b>${esc(next)}</b>${afterIdx>=2?' ⚠️':''}`
+      : `🟢 <b>${esc(staff)}</b> has a clean record — this will be their <b>1st</b> → <b>${esc(next)}</b>.`;
   }
 }
+/* ---- per-employee violation card: everyone's full record + current (count-based) standing,
+   with Remove/Restore for Manager & Super (removing lowers the standing automatically) ---- */
+function vioCanManage(){ return State.account && (State.account.role==='admin' || State.account.role==='super'); }
+function vioPerson(name){
+  if(!name) return;
+  const store=isSuper()?null:State.branch;
+  const recs=vioRecordsFor(name,store).slice().sort((a,b)=>String(b.created||'').localeCompare(String(a.created||'')));
+  const st=vioStandingFromRecords(recs);
+  const head=st.step
+    ? `<div class="vio-standing" style="--sc:${st.color}"><div class="vio-standing-h"><span class="vio-standing-badge">${esc(st.step)}</span>
+         <div class="vio-standing-txt"><b>${esc(name)}</b><small>${st.count} active${st.total>st.count?` · ${st.total-st.count} removed`:''} · ${st.total} total</small></div></div>${vioLadderHTML(st.idx)}</div>`
+    : `<div class="vio-standing good"><div class="vio-standing-h"><span class="vio-standing-badge ok">✓ Good standing</span><div class="vio-standing-txt"><b>${esc(name)}</b><small>No active violations</small></div></div></div>`;
+  const rows=recs.length?recs.map(r=>{
+    const act=vioIsActive(r);
+    return `<div class="vp-row ${act?'':'off'}">
+      <span class="badge ${toneOf(r.severity)}">${esc(r.severity||'')}</span>
+      <div class="vp-main"><b>${esc(r.category||'Violation')}</b><small>${esc((r.created||'').slice(0,16))} · logged as ${esc(r.step||'—')}${act?'':` · <i>${esc(r.status)}</i>`}</small>
+        ${r.description?`<div class="vp-desc">${esc(r.description)}</div>`:''}</div>
+      ${vioCanManage()?(act
+        ? `<button class="btn xs" style="color:var(--bad);border-color:#f3c9c9" onclick="vioSetStatus('${ckJS(r.id)}','${ckJS(r.store||'')}','Removed','${ckJS(name)}')">Remove</button>`
+        : `<button class="btn xs" onclick="vioSetStatus('${ckJS(r.id)}','${ckJS(r.store||'')}','restore','${ckJS(name)}')">Restore</button>`):''}
+    </div>`; }).join(''):'<div class="empty">No violations on record.</div>';
+  mcqModal(`⚖️ ${esc(name)} — violation record`, `${head}
+    <div class="vp-note fhint" style="margin:10px 0">Standing is based on <b>active</b> violations. Removing one (reason accepted) lowers the level automatically.</div>
+    <div class="vp-list">${rows}</div>`, {wide:true});
+}
+function vioSetStatus(id,store,status,name){
+  const recs=(((DB.modules||{}).violation||{}).records||[]);
+  const r=recs.find(x=>x.id===id&&(!store||x.store===store)); if(!r) return;
+  const before=JSON.parse(JSON.stringify(r));
+  if(status==='restore'){ r.status=r.step||'Verbal Discussion'; }
+  else { r.status=status; }
+  auditLog('update','violation',r.id,r.store,before,r, status==='restore'?'restored':'removed (reason accepted)');
+  if(window.persist) window.persist();
+  if(window.mcqChecklistSubmit){/* no-op */}
+  toast(status==='restore'?'↩ Violation restored':'🗑 Violation removed — standing updated');
+  if(name) vioPerson(name);         // refresh the modal (standing recomputes live)
+  if(State.route&&State.route.mod==='violation') renderViolation();   // refresh stats/records behind it
+}
+function vioLookup(){ const el=document.getElementById('vio-lookup'); const n=el&&el.value.trim(); if(n&&!n.startsWith('—')) vioPerson(n); else toast('Pick a staff member first'); }
+window.vioPerson=vioPerson; window.vioSetStatus=vioSetStatus; window.vioLookup=vioLookup;
 
 /* ============================================================ TRAINING ASSESSMENT */
 const TRN_RATINGS=[['Excellent','#2E7D32','#E8F5E9'],['Good','#1565C0','#E3F2FD'],['Satisfactory','#F57C00','#FFF3E0'],['Needs work','#C62828','#FDECEA']];
@@ -385,7 +428,7 @@ function bdCalc(dob){
     label:next.toLocaleDateString('en-AU',{day:'numeric',month:'short'})};
 }
 function bdGiftRec(s){ return (DB.modules.birthday.records||[]).find(r=>(r.staffId&&String(r.staffId)===String(s.id))||(r.staffName===s.name&&r.store===s.store)); }
-function bdExport(fmt){ const cols=[{label:'Staff',get:r=>r.name},{label:'Store',get:r=>r.store},{label:'Dept',get:r=>r.dept||''},{label:'Birthday',get:r=>r.dob},{label:'Turning',get:r=>r.bd.turning},{label:'In (days)',get:r=>r.bd.du},{label:'Favourite gift',get:r=>r.gift||''},{label:'Status',get:r=>r.status||''}];
+function bdExport(fmt){ const cols=[{label:'Staff',get:r=>r.name},{label:'Store',get:r=>r.store},{label:'Dept',get:r=>r.dept||''},{label:'Birthday',get:r=>r.dob},{label:'In (days)',get:r=>r.bd.du},{label:'Favourite gift',get:r=>r.gift||''},{label:'Status',get:r=>r.status||''}];
   const rows=bdStaffList().map(s=>{const g=bdGiftRec(s)||{}; const bd=bdCalc(s.dob); return bd?{...s,bd,gift:g.favoriteGift||'',status:g.status||''}:null;}).filter(Boolean).sort((a,b)=>a.bd.du-b.bd.du);
   expRecords('Birthdays — '+(isSuper()?(State.superStore&&State.superStore!=='ALL'?State.superStore:'All stores'):State.branch),cols,rows,fmt); }
 function renderBirthday(){
@@ -398,15 +441,15 @@ function renderBirthday(){
   const hero = todayList.length
     ? `<div class="bd-hero" style="background:linear-gradient(120deg,#fff7e0,#ffe9f2);color:#7c2d12"><div class="bd-days"><b>🎉</b><span>today</span></div><div><div class="bd-cap">Happy birthday!</div>
         <div class="bd-name">${todayList.map(r=>esc(r.name)).join(' · ')}</div>
-        <div class="bd-tags">${todayList.map(r=>`<span class="badge warn">🎂 turning ${r.bd.turning} · ${esc(r.store)}</span>`).join('')}</div></div></div>`
+        <div class="bd-tags">${todayList.map(r=>`<span class="badge warn">🎂 ${esc(r.store)}</span>`).join('')}</div></div></div>`
     : (next?`<div class="bd-hero"><div class="bd-days"><b>${next.bd.du}</b><span>days</span></div><div><div class="bd-cap">Next birthday</div><div class="bd-name">${esc(next.name)}</div>
-        <div class="bd-tags"><span class="badge warn">🎂 ${esc(next.bd.label)} · turning ${next.bd.turning}</span><span class="badge mute">${esc(next.dept||'')}${isSuper()?' · '+esc(next.store):''}</span><span class="badge ${next.status==='Given'?'ok':'info'}">🎁 ${esc(next.gift||'Gift not planned yet')}</span></div></div></div>`:'');
+        <div class="bd-tags"><span class="badge warn">🎂 ${esc(next.bd.label)}</span><span class="badge mute">${esc(next.dept||'')}${isSuper()?' · '+esc(next.store):''}</span><span class="badge ${next.status==='Given'?'ok':'info'}">🎁 ${esc(next.gift||'Gift not planned yet')}</span></div></div></div>`:'');
   // month-by-month calendar for the whole year (current month first)
   const months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   const byMonth=Array.from({length:12},(_,i)=>list.filter(r=>r.bd.month===i+1).sort((a,b)=>a.bd.day-b.bd.day));
   const monthCards=Array.from({length:12},(_,k)=>{ const mi=(m-1+k)%12; const rows=byMonth[mi];
     return `<div class="card bd-month ${mi===m-1?'bd-now':''}"><div class="card-head"><h3>${mi===m-1?'📍 ':''}${months[mi]}</h3><span class="ch-sub">${rows.length||'—'}</span></div>
-      ${rows.length?`<div class="card-pad" style="padding-top:6px">${rows.map(r=>`<div class="bd-row"><span class="bd-d">${r.bd.day}</span><div class="bd-who"><b>${esc(r.name)}</b><small>${esc(r.dept||r.role||'')}${isSuper()?' · '+esc(r.store):''} · turning ${r.bd.turning}</small></div>${r.bd.du<=30?`<span class="badge ${r.bd.du===0?'ok':r.bd.du<=7?'bad':'warn'}">${r.bd.du===0?'today 🎉':r.bd.du+'d'}</span>`:''}</div>`).join('')}</div>`:''}
+      ${rows.length?`<div class="card-pad" style="padding-top:6px">${rows.map(r=>`<div class="bd-row"><span class="bd-d">${r.bd.day}</span><div class="bd-who"><b>${esc(r.name)}</b><small>${esc(r.dept||r.role||'')}${isSuper()?' · '+esc(r.store):''}</small></div>${r.bd.du<=30?`<span class="badge ${r.bd.du===0?'ok':r.bd.du<=7?'bad':'warn'}">${r.bd.du===0?'today 🎉':r.bd.du+'d'}</span>`:''}</div>`).join('')}</div>`:''}
     </div>`; }).join('');
   $('#content').innerHTML=`
     <div class="page-head"><div class="ph-ic" style="background:#fef4e0">🎂</div><div><h2>Birthdays</h2><p>Automatic from each staff member's date of birth — plan the gift, never miss the day.</p></div><div class="ph-actions">${expMenu('bdExport')}</div></div>
@@ -419,8 +462,8 @@ function renderBirthday(){
     ${missing?`<div class="rail-tip" style="margin-bottom:14px">ℹ️ <b>${missing}</b> staff member${missing>1?'s have':' has'} no date of birth yet — add it in <a href="#/staff" style="font-weight:800">Staff Members</a> and they appear here automatically.</div>`:''}
     <div class="vio-grid">
       <div><div class="section-title" style="margin-top:0">Coming up (30 days)</div>
-        <div class="card"><div class="table-wrap"><table class="grid"><thead><tr><th>Staff</th><th>Birthday</th><th>Turning</th><th>In</th><th>Gift</th><th>Status</th></tr></thead><tbody>
-        ${next30.length?next30.map(r=>`<tr style="cursor:pointer" onclick="bdPick('${ckJS(r.name)}')"><td><b>${esc(r.name)}</b><div class="cell-sub">${esc(r.dept||r.role||'')}${isSuper()?' · '+esc(r.store):''}</div></td><td>${esc(r.bd.label)}</td><td>${r.bd.turning}</td><td><span class="badge ${r.bd.du===0?'ok':r.bd.du<=7?'bad':'warn'}">${r.bd.du===0?'🎉 today':r.bd.du+' days'}</span></td><td>${esc(r.gift||'—')}</td><td>${r.status?badge(r.status):'<span class="badge mute">No plan</span>'}</td></tr>`).join(''):`<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--muted)">No birthdays in the next 30 days.</td></tr>`}
+        <div class="card"><div class="table-wrap"><table class="grid"><thead><tr><th>Staff</th><th>Birthday</th><th>In</th><th>Gift</th><th>Status</th></tr></thead><tbody>
+        ${next30.length?next30.map(r=>`<tr style="cursor:pointer" onclick="bdPick('${ckJS(r.name)}')"><td><b>${esc(r.name)}</b><div class="cell-sub">${esc(r.dept||r.role||'')}${isSuper()?' · '+esc(r.store):''}</div></td><td>${esc(r.bd.label)}</td><td><span class="badge ${r.bd.du===0?'ok':r.bd.du<=7?'bad':'warn'}">${r.bd.du===0?'🎉 today':r.bd.du+' days'}</span></td><td>${esc(r.gift||'—')}</td><td>${r.status?badge(r.status):'<span class="badge mute">No plan</span>'}</td></tr>`).join(''):`<tr><td colspan="5" style="text-align:center;padding:24px;color:var(--muted)">No birthdays in the next 30 days.</td></tr>`}
         </tbody></table></div></div>
         <div class="section-title">Year calendar</div>
         <div class="bd-months">${monthCards}</div></div>

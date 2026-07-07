@@ -815,6 +815,10 @@ function buildSidebar(){
   }
   let html = navLink('home','fa-gauge-high','Dashboard','',true);
   html += navLink('checklist','fa-clipboard-check','Checklist','',true);   // ⭐ first & prominent for everyone
+  // checklist companions promoted to top level (right under Checklist): History → Delivery → Bin
+  html += navLink('history','fa-clock-rotate-left','Checklist History','',true);
+  { const dv=openCount('delivery'); html += navLink('delivery','fa-truck-ramp-box','Delivery & Crates', dv?`<span class="count">${dv}</span>`:'', true); }
+  html += navLink('binadmin','fa-trash-can','Bin Checklist','',true);
   html += navSolo('issue','fa-flag','Report Issue');
   html += navSolo('violation','fa-gavel','Violation');
   if(!isAdmin()){   // staff also get Training + Report Violation

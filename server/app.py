@@ -244,7 +244,7 @@ def _deputy_late_effects(m, ev, res, dept_name='', loc_name=''):
     subj = '%s Late clock-in — %d min · %s' % (icon, late, step)
     body_html = ('<p>You clocked in <b>%d minutes late</b>%s%s%s%s.</p>'
                  '<p>This is lateness <b>#%d</b> in the last 6 months → <b>%s</b>.</p>'
-                 '<p>Reference %s · Please speak with your manager — this is a formal record.</p>'
+                 '<p>Reference %s · Please speak with your manager — if they accept your reason they will remove the violation. This is a formal record.</p>'
                  % (late, (' at <b>' + at_hm + '</b>') if at_hm else '',
                     (' (rostered ' + sched_hm + ')') if sched_hm else '',
                     (' · Location: <b>' + esc_html(loc_name) + '</b>') if loc_name else '',
