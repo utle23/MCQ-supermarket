@@ -114,7 +114,7 @@ function renderStaffHome(){
     <div class="staff-hero">
       <div class="sh-greet"><div class="sh-hi">Hi, ${esc((u.name||'Team').split(' ')[0])} 👋</div>
         <div class="sh-sub">MCQ ${esc(State.branch)} · ${perthDateLbl({weekday:'long',day:'numeric',month:'short'})}</div></div>
-      <div class="sh-badge" title="Unresolved issues, maintenance, incidents, complaints & violations at your store — tap Report an Issue or the registers to action them"><b>${openItems}</b><span>open ${isMgr?'issue'+(openItems===1?'':'s'):'items'}</span></div>
+      <div class="sh-badge" title="Unresolved issues, maintenance, incidents, complaints & violations at your store — tap Report an Issue or the registers to action them"><b>${openItems}</b><span>open issue${openItems===1?'':'s'}</span></div>
     </div>
     ${profileNudgeHTML()}
     ${isMgr?'<div id="dep-status" style="margin-bottom:16px"></div>':''}
