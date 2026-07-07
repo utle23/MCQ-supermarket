@@ -1157,6 +1157,9 @@ def account_login(login_id, pw, mode=None):
         meta = {'staff_id': a['staff_id'] or a['id'], 'staff_name': a['name'], 'account_id': a['id'],
                 'needs_profile': bool(a['needs_profile'])}
         if a['role'] == 'super':
+            # a Super may be given a HOME STORE in Account Management: they keep full
+            # cross-store powers, but the Checklist works as THAT store's checklist
+            meta['home_store'] = a['store_id'] if (a['store_id'] or '') in STORES else None
             return ('super', 'ALL', meta)
         store = a['store_id']
         if not store or store not in STORES: return None
@@ -1547,6 +1550,8 @@ def device_login(device_id, secret):
             meta = {'staff_id': a['staff_id'] or row['staff_id'], 'staff_name': a['name'] or row['staff_name'],
                     'account_id': a['id'], 'needs_profile': bool(a['needs_profile'])}
             role = a['role']
+            if role == 'super':
+                meta['home_store'] = a['store_id'] if (a['store_id'] or '') in STORES else None
             store = 'ALL' if role in ('super', 'ba') else a['store_id']
             if role not in ('super', 'ba') and store not in STORES: return None
             return (role, store, meta)

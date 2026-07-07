@@ -114,7 +114,7 @@ def login():
     role, store = res[0], res[1]
     meta = res[2] if len(res) > 2 else {}
     tok = db.issue_token(role, store, meta.get('staff_id'), meta.get('staff_name'), meta.get('account_id'))
-    return jsonify(ok=True, token=tok, role=role, store=store,
+    return jsonify(ok=True, token=tok, role=role, store=store, home_store=meta.get('home_store'),
                    staff_id=meta.get('staff_id'), staff_name=meta.get('staff_name'),
                    account_id=meta.get('account_id'), needs_profile=bool(meta.get('needs_profile')),
                    acct_admin=db.is_account_admin({'account_id': meta.get('account_id')}) if meta.get('account_id') else False,
@@ -477,7 +477,7 @@ def device_login():
         return jsonify(ok=False, error='Face ID sign-in failed — please re-enrol on this device'), 401
     role, store, meta = res
     tok = db.issue_token(role, store, meta.get('staff_id'), meta.get('staff_name'), meta.get('account_id'))
-    return jsonify(ok=True, token=tok, role=role, store=store,
+    return jsonify(ok=True, token=tok, role=role, store=store, home_store=meta.get('home_store'),
                    staff_id=meta.get('staff_id'), staff_name=meta.get('staff_name'),
                    account_id=meta.get('account_id'), needs_profile=bool(meta.get('needs_profile')),
                    acct_admin=db.is_account_admin({'account_id': meta.get('account_id')}) if meta.get('account_id') else False,

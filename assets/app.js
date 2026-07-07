@@ -372,7 +372,7 @@ function doLogin(){
   if(window.MCQDB && MCQDB._api && MCQDB.login){
     const btn=$('.login-btn'); if(btn){ btn.disabled=true; btn.textContent='Signing in…'; }
     MCQDB.login('auto', '', pw, loginId).then(res=>{
-      if(res && res.ok){ loginAs(res.role, (res.role==='super'||res.role==='ba')?'All stores':res.store, {staffId:res.staff_id, name:res.staff_name, accountId:res.account_id, needsProfile:res.needs_profile, acctAdmin:res.acct_admin}); maybeFaceNudge(); }
+      if(res && res.ok){ loginAs(res.role, (res.role==='super'||res.role==='ba')?'All stores':res.store, {staffId:res.staff_id, name:res.staff_name, accountId:res.account_id, needsProfile:res.needs_profile, acctAdmin:res.acct_admin, homeStore:res.home_store}); maybeFaceNudge(); }
       else { if(btn){ btn.disabled=false; btn.textContent='Sign In →'; } loginFail(res&&res.error?res.error:(loginId?'Incorrect ID or password.':'Incorrect password — or enter your ID above if you have one.')); }
     }).catch(()=>{ if(btn){ btn.disabled=false; btn.textContent='Sign In →'; } loginFail('Cannot reach the server.'); });
     return;
@@ -514,7 +514,8 @@ async function loginAs(role, branch, meta){
   const name = role==='super' ? 'Head Office' : role==='ba' ? 'Chú Ba' : role==='employee' ? (meta.name||'Staff') : role==='admin' ? (branch+' Manager') : (branch+' Dept Lead');
   const initials = role==='super' ? 'HO' : role==='ba' ? 'CB' : role==='employee' ? (String(meta.name||'S').trim().slice(0,2).toUpperCase()) : branch.slice(0,2).toUpperCase();
   State.account={ name:(meta.name&&role!=='employee'?meta.name:name), role, branch, initials, staffId:meta.staffId||null, staffName:meta.name||null,
-    accountId:meta.accountId||null, needsProfile:!!meta.needsProfile, acctAdmin:!!meta.acctAdmin };
+    accountId:meta.accountId||null, needsProfile:!!meta.needsProfile, acctAdmin:!!meta.acctAdmin,
+    homeStore:(role==='super'&&meta.homeStore)?meta.homeStore:null };   // Super with a HOME STORE: checklist works as that store's
   State.branch=branch; State.role=(role==='staff'||role==='employee')?'store':'ho';
   try{ sessionStorage.setItem('mcq_acct', JSON.stringify(State.account)); }catch(e){}
   const btn=$('.login-btn'); if(btn){ btn.disabled=true; btn.textContent='Opening workspace...'; }
@@ -577,6 +578,7 @@ function wsStart(){
     // someone at MY store saved (checklist template edit, submission, config…) → re-sync so
     // every device at the store sees the SAME up-to-date checklist within seconds
     if(d.what==='state' && d.store && State.account && (isSuper() || State.account.branch===d.store)){
+      if(State.account.homeStore===d.store) State._homeTpl=null;   // super's home checklist changed → refetch on next render
       if(d.client && window.MCQDB && MCQDB.clientId===d.client){ /* echo of OUR OWN save — nothing new to fetch */ }
       else wsStateReload();
     }
@@ -710,7 +712,7 @@ function fidFinish(res){
   fidState('success','Welcome back, '+(res.staff_name||res._label||'')+' 👋','Signing you in…','');
   setTimeout(()=>{ closeFid();
     loginAs(res.role, (res.role==='super'||res.role==='ba')?'All stores':res.store,
-      {staffId:res.staff_id, name:res.staff_name, accountId:res.account_id, needsProfile:res.needs_profile, acctAdmin:res.acct_admin});
+      {staffId:res.staff_id, name:res.staff_name, accountId:res.account_id, needsProfile:res.needs_profile, acctAdmin:res.acct_admin, homeStore:res.home_store});
   }, 650);
 }
 /* shared-device guard: after the biometric, the picked person confirms THEIR OWN Staff ID */

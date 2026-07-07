@@ -206,10 +206,40 @@ function staffDisplayForDept(dept,current){
 function ckCanBuild(){ return State.account && (State.account.role==='admin' || State.account.role==='staff'); }
 window.ckCanBuild=ckCanBuild;
 function ckItem(it,i){ return {i,dept:it[0],area:it[1],task:it[2],when:it[3],photo:photoSpec(it[4]),meta:it[5]||{}}; }
+/* Super with a HOME STORE (set in Account Management): the whole Checklist module works
+   as THAT store — its own live template, its drafts, its submissions — and everything they
+   do saves to THAT store only. Supers without a home store keep the read-only overview. */
+function ckHomeStore(){ const a=State.account||{}; return (a.role==='super'&&a.homeStore)?a.homeStore:null; }
+function ckActiveStore(){ return ckHomeStore()||State.branch; }
+async function ckEnsureHomeTemplate(){
+  const hs=ckHomeStore(); if(!hs) return true;
+  const c=State._homeTpl;
+  if(c&&c.store===hs){ DB.checklist.items=c.items; if(c.deadlines) DB.checklist.deadlines=c.deadlines; return true; }
+  if(State._homeTplLoading) return false;
+  State._homeTplLoading=true;
+  try{
+    const tok=(window.localStorage&&localStorage.getItem('mcq_token'))||'';
+    const r=await fetch('/api/state/'+encodeURIComponent(hs),{headers:{Authorization:'Bearer '+tok}});
+    const j=await r.json();
+    let items=j&&j.state&&j.state.checklistItems; if(typeof items==='string'){ try{ items=JSON.parse(items); }catch(e){ items=null; } }
+    if(Array.isArray(items)&&items.length){
+      State._homeTpl={store:hs, items, deadlines:(j.state.checklistDeadlines&&typeof j.state.checklistDeadlines==='object')?j.state.checklistDeadlines:null};
+      DB.checklist.items=items; if(State._homeTpl.deadlines) DB.checklist.deadlines=State._homeTpl.deadlines;
+      let subs=j.state.checklistSubs; if(typeof subs==='string'){ try{ subs=JSON.parse(subs); }catch(e){ subs=null; } }
+      if(Array.isArray(subs)){   // merge the home store's submissions so Done/locked state is accurate
+        const have=new Set((DB.checklistSubs||[]).map(x=>x.id));
+        subs.forEach(x=>{ if(!have.has(x.id)) (DB.checklistSubs=DB.checklistSubs||[]).push(x); });
+      }
+    }
+  }catch(e){}
+  State._homeTplLoading=false;
+  if(State.route&&State.route.mod==='checklist') renderChecklist();
+  return true;
+}
 function ckStoreOk(r,store){
   const allowed=r&&r.meta&&Array.isArray(r.meta.stores)?r.meta.stores:null;
   if(!allowed||!allowed.length) return true;
-  return allowed.includes(store||State.branch);
+  return allowed.includes(store||ckActiveStore());
 }
 function ckInSession(r,session){
   if(session==='Opening') return r.when==='O'||r.when==='A';
@@ -228,7 +258,7 @@ function ckEditDeadline(session){ const v=prompt('Deadline for '+session+' (e.g.
 /* ---- in-progress checklist DRAFT (survives accidental close / lock / app-switch) ----
    Saved to localStorage per store + day. Only small data (done flags, notes, temp
    objects, photo IDs) — no image blobs — so it stays tiny. Restored on reopen. */
-function ckDraftKey(){ return 'mcq_ckdraft_'+(State.branch||'store')+'_'+ckTodayStr(); }
+function ckDraftKey(){ return 'mcq_ckdraft_'+(ckActiveStore()||'store')+'_'+ckTodayStr(); }
 let _ckDraftTimer=null;
 function ckWriteDraft(){ try{ if(!State.chk) return; if(State.chk._day&&State.chk._day!==ckTodayStr()) return;   // day rolled over — never save yesterday's ticks under today's key
   localStorage.setItem(ckDraftKey(), JSON.stringify({state:State.chk.state||{}, resp:State.chk.resp||{}, t:Date.now()})); }catch(e){} }
@@ -314,6 +344,12 @@ window.ckRemapLiveState=ckRemapLiveState;
 function renderChecklist(){
   const C=DB.checklist; setAccent('#0e9f6e');
   try{ ckFlushQueue(); }catch(e){}   // push any submissions that were made offline
+  if(ckHomeStore() && !(State._homeTpl&&State._homeTpl.store===ckHomeStore())){
+    ckEnsureHomeTemplate();   // async → re-renders when the home store's live template arrives
+    $('#content').innerHTML='<div class="card card-pad loading-state"><i class="fas fa-spinner fa-spin"></i><b>Loading '+esc(ckHomeStore())+' checklist…</b><span>Your Super account is linked to this store — its live checklist is being fetched.</span></div>';
+    return;
+  }
+  if(ckHomeStore()) ckEnsureHomeTemplate();   // re-apply cached home template over any aggregate reload
   if(!State.chk){ State.chk={session:'Opening',dept:C.depts[0],area:'ALL',state:{},resp:{}}; ckRestoreDraft(); }
   ckEnsureFreshDay();
   if(State.chk.dept==='ALL' || !C.depts.includes(State.chk.dept)) State.chk.dept=C.depts[0];
@@ -326,7 +362,7 @@ function renderChecklist(){
   const submittedReal=!viewing && !!bestSub && !reopened;
   const buildView=!!(submittedReal && State.chk.buildView && ckCanBuild());   // locked screen offers "Edit tasks" for builders
   const submitted=submittedReal && !buildView;   // submitted today → LOCKED done screen (Re-open / builder available until verified)
-  setCrumb('✅','Store Operation Checklist',`${superScopeLabel()} · ${s.session}${viewing?' · '+s.date:''}`);
+  setCrumb('✅','Store Operation Checklist',`${ckHomeStore()?ckHomeStore()+' (your store)':superScopeLabel()} · ${s.session}${viewing?' · '+s.date:''}`);
   const chips=C.depts.map(d=>{ const m=C.deptMeta[d]||{}; const col=m.color||'#0e9f6e';
     return `<button class="dept-chip ${d===s.dept?'active':''}" style="--dc:${col}" ${ckCanBuild()?`ondblclick="ckDeptHEdit('${ckJS(d)}')" title="Double-click to rename / delete"`:''} onclick="ckDept('${ckJS(d)}')">${m.icon?`<i class="fas ${m.icon}"></i> `:''}${esc(d)}</button>`; }).join('')
     + (ckCanBuild()?`<button class="dept-chip ghost" onclick="ckAddDept()" title="Add department"><i class="fas fa-plus"></i>&nbsp;Add</button>`:'');
@@ -1187,12 +1223,13 @@ function ckBetterSub(a,b){
   return ckSubStamp(b)>ckSubStamp(a)?b:a;
 }
 function ckBestSubmission(dept,session,date,store){
-  return (DB.checklistSubs||[]).filter(x=>(store?x.store===store:(isSuper()||x.store===State.branch))&&ckSubDept(x)===dept&&x.session===session&&x.date===date).reduce(ckBetterSub,null);
+  const scope=store||( (isSuper()&&!ckHomeStore()) ? null : ckActiveStore() );
+  return (DB.checklistSubs||[]).filter(x=>(scope?x.store===scope:true)&&ckSubDept(x)===dept&&x.session===session&&x.date===date).reduce(ckBetterSub,null);
 }
 function ckSubmittedFor(dept,session,date){ return !!ckBestSubmission(dept,session,date); }
 function ckPastHTML(){
   const s=State.chk;
-  const subs=(DB.checklistSubs||[]).filter(x=>(isSuper()||x.store===State.branch)&&ckSubDept(x)===s.dept&&x.session===s.session&&x.date===s.date);
+  const subs=(DB.checklistSubs||[]).filter(x=>((isSuper()&&!ckHomeStore())||x.store===ckActiveStore())&&ckSubDept(x)===s.dept&&x.session===s.session&&x.date===s.date);
   if(!subs.length) return `<div class="empty"><div class="e-ic">📅</div>No ${esc(s.session)} submission for ${esc(s.dept)} on ${esc(s.date)}.</div>`;
   let html='';
   subs.forEach(rec=>{
@@ -1731,7 +1768,7 @@ function ckRecordTemp(i,temp){
   const r=ckItem(DB.checklist.items[i],i);
   State.tempReadings=State.tempReadings||[];
   State.tempReadings.unshift({
-    item:i,session:State.chk.session,store:State.branch,dept:r.meta.dept,equipment:r.meta.equipment,type:r.meta.type,
+    item:i,session:State.chk.session,store:ckActiveStore(),dept:r.meta.dept,equipment:r.meta.equipment,type:r.meta.type,
     value:temp.value,inRange:temp.inRange,defrosting:!!temp.defrosting,range:ckTempRange(r.meta.type).text,source:temp.source||'',confidence:temp.confidence||null,manual:!!temp.manual,confirmedBy:temp.confirmedBy||'',suggestedValue:temp.suggestedValue??null,rawReading:temp.rawReading||'',at:new Date().toISOString()
   });
 }
@@ -1739,7 +1776,7 @@ function ckQueueTempAlert(i,temp){
   const r=ckItem(DB.checklist.items[i],i);
   State.tempAlerts=State.tempAlerts||[];
   State.tempAlerts.unshift({
-    item:i,store:State.branch,session:State.chk.session,dept:r.meta.dept,equipment:r.meta.equipment,
+    item:i,store:ckActiveStore(),session:State.chk.session,dept:r.meta.dept,equipment:r.meta.equipment,
     value:temp.value,range:temp.range,emails:DB.checklist.tempAlertEmails||[],at:new Date().toISOString()
   });
   const endpoint=window.MCQ_GMAIL_ALERT_ENDPOINT||localStorage.getItem('mcq_gmail_alert_endpoint');
@@ -1748,8 +1785,8 @@ function ckQueueTempAlert(i,temp){
   }
   // email the store admin + temp-alert recipients (silent via Brevo if configured)
   if(window.mcqEmail && mcqEmail.alert){
-    const subject=`🌡️ TEMP ALERT · ${State.branch} · ${r.meta.equipment||r.task||r.dept}`;
-    const body=`Temperature OUT OF RANGE\n\nStore: ${State.branch}\nDepartment: ${r.dept}\nEquipment: ${r.meta.equipment||r.task||'—'}\nReading: ${temp.value!=null?temp.value+' °C':'—'}\nSafe range: ${temp.range||''}\nSession: ${State.chk.session}\nTime: ${perthStamp()}\n\nPlease check the unit and record the corrective action.`;
+    const subject=`🌡️ TEMP ALERT · ${ckActiveStore()} · ${r.meta.equipment||r.task||r.dept}`;
+    const body=`Temperature OUT OF RANGE\n\nStore: ${ckActiveStore()}\nDepartment: ${r.dept}\nEquipment: ${r.meta.equipment||r.task||'—'}\nReading: ${temp.value!=null?temp.value+' °C':'—'}\nSafe range: ${temp.range||''}\nSession: ${State.chk.session}\nTime: ${perthStamp()}\n\nPlease check the unit and record the corrective action.`;
     const res=mcqEmail.alert(subject,body,DB.checklist.tempAlertEmails||[]);
     if(res==='silent') toast('🌡️ Temp alert emailed to admin');
   }
@@ -1780,7 +1817,7 @@ function ckTempEntries(){
     const r=ckItem(it,i), st=State.chk?.state?.[i]||{};
     if(!r.meta.temp) return;
     if(st.temp||st.defrosting) current.push({
-      item:i,session:State.chk.session,store:State.branch,dept:r.meta.dept,equipment:r.meta.equipment,type:r.meta.type,
+      item:i,session:State.chk.session,store:ckActiveStore(),dept:r.meta.dept,equipment:r.meta.equipment,type:r.meta.type,
       value:st.temp?.value??null,inRange:st.defrosting?true:!!st.temp?.inRange,defrosting:!!st.defrosting,
       range:ckTempRange(r.meta.type).text,at:st.temp?.at||new Date().toISOString()
     });
@@ -1835,13 +1872,15 @@ function ckConfirmSubmit(g){
   const ov=document.createElement('div'); ov.className='lb-overlay ck-block-ov'; ov.style.display='flex';
   ov.onclick=e=>{ if(e.target===ov) ov.remove(); };
   ov.innerHTML=`<div class="lb-panel" style="max-width:440px"><div class="card-head" style="padding:14px 16px"><h3>Submit the whole checklist?</h3><button class="x-btn" onclick="this.closest('.ck-block-ov').remove()">✕</button></div>
-    <div class="card-pad"><p>You're submitting the <b>ENTIRE</b> <b>${esc(State.chk.dept)} · ${esc(State.chk.session)}</b> checklist for <b>${esc(State.branch)}</b>.</p>
+    <div class="card-pad"><p>You're submitting the <b>ENTIRE</b> <b>${esc(State.chk.dept)} · ${esc(State.chk.session)}</b> checklist for <b>${esc(ckActiveStore())}</b>.</p>
     <p class="fhint">${g.sections.length} section(s) · ${ok}/${total} items complete. It will then go to the manager to verify.</p>
     ${(State.chk.session==='Closing'&&(()=>{try{const cfg=DB.binAdmin||{};const wd=SCHED_DAYS[(perthNow().getDay()+6)%7];return (cfg.activeDays||[]).includes(wd)&&!((cfg.records||[]).some(r=>r.store===State.branch&&String(r.date||'').slice(0,10)===todayISO()));}catch(e){return false;}})())?'<p class="fhint" style="color:#b45309">⚠️ Today is a BIN day and the bin checklist has not been submitted yet — it is mandatory.</p>':''}
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px"><button class="btn" onclick="this.closest('.ck-block-ov').remove()">Cancel</button><button class="btn primary" onclick="this.closest('.ck-block-ov').remove();ckDoSubmit()">✓ Submit checklist</button></div></div></div>`;
   document.body.appendChild(ov);
 }
 function ckDoSubmit(){
+  if(isSuper()&&!ckHomeStore()){ toast('This Super account has no store assigned — set a store in Account Management to submit checklists.'); return; }
+  const _store=ckActiveStore();
   // ---- persist a REAL submission (Manager verify / Performance / records all read this) ----
   const allRows=DB.checklist.items.map(ckItem).filter(r=>ckStoreOk(r) && r.dept===State.chk.dept && ckInSession(r,State.chk.session));
   const out=allRows.filter(r=>r.meta.temp&&(State.chk.state[r.i]||{}).temp&&!((State.chk.state[r.i]||{}).temp.inRange)).length;
@@ -1850,8 +1889,8 @@ function ckDoSubmit(){
   const doneN=items.filter(i=>i.done).length, totalN=items.length;
   const resp=(State.chk.resp||{})[State.chk.dept]||{};
   const ymd=todayISO();
-  const sub={ id:makeRecordId('CKS',State.branch),
-    store:State.branch, dept:State.chk.dept, session:State.chk.session, date:ymd, dayName:perthDateLbl({weekday:'long'}),
+  const sub={ id:makeRecordId('CKS',_store),
+    store:_store, dept:State.chk.dept, session:State.chk.session, date:ymd, dayName:perthDateLbl({weekday:'long'}),
     by:myIdentityName(), responsible:resp.p1||'', created:dISO()+' '+perthTimeHM(),
     progress: totalN?Math.round(doneN/totalN*100):0, done:doneN, total:totalN, status:'Submitted', tempAlerts:out, items };
   DB.checklistSubs=DB.checklistSubs||[]; DB.checklistSubs.unshift(sub);
@@ -1861,8 +1900,8 @@ function ckDoSubmit(){
   // whole-store save (never lost); the blob save above is the fallback. Queue if offline.
   if(!navigator.onLine){ ckQueueSub(sub); }
   else if(window.mcqChecklistSubmit){ mcqChecklistSubmit(sub).then(r=>{ if(!(r&&r.ok)) ckQueueSub(sub); }).catch(()=>ckQueueSub(sub)); }
-  if(window.mcqEmail) mcqEmail.notify('checklist', `Checklist submitted · ${sub.dept} ${sub.session} · ${State.branch}`,
-    `Department: ${sub.dept}\nSession: ${sub.session}\nStore: ${State.branch}\nProgress: ${doneN}/${totalN} (${sub.progress}%)\nSubmitted by: ${sub.by||'—'}\nResponsible: ${sub.responsible||'—'}${out?`\n⚠️ ${out} temperature alert(s)`:''}`, {dept:sub.dept});
+  if(window.mcqEmail) mcqEmail.notify('checklist', `Checklist submitted · ${sub.dept} ${sub.session} · ${_store}`,
+    `Department: ${sub.dept}\nSession: ${sub.session}\nStore: ${_store}\nProgress: ${doneN}/${totalN} (${sub.progress}%)\nSubmitted by: ${sub.by||'—'}\nResponsible: ${sub.responsible||'—'}${out?`\n⚠️ ${out} temperature alert(s)`:''}`, {dept:sub.dept});
   if(State.chk&&State.chk.reopen) delete State.chk.reopen[sub.dept+'|'+sub.session];   // clear re-open flag so the Done screen shows
   ckSubmitSuccess(sub,out);
   renderChecklist();   // repaint underneath → shows the "Submitted ✓" Done screen
