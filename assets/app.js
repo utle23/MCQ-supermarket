@@ -537,6 +537,9 @@ function enterApp(){
   try{ const idle=window.requestIdleCallback||function(f){return setTimeout(f,1200);}; idle(()=>{ try{ ensureLazyModules(); }catch(e){} try{ if(window.ensureCKE) ensureCKE(); }catch(e){} }); }catch(e){}
   startLiveRefresh();   // Super Admin + Chú Ba see records/checklists live
   startUnreadPoll();    // inbox unread badge for every role (light GET, guarded)
+  // load the GLOBAL all-stores notification recipients (every role needs it so this store's
+  // alerts also reach the head-office people who opted into "all stores")
+  try{ if(window.mcqNotifyConfig) mcqNotifyConfig().then(r=>{ if(r&&r.ok&&r.config&&Array.isArray(r.config.recipients)){ DB.notifyAll={recipients:r.config.recipients}; } }).catch(()=>{}); }catch(e){}
 }
 let _unreadTimer=null;
 function startUnreadPoll(){

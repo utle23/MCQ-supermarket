@@ -32,6 +32,9 @@ DB.emailRecipients = [
   { key:'safety',name:'Safety Officer',          email:'safety@mcqinternational.com' },
   { key:'mgr',   name:'Store Manager',           email:'manager@mcqinternational.com' },
 ];
+// GLOBAL "all-stores" recipients (Super-managed, one shared record on the server) — these
+// people receive the ticked alert types from EVERY store. Loaded on login via /api/notify-config.
+DB.notifyAll = { recipients: [] };
 /* email sending config (copies the restaurant: Brevo HTTP API, + Gmail-compose / mailto fallbacks).
    channel: 'preview' (demo toast) | 'brevo' (auto-send via api.brevo.com) | 'gmail' | 'mailto' */
 /* Brevo by default; the API KEY is NOT here — it lives in the server env var

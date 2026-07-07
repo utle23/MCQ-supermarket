@@ -4427,8 +4427,10 @@ window.mcqEmail={
     else if(eventType==='issue'){ const keys=(DB.issueEmailRoutes&&DB.issueEmailRoutes[meta&&meta.cat])||[]; chosen=recips.filter(r=>(keys.includes(r.key)||r.all)&&r.email); }
     else if(eventType==='violation'){ chosen=recips.filter(r=>(r.vio===true||r.all)&&r.email); }   // per-recipient violation opt-in (default OFF — tick to enable)
     else chosen=recips.filter(r=>r.email);   // feedback & other → all recipients
-    // a "customised" recipient flagged `all` receives EVERY alert from EVERY store
-    const seen={}; return chosen.filter(r=>{ const e=String(r.email).toLowerCase(); if(seen[e])return false; seen[e]=1; return true; }); },
+    // GLOBAL all-stores recipients (Super-managed) — added to EVERY store's alerts of the type they opted into
+    const gAll=((DB.notifyAll||{}).recipients)||[];
+    const g=gAll.filter(r=>r.email && (eventType==='violation'?r.vio : eventType==='checklist'?r.checklist : eventType==='issue'?r.issue : (r.issue||r.vio||r.checklist)));
+    const seen={}; return chosen.concat(g).filter(r=>{ const e=String(r.email||'').toLowerCase(); if(!e||seen[e])return false; seen[e]=1; return true; }); },
   _html(title,body){
     // professional, email-client-safe layout (all inline styles). `body` is plain text → pre-wrap.
     const t=String(title||''); const accent = /violation|warning|cảnh cáo/i.test(t) ? '#b45309' : /issue|incident|complaint|maintenance|urgent|critical/i.test(t) ? '#dc2626' : '#0e9f6e';
@@ -4617,6 +4619,23 @@ function renderEmail(){
   // super: daily-digest recipients (server scheduled 9pm)
   const digestCard=isSuper()?`<div class="card" style="margin-bottom:16px"><div class="card-head"><h3><i class="fas fa-clock"></i>&nbsp; Daily summary recipients (Super Admin)</h3><span class="ch-sub">Automatic 9 PM all-store PDF digest is emailed to these addresses</span></div>
       <div class="card-pad" id="digest-recips"><div class="fhint">Loading…</div></div></div>`:'';
+  // GLOBAL all-stores recipients (Super edits; others read-only) — one place, applies to every store, saves instantly
+  const gAll=((DB.notifyAll||{}).recipients)||[], canEditAll=isSuper();
+  const gRows=gAll.map(r=>`<div class="card email-card"><div class="email-row" style="gap:8px;flex-wrap:wrap">
+      <div class="avatar" style="background:#1565c0">🌐</div>
+      <input class="login-input" style="flex:1;min-width:110px" value="${esc(r.name||'')}" placeholder="Name / role" ${canEditAll?`oninput="notifyAllSet('${r.key}','name',this.value)"`:'disabled'}>
+      <input class="login-input" style="flex:1.3;min-width:150px" type="email" value="${esc(r.email||'')}" placeholder="email@address.com" ${canEditAll?`oninput="notifyAllSet('${r.key}','email',this.value)"`:'disabled'}>
+      <label class="email-cat"><input type="checkbox" ${r.issue?'checked':''} ${canEditAll?`onchange="notifyAllSet('${r.key}','issue',this.checked)"`:'disabled'}> 🚩 Issues</label>
+      <label class="email-cat"><input type="checkbox" ${r.vio?'checked':''} ${canEditAll?`onchange="notifyAllSet('${r.key}','vio',this.checked)"`:'disabled'}> ⚠️ Violations</label>
+      <label class="email-cat"><input type="checkbox" ${r.checklist?'checked':''} ${canEditAll?`onchange="notifyAllSet('${r.key}','checklist',this.checked)"`:'disabled'}> ✅ Checklists</label>
+      ${canEditAll?`<button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="notifyAllDel('${r.key}')" title="Remove">🗑</button>`:''}
+    </div></div>`).join('')||'<div class="fhint">No all-stores recipients yet.</div>';
+  const allStoresCard=`<div class="card" style="margin-bottom:16px;border:1.5px solid #bfdbfe"><div class="card-head"><h3><i class="fas fa-globe" style="color:#1565c0"></i>&nbsp; Receives alerts from ALL stores</h3><span class="ch-sub">${gAll.length} recipient(s) · ${canEditAll?'Head Office — applies to every store, saves instantly':'view only · Super Admin manages this'}</span></div>
+    <div class="card-pad">
+      <div class="rail-tip" style="margin-bottom:12px">🌐 These people receive the ticked alert types from <b>every store</b> — maintenance/issues, violations, checklists — no matter which branch raised them.${canEditAll?'':' Only Head Office can change this list.'}</div>
+      <div class="email-list">${gRows}</div>
+      ${canEditAll?`<div style="margin-top:12px"><button class="btn sm primary" onclick="notifyAllAdd()">＋ Add all-stores recipient</button></div>`:''}
+    </div></div>`;
   $('#content').innerHTML=`<div class="page-head"><div class="ph-ic" style="background:#e8f1fe">✉️</div><div><h2>Email Notifications</h2><p>Emails send automatically in the background via Brevo. Set who receives what below.</p></div><div class="ph-actions">${isSuper()?`<button class="btn sm primary" onclick="storeEmailCompose()"><i class="fas fa-envelope-open-text"></i>&nbsp; Email a store</button>`:''}<button class="btn sm" onclick="emailHistoryOpen()"><i class="fas fa-clock-rotate-left"></i>&nbsp; Sent history</button><button class="btn sm primary" onclick="emailTest()"><i class="fas fa-paper-plane"></i>&nbsp; Send test</button></div></div>
     ${isSuper()?`<div class="email-storebar"><span class="esb-label"><i class="fas fa-store"></i> Set up notifications for store</span>
         <select class="esb-select" onchange="emailLeadStore(this.value)">${(DB.stores||[]).map(s=>`<option ${s===leadStore?'selected':''}>${esc(s)}</option>`).join('')}</select>
@@ -4628,8 +4647,9 @@ function renderEmail(){
       </div>
       <div class="rail-tip" style="margin-top:12px">📨 Emails are sent <b>automatically and silently</b> through the server (Brevo). No API key needed here — it lives safely on the server. Use <b>Sent history</b> to confirm delivery.</div>
       </div></div>
+    ${allStoresCard}
     ${digestCard}
-    <div class="card" style="margin-bottom:16px"><div class="card-head"><h3>📇 Recipients</h3><span class="ch-sub">${recips.length} people · one place for violation + report-issue + checklist alerts</span></div>
+    <div class="card" style="margin-bottom:16px"><div class="card-head"><h3>📇 Recipients</h3><span class="ch-sub">${recips.length} people · violation + report-issue + checklist alerts${isSuper()?' · for all-stores use the card above':''}</span></div>
       <div class="card-pad">
         <div class="email-list">${unifiedList||'<div class="fhint">No recipients yet.</div>'}</div>
         <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px"><button class="btn sm primary" onclick="recipAdd()">＋ Add recipient</button>${staffAdd}</div>
@@ -4652,6 +4672,15 @@ function emailHistoryClose(){ const m=document.getElementById('email-log-modal')
 function recipAdd(){ DB.emailRecipients=DB.emailRecipients||[]; DB.emailRecipients.push({key:'r'+Date.now().toString(36),name:'',email:''}); if(window.persist) window.persist(); renderEmail(); }
 function recipSet(key,field,val){ const r=(DB.emailRecipients||[]).find(x=>x.key===key); if(r){ r[field]=val; if(window.persist) window.persist(); } }
 function recipDel(key){ if(!confirm('Remove this recipient?')) return; DB.emailRecipients=(DB.emailRecipients||[]).filter(x=>x.key!==key); if(window.persist) window.persist(); renderEmail(); }
+/* ---- GLOBAL all-stores recipients (Super only) — saved to ONE server record, instantly ---- */
+let _notifyAllT=null;
+function notifyAllSaveSoon(){ clearTimeout(_notifyAllT); _notifyAllT=setTimeout(()=>{
+  if(window.mcqNotifyConfigSave) mcqNotifyConfigSave(DB.notifyAll||{recipients:[]}).then(r=>{ if(!(r&&r.ok)) toast('Could not save all-stores recipients'); }); }, 600); }
+function notifyAllAdd(){ if(!isSuper())return; DB.notifyAll=DB.notifyAll||{recipients:[]}; DB.notifyAll.recipients=DB.notifyAll.recipients||[];
+  DB.notifyAll.recipients.push({key:'g'+Date.now().toString(36),name:'',email:'',issue:true,vio:false,checklist:false}); notifyAllSaveSoon(); renderEmail(); }
+function notifyAllSet(key,field,val){ if(!isSuper())return; const r=((DB.notifyAll||{}).recipients||[]).find(x=>x.key===key); if(r){ r[field]=val; notifyAllSaveSoon(); } }
+function notifyAllDel(key){ if(!isSuper())return; if(!confirm('Remove this all-stores recipient?'))return; DB.notifyAll.recipients=((DB.notifyAll||{}).recipients||[]).filter(x=>x.key!==key); notifyAllSaveSoon(); renderEmail(); }
+window.notifyAllAdd=notifyAllAdd; window.notifyAllSet=notifyAllSet; window.notifyAllDel=notifyAllDel;
 /* ---- per-store department-lead emails ---- */
 function leadList(store,dept){ const m=DB.checklistLeadEmails||(DB.checklistLeadEmails={}); return ((m[store]||{})[dept])||[]; }
 function leadAdd(store,dept){ const m=DB.checklistLeadEmails=DB.checklistLeadEmails||{}; m[store]=m[store]||{}; m[store][dept]=m[store][dept]||[]; m[store][dept].push({name:'',email:''}); if(window.persist) window.persist(); renderEmail(); }

@@ -1150,6 +1150,29 @@ def post_settings():
     db.set_setting(key, d.get('value'))
     return jsonify(ok=True)
 
+# ---- global "all-stores" notification recipients (one place, applies to every store) ----
+# Read by EVERY signed-in device (a store's client needs it to know who also gets its alerts);
+# only Super can change it. Fixes the slow per-store save and makes "receive from all stores" reliable.
+@api.route('/api/notify-config', methods=['GET'])
+def get_notify_config():
+    require_auth()
+    return jsonify(ok=True, config=db.get_setting('notify_all', {'recipients': []}))
+
+@api.route('/api/notify-config', methods=['POST'])
+def post_notify_config():
+    au = require_auth()
+    if au['role'] != 'super': abort(403)   # only Super manages the all-stores list
+    d = request.get_json(force=True, silent=True) or {}
+    cfg = d.get('config') or {}
+    if not isinstance(cfg, dict) or not isinstance(cfg.get('recipients'), list): abort(400)
+    # keep only clean recipient rows
+    recips = [{'key': str(r.get('key') or ''), 'name': str(r.get('name') or ''), 'email': str(r.get('email') or ''),
+               'issue': bool(r.get('issue')), 'vio': bool(r.get('vio')), 'checklist': bool(r.get('checklist'))}
+              for r in cfg['recipients'] if isinstance(r, dict) and str(r.get('email') or '').strip()]
+    db.set_setting('notify_all', {'recipients': recips})
+    db.write_audit(uid(au), 'ALL', 'update', 'notify-config', 'all-stores', None, {'recipients': len(recips)})
+    return jsonify(ok=True, config={'recipients': recips})
+
 # ---------- email relay (Brevo) — API key stays on the SERVER, never in the frontend / repo ----------
 def _brevo_send(recipients, subject, html, attachment=None, from_email=None, from_name=None):
     """Send an email via Brevo. `recipients` = [{email,name}]. Returns (ok, detail)."""

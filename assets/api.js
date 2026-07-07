@@ -83,6 +83,9 @@
       body:JSON.stringify({sub:sub||{}})})
       .then(function(r){return r.json().catch(function(){return {ok:false};});}).catch(function(){return {ok:false};}); };
   window.mcqDeptLeads=function(store){ return _authFetch('/api/dept-leads/'+encodeURIComponent(store)); };
+  // global "all-stores" notification recipients — read by everyone, saved by Super only
+  window.mcqNotifyConfig=function(){ return _authFetch('/api/notify-config'); };
+  window.mcqNotifyConfigSave=function(config){ return _authFetch('/api/notify-config',{method:'POST',body:JSON.stringify({config:config||{recipients:[]}})}); };
   window.mcqDeptLeadRemove=function(payload){ return _authFetch('/api/dept-lead/remove',{method:'POST',body:JSON.stringify(payload||{})}); };
   // ---- inbox / messaging ----
   window.mcqMsgSend=function(payload){ return _authFetch('/api/message',{method:'POST',body:JSON.stringify(payload||{})}); };
