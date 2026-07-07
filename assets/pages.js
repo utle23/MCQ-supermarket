@@ -5108,7 +5108,7 @@ function accLoad(q){
       <td>${esc(a.store_id||'—')}</td><td>${esc(a.department||'—')}</td>
       <td><span class="muted">—</span></td>
       <td><span class="badge mute">No account yet</span></td>
-      <td><button class="btn xs" style="color:var(--bad);border-color:#f3c9c9" onclick="accDelStaff('${ckJS(a.store_id||'')}','${ckJS(a.staff_id||'')}','${ckJS(a.name||'')}')" title="Remove this person from the list">🗑</button></td>
+      <td><button class="btn xs" title="Edit person + store (syncs with Staff Members)" onclick="accEditNoAcct('${ckJS(a.staff_id||'')}','${ckJS(a.store_id||'')}')">✎</button> <button class="btn xs" style="color:var(--bad);border-color:#f3c9c9" onclick="accDelStaff('${ckJS(a.store_id||'')}','${ckJS(a.staff_id||'')}','${ckJS(a.name||'')}')" title="Remove this person from the list">🗑</button></td>
     </tr>`:`<tr class="${a.acct_admin?'acc-row-admin':''}">
       <td><b style="font-family:ui-monospace,Menlo,monospace">${esc(a.id)}</b>${a.acct_admin?' <span class="badge info" title="Account admin">👑</span>':''}</td>
       <td><b>${esc(a.name||'')}</b>${a.has_staff===false?' <span class="badge warn" style="font-size:9.5px" title="No staff profile in Staff Management yet — it is created automatically when you save any change to this account">⚠ no staff profile</span>':''}</td><td style="font-size:12px">${esc(a.email||'')}</td>
@@ -5331,5 +5331,49 @@ function accEditSave(id, oldStore, staffId){
   });
 }
 window.accEditOpen=accEditOpen; window.accEditSave=accEditSave;
+// ---- ✎ EDIT a person who has NO account yet (incl. changing their STORE) ----
+// Editable even before they activate: saving RESERVES their account (unactivated, no password
+// until they activate) in the chosen store and moves their Staff Members profile to match.
+function accEditNoAcct(staffId, store){
+  mcqAccounts('').then(r=>{
+    const a=((r&&r.accounts)||[]).find(x=>x.no_account && String(x.staff_id)===String(staffId) && (x.store_id||'')===(store||''));
+    if(!a){ toast('Person not found'); return; }
+    const sp=(DB.staff||[]).find(x=>String(x.id)===String(staffId)&&x.store===store)||{};
+    const depts=(DB.checklist&&DB.checklist.depts)||[];
+    mcqModal('✎ Edit '+(a.name||staffId)+' — not activated yet', `
+      <div class="ai-asst-note" style="margin-bottom:10px">🪪 This person has no login yet. Saving <b>reserves their account</b> in the chosen store (they set a password later by activating) and updates their <b>Staff Members</b> profile — including a <b>store move</b>.</div>
+      <div class="grid2">
+        <div class="field"><label>Full name</label><input id="an-name" value="${esc(a.name||'')}"></div>
+        <div class="field"><label>Email (login / activation key) <span class="req">*</span></label><input id="an-email" type="email" value="${esc(a.email||'')}"></div>
+        <div class="field"><label>Access level</label><select id="an-role" onchange="document.getElementById('an-dept-row').style.display=this.value==='staff'?'':'none'">
+          ${['employee','staff','admin','super'].map(x=>`<option value="${x}" ${((a.role||'employee')===x)?'selected':''}>${({employee:'Member (Staff)',staff:'Dept Lead',admin:'Manager',super:'Super Admin'})[x]}</option>`).join('')}</select></div>
+        <div class="field"><label>Store</label><select id="an-store"><option value="" ${!a.store_id?'selected':''}>— Not designated —</option>${(DB.stores||[]).map(sx=>`<option ${a.store_id===sx?'selected':''}>${esc(sx)}</option>`).join('')}</select></div>
+        <div class="field" id="an-dept-row" style="display:${a.role==='staff'?'':'none'}"><label>Lead of department</label><select id="an-dept"><option value="">—</option>${depts.map(d=>`<option ${a.department===d?'selected':''}>${esc(d)}</option>`).join('')}</select></div>
+        <div class="field"><label>Phone (staff profile)</label><input id="an-phone" value="${esc(sp.phone||'')}"></div>
+        <div class="field"><label>Date of birth (staff profile)</label><input id="an-dob" type="date" value="${esc(sp.dob||'')}"></div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:12px"><button class="btn primary" onclick="accEditNoAcctSave('${ckJS(String(staffId))}','${ckJS(store||'')}')">💾 Save — reserve account + staff profile</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>`,{wide:true});
+  });
+}
+function accEditNoAcctSave(staffId, curStore){
+  const g=k=>(document.getElementById(k)?.value||'').trim();
+  const name=g('an-name'), email=g('an-email'), role=g('an-role')||'employee', store=g('an-store'), dept=g('an-role')==='staff'?g('an-dept'):'';
+  if(!name){ toast('Enter a name'); return; }
+  if(!email){ toast('Add an email — it is the login / activation key'); return; }
+  // 1) reserve the account in the person's CURRENT store (links their existing staff profile there)
+  mcqAccountCreate({email, name, role, store:curStore||store, department:dept}).then(async res=>{
+    if(!(res&&res.ok)){ toast((res&&res.error)||'Could not save'); return; }
+    const newId=res.id;
+    // 2) if the admin chose a different store, MOVE it (archives old profile, relinks new) — same path as a normal account move
+    const finalPatch={role, department:dept, name};
+    if((store||'')!==(curStore||'')) finalPatch.store_id=store;
+    try{ await mcqAccountUpdate(newId, finalPatch); }catch(e){}
+    // 3) phone / DOB onto the profile in whichever store it now lives
+    const liveStore=store||curStore;
+    if(res.staff_id && liveStore && window.mcqStaffProfile){ try{ await mcqStaffProfile(liveStore, res.staff_id, {phone:g('an-phone'), dob:g('an-dob')}); }catch(e){} }
+    toast('✓ Saved — account reserved (ID '+newId+') & staff profile synced'); mcqModalClose(); accLoad();
+  });
+}
+window.accEditNoAcct=accEditNoAcct; window.accEditNoAcctSave=accEditNoAcctSave;
 window.accAssign=accAssign;
 window.accAdd=accAdd; window.accAddGo=accAddGo;
