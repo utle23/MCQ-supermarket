@@ -36,7 +36,7 @@ function todoFlowHTML(){
   const dlvN=(((DB.modules||{}).delivery||{}).records||[]).filter(r=>r.store===store&&String(r.date||r.created||'').slice(0,10)===today).length;
   const steps=[
     ['✅','Store Checklist',`<span class="tf-pills">${ckSub}</span>`,ckState,'checklist'],
-    binDay?['🗑️','Bin Checklist',binDone?'Evidence recorded ✓':'Due today — take bin photos',binDone?'done':'pend','binadmin']
+    binDay?['🗑️','Bin Checklist',binDone?'Evidence recorded ✓':'REQUIRED today — take bin photos',binDone?'done':((typeof ckDeadlinePassed==='function'&&ckDeadlinePassed('Closing'))?'over':'pend'),'binadmin']
           :['🗑️','Bin Checklist','No bin run today','off','binadmin'],
     ['🚚','Delivery & Crates',dlvN?`${dlvN} deliver${dlvN>1?'ies':'y'} recorded today`:'Record today’s truck & crates',dlvN?'done':'pend','delivery'],
   ];
@@ -275,7 +275,7 @@ function ckEnsureFreshDay(){
   const firstInit=!State.chk._day;
   State.chk._day=today;
   if(!firstInit){
-    State.chk.state={}; State.chk.resp={}; State.chk.reopen={};
+    State.chk.state={}; State.chk.resp={}; State.chk.reopen={}; State.chk.buildView=0;
     if(State.chk.date!==today) State.chk.date=today;
     ckRestoreDraft();   // TODAY's draft only — the storage key includes today's date
   }
@@ -323,7 +323,9 @@ function renderChecklist(){
   const today=ckTodayStr(); if(!s.date) s.date=today; const viewing=s.date!==today;
   const bestSub=ckBestSubmission(s.dept,s.session,today);
   const reopened=!!(State.chk.reopen && State.chk.reopen[s.dept+'|'+s.session]) && !ckIsVerifiedSub(bestSub);
-  const submitted=!viewing && !!bestSub && !reopened;   // submitted today → LOCKED done screen for everyone (Re-open available until verified)
+  const submittedReal=!viewing && !!bestSub && !reopened;
+  const buildView=!!(submittedReal && State.chk.buildView && ckCanBuild());   // locked screen offers "Edit tasks" for builders
+  const submitted=submittedReal && !buildView;   // submitted today → LOCKED done screen (Re-open / builder available until verified)
   setCrumb('✅','Store Operation Checklist',`${superScopeLabel()} · ${s.session}${viewing?' · '+s.date:''}`);
   const chips=C.depts.map(d=>{ const m=C.deptMeta[d]||{}; const col=m.color||'#0e9f6e';
     return `<button class="dept-chip ${d===s.dept?'active':''}" style="--dc:${col}" ${ckCanBuild()?`ondblclick="ckDeptHEdit('${ckJS(d)}')" title="Double-click to rename / delete"`:''} onclick="ckDept('${ckJS(d)}')">${m.icon?`<i class="fas ${m.icon}"></i> `:''}${esc(d)}</button>`; }).join('')
@@ -346,12 +348,12 @@ function renderChecklist(){
    </div>
    <div class="ck-toolbar"><div class="dept-chips">${chips}</div></div>
    ${areaChips}
-   ${viewing?`<div class="ck-build-hint" style="border-color:#bcd; background:#eff6ff; color:#1e40af"><i class="fas fa-clock-rotate-left"></i> Viewing the submitted <b>${esc(s.session)}</b> checklist for <b>${esc(s.date)}</b> (read-only).</div>`:(ckCanBuild()?`<div class="ck-build-hint"><i class="fas fa-wand-magic-sparkles"></i> <b>Builder mode</b> — double-click a department, section or task to rename / delete · tap <b>+</b> to add</div>`:(isSuper()?`<div class="ck-build-hint" style="border-color:#c9b6ea;background:#f6f0ff;color:#6b21a8"><i class="fas fa-store"></i> To edit a store's checklist tasks, use <b><a href="#/storeconfig" style="color:#6b21a8;text-decoration:underline">Store Config</a></b> — each store is edited independently, so changes never affect other stores.</div>`:''))}
-   ${(viewing||submitted)?'':`<div class="ck-bulk"><button class="btn sm ghost" onclick="ckAll(true)"><i class="fas fa-check-double"></i>&nbsp; Check all done</button><button class="btn sm ghost" onclick="ckAll(false)"><i class="fas fa-rotate-left"></i>&nbsp; Uncheck all</button></div>`}
+   ${buildView?`<div class="ck-build-hint" style="border-color:#f6c065;background:#fff8e6;color:#92400e"><i class="fas fa-screwdriver-wrench"></i> <b>Builder view</b> — today's submission stays locked; double-click a department / section / task to rename or delete, tap <b>+</b> to add. <button class="btn xs" style="margin-left:8px" onclick="State.chk.buildView=0;renderChecklist()">✓ Done editing</button></div>`:(viewing?`<div class="ck-build-hint" style="border-color:#bcd; background:#eff6ff; color:#1e40af"><i class="fas fa-clock-rotate-left"></i> Viewing the submitted <b>${esc(s.session)}</b> checklist for <b>${esc(s.date)}</b> (read-only).</div>`:(ckCanBuild()?`<div class="ck-build-hint"><i class="fas fa-wand-magic-sparkles"></i> <b>Builder mode</b> — double-click a department, section or task to rename / delete · tap <b>+</b> to add</div>`:(isSuper()?`<div class="ck-build-hint" style="border-color:#c9b6ea;background:#f6f0ff;color:#6b21a8"><i class="fas fa-store"></i> To edit a store's checklist tasks, use <b><a href="#/storeconfig" style="color:#6b21a8;text-decoration:underline">Store Config</a></b> — each store is edited independently, so changes never affect other stores.</div>`:'')))}
+   ${(viewing||submittedReal)?'':`<div class="ck-bulk"><button class="btn sm ghost" onclick="ckAll(true)"><i class="fas fa-check-double"></i>&nbsp; Check all done</button><button class="btn sm ghost" onclick="ckAll(false)"><i class="fas fa-rotate-left"></i>&nbsp; Uncheck all</button></div>`}
    <div id="chk-prog" class="ck-progbar"></div>
    <div id="ck-temp-report"></div>
    <div id="chk-body"></div>
-   ${(viewing||submitted)?'':`<div class="ck-submit"><div id="ck-submit-note" class="ck-submit-note"></div>
+   ${(viewing||submittedReal)?'':`<div class="ck-submit"><div id="ck-submit-note" class="ck-submit-note"></div>
    <button id="ck-submit-btn" class="btn primary lg" onclick="chkSubmit()">✓ Submit ${s.session} checklist</button></div>`}`;
   if(viewing){ const b=$('#chk-body'); if(b) b.innerHTML=ckPastHTML(); }
   else if(submitted){ const b=$('#chk-body'); if(b) b.innerHTML=ckDoneHTML(s.dept,s.session); }
@@ -1237,6 +1239,7 @@ function ckDoneHTML(dept,session){
       ${out.length?`<div class="ck-done-out">⚠️ ${out.length} not completed: ${esc(out.slice(0,8).map(it=>it.task).join(', '))}${out.length>8?'…':''}</div>`:'<div class="ck-done-ok">All tasks completed. Great work! 🎉</div>'}
       <div class="ck-done-actions">
         ${verified?'':`<button class="btn" onclick="ckReopen('${ckJS(dept)}','${ckJS(session)}')"><i class="fas fa-pen"></i>&nbsp; Re-open to edit</button>`}
+        ${(typeof ckCanBuild==='function'&&ckCanBuild())?`<button class="btn" onclick="State.chk.buildView=1;renderChecklist()"><i class="fas fa-screwdriver-wrench"></i>&nbsp; Edit tasks</button>`:''}
         <button class="btn primary" onclick="ckSharePDF('${ckJS(session)}')"><i class="fab fa-whatsapp"></i>&nbsp; Share PDF</button>
       </div>
     </div>
@@ -1834,6 +1837,7 @@ function ckConfirmSubmit(g){
   ov.innerHTML=`<div class="lb-panel" style="max-width:440px"><div class="card-head" style="padding:14px 16px"><h3>Submit the whole checklist?</h3><button class="x-btn" onclick="this.closest('.ck-block-ov').remove()">✕</button></div>
     <div class="card-pad"><p>You're submitting the <b>ENTIRE</b> <b>${esc(State.chk.dept)} · ${esc(State.chk.session)}</b> checklist for <b>${esc(State.branch)}</b>.</p>
     <p class="fhint">${g.sections.length} section(s) · ${ok}/${total} items complete. It will then go to the manager to verify.</p>
+    ${(State.chk.session==='Closing'&&(()=>{try{const cfg=DB.binAdmin||{};const wd=SCHED_DAYS[(perthNow().getDay()+6)%7];return (cfg.activeDays||[]).includes(wd)&&!((cfg.records||[]).some(r=>r.store===State.branch&&String(r.date||'').slice(0,10)===todayISO()));}catch(e){return false;}})())?'<p class="fhint" style="color:#b45309">⚠️ Today is a BIN day and the bin checklist has not been submitted yet — it is mandatory.</p>':''}
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px"><button class="btn" onclick="this.closest('.ck-block-ov').remove()">Cancel</button><button class="btn primary" onclick="this.closest('.ck-block-ov').remove();ckDoSubmit()">✓ Submit checklist</button></div></div></div>`;
   document.body.appendChild(ov);
 }
@@ -3165,7 +3169,7 @@ function binSubmit(){
   const missing=tasks.filter(t=>!s.checks||!s.checks[t.id]);
   if(missing.length){ toast('Complete every bin checklist item before submit'); return; }
   const rec={id:makeRecordId('BIN',store,binDayDate(s.day,s.week||0)),store,date:binDayKey(s.day,s.week||0),day:s.day,staffName:name,binQty:qty,photo:s.photo,
-    checklist:tasks.map(t=>({id:t.id,task:t.task,done:true})),created:new Date().toISOString(),createdBy:(State.account&&State.account.name)||name};
+    checklist:tasks.map(t=>({id:t.id,task:t.task,done:true})),created:dISO()+' '+perthTimeHM(),createdBy:(State.account&&State.account.name)||name};
   cfg.records=cfg.records||[]; cfg.records.unshift(rec);
   auditLog('create','binAdmin',rec.id,store,null,rec);
   s.checks={}; s.name=''; s.qty=''; s.photo=null;
@@ -3173,6 +3177,23 @@ function binSubmit(){
   renderBinAdmin();
   toast('✓ Bin checklist saved with photo and timestamp');
 }
+/* Manager report: pick a date range → branded PDF / Excel / Word of every bin record */
+function binExport(fmt){
+  const s=binState(), store=binStore(), cfg=binCfg();
+  const from=(document.getElementById('bin-from')||{}).value||''; const to=(document.getElementById('bin-to')||{}).value||'';
+  s.expFrom=from; s.expTo=to;
+  const rows=(cfg.records||[]).filter(r=>(isSuper()?r.store===store:r.store===State.branch)
+    &&(!from||String(r.date||'').slice(0,10)>=from)&&(!to||String(r.date||'').slice(0,10)<=to))
+    .sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+  if(!rows.length){ toast('No bin records in that date range'); return; }
+  const cols=[
+    {label:'Date',get:r=>r.date||''},{label:'Day',get:r=>r.day||''},{label:'Staff',get:r=>r.staffName||''},
+    {label:'Bins taken',get:r=>r.binQty||0},{label:'Checklist',get:r=>((r.checklist||[]).filter(c=>c.done).length)+'/'+((r.checklist||[]).length)},
+    {label:'Photo',get:r=>r.photo?'Yes':'—'},{label:'Submitted',get:r=>String(r.created||'').slice(0,16)},{label:'By',get:r=>r.createdBy||''}];
+  expRecords('Bin collection report — '+store+' ('+(from||'start')+' → '+(to||'today')+')', cols, rows, fmt==='excel'?'excel':fmt==='word'?'word':'pdf');
+  toast('📄 Bin report — '+rows.length+' record(s)');
+}
+window.binExport=binExport;
 function binEditToggle(){ const s=binState(); s.edit=!s.edit; renderBinAdmin(); }
 function binSetActive(day,on){ const cfg=binCfg(); cfg.activeDays=cfg.activeDays||[]; const i=cfg.activeDays.indexOf(day); if(on&&i<0) cfg.activeDays.push(day); if(!on&&i>=0) cfg.activeDays.splice(i,1); cfg.activeDays.sort((a,b)=>SCHED_DAYS.indexOf(a)-SCHED_DAYS.indexOf(b)); if(window.persist) window.persist(); renderBinAdmin(); }
 function binTaskSet(id,value){ const t=(binCfg().checklist||[]).find(x=>x.id===id); if(!t) return; t.task=String(value||'').trim(); if(window.persist) window.persist(); }
@@ -3182,12 +3203,12 @@ function binDeleteRecord(id){ const cfg=binCfg(); const rec=(cfg.records||[]).fi
 function renderBinAdmin(){
   const cfg=binCfg(), s=binState(), store=binStore(), active=cfg.activeDays||[], tasks=cfg.checklist||[], edit=isAdmin()&&s.edit;
   setAccent('#64748b'); setCrumb('🗑️','Bin Admin',`${store} · weekly bin collection checklist`);
-  const today=(new Date().getDay()+6)%7, records=binRecordsForWeek();
+  const today=(perthNow().getDay()+6)%7, records=binRecordsForWeek();
   const storePick=isSuper()?`<select class="login-input" style="width:auto" onchange="binSetStore(this.value)">${DB.stores.map(st=>`<option ${st===store?'selected':''}>${esc(st)}</option>`).join('')}</select>`:'';
   const dayCards=SCHED_DAYS.map((d,idx)=>{ const on=active.includes(d), selected=s.day===d, recs=records.filter(r=>r.day===d);
     return `<button class="bin-day ${on?'on':'off'} ${selected?'selected':''} ${idx===today&&s.week===0?'today':''}" onclick="binSelect('${d}')" ${on?'':'disabled'}>
       <b>${d}</b><span>${binDayDate(d,s.week||0).toLocaleDateString(undefined,{day:'numeric',month:'short'})}</span>
-      <small>${on?(recs.length?recs.length+' submitted':'Checklist open'):'No bin pickup'}</small>
+      <small>${on?(recs.length?recs.length+' submitted':(idx===today&&s.week===0?'⚠ REQUIRED today':'Checklist open')):'No bin pickup'}</small>
     </button>`;
   }).join('');
   const checklist=tasks.map(t=>`<label class="bin-check"><input type="checkbox" ${s.checks&&s.checks[t.id]?'checked':''} onchange="binToggleTask('${ckJS(t.id)}',this.checked)"><span>${esc(t.task)}</span></label>`).join('');
@@ -3209,8 +3230,19 @@ function renderBinAdmin(){
     <div class="bin-edit-list">${tasks.map(t=>`<div><input value="${esc(t.task)}" onchange="binTaskSet('${ckJS(t.id)}',this.value)"><button class="btn sm" onclick="binTaskDel('${ckJS(t.id)}')"><i class="fas fa-trash"></i></button></div>`).join('')}</div>
   </div></div>`:'';
   const recRows=records.map(r=>`<tr><td><b>${esc(r.id)}</b><div class="cell-sub">${esc(r.date)} · ${esc(r.day)}</div></td><td>${esc(r.staffName)}</td><td class="num">${esc(r.binQty)}</td><td>${r.photo?`<img class="bin-thumb" src="${imgSrc(r.photo)}" alt="">`:'—'}</td><td>${esc((r.created||'').slice(0,16).replace('T',' '))}</td><td>${isAdmin()?`<button class="btn sm" onclick="binDeleteRecord('${ckJS(r.id)}')"><i class="fas fa-trash"></i></button>`:''}</td></tr>`).join('');
-  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🗑️</div><div><h2>Bin Admin</h2><p>Weekly bin checklist with required staff name, bin quantity and photo evidence.</p></div>
-    <div class="ph-actions">${storePick}<button class="btn sm" onclick="binWeek(-1)">‹ Prev</button><button class="btn sm" onclick="binWeek(${-(s.week||0)})">This week</button><button class="btn sm" onclick="binWeek(1)">Next ›</button>${isAdmin()?`<button class="btn sm ${edit?'primary':''}" onclick="binEditToggle()"><i class="fas fa-pen"></i> ${edit?'Done':'Edit'}</button>`:''}</div></div>
+  // MANDATORY on active bin days: no record for today yet → loud red badge (and the
+  // server alerts managers after the Closing deadline)
+  const todayShort=SCHED_DAYS[(perthNow().getDay()+6)%7];
+  const requiredToday=active.includes(todayShort)&&!(cfg.records||[]).some(r=>r.store===store&&String(r.date||'').slice(0,10)===todayISO());
+  const exportBar=isAdmin()?`<span class="hv-f"><span>📅</span><input type="date" id="bin-from" value="${esc(s.expFrom||dISO(new Date(perthNow().getTime()-29*864e5)))}"><span>→</span><input type="date" id="bin-to" value="${esc(s.expTo||todayISO())}"></span>
+    <div class="exp-dd"><button class="btn sm exp-trigger" onclick="expToggle(this,event)"><i class="fas fa-file-export"></i>&nbsp; Report <i class="fas fa-caret-down"></i></button>
+      <div class="exp-menu">
+        <button onclick="binExport('pdf')"><i class="fas fa-file-pdf"></i> PDF</button>
+        <button onclick="binExport('excel')"><i class="fas fa-file-excel"></i> Excel</button>
+        <button onclick="binExport('word')"><i class="fas fa-file-word"></i> Word</button>
+      </div></div>`:'';
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🗑️</div><div><h2>Bin Admin ${requiredToday?'<span class="badge bad" style="vertical-align:middle">⚠ REQUIRED today — not submitted</span>':''}</h2><p>Weekly bin checklist — <b>mandatory on ${esc((active||[]).join(', '))}</b>: staff name, bin quantity and photo evidence.</p></div>
+    <div class="ph-actions">${storePick}${exportBar}<button class="btn sm" onclick="binWeek(-1)">‹ Prev</button><button class="btn sm" onclick="binWeek(${-(s.week||0)})">This week</button><button class="btn sm" onclick="binWeek(1)">Next ›</button>${isAdmin()?`<button class="btn sm ${edit?'primary':''}" onclick="binEditToggle()"><i class="fas fa-pen"></i> ${edit?'Done':'Edit'}</button>`:''}</div></div>
     <div class="bin-days">${dayCards}</div>
     ${editPanel}
     ${form}

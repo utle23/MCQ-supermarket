@@ -850,6 +850,34 @@ def check_overdue_and_alert():
                 _send_overdue_alert(conn, store, sess, deadlines.get(sess), missing)
                 set_setting(marker, 1)
                 fired.append({'store': store, 'session': sess, 'missing': missing})
+            # ---- BIN day enforcement: on active bin days the record is MANDATORY ----
+            try:
+                ba = st.get('binAdmin'); ba = json.loads(ba) if isinstance(ba, str) else (ba or {})
+                wd = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'][now_p.weekday()]
+                if wd in (ba.get('activeDays') or []):
+                    dlc = _deadline_minutes((deadlines or {}).get('Closing') or '9:30 PM')
+                    if dlc is not None and now_min > dlc:
+                        bmarker = 'binoverdue_sent:%s:%s' % (store, today)
+                        if not get_setting(bmarker):
+                            has_bin = False
+                            for br in conn.execute('SELECT data_json FROM bin_records WHERE store_id=?', (store,)).fetchall():
+                                try: bd = json.loads(br['data_json'])
+                                except Exception: bd = {}
+                                if str(bd.get('date') or '')[:10] == today: has_bin = True; break
+                            if not has_bin:
+                                subject = 'MANDATORY: bin checklist not submitted today'
+                                body = ('<p><b>Today (%s) is a scheduled bin day at MCQ %s and the bin checklist has NOT been submitted.</b></p>'
+                                        '<p>The bin record (staff name, quantity, photo evidence) is mandatory on %s. Please complete it in Bin Admin now.</p>'
+                                        % (wd, store, ', '.join(ba.get('activeDays') or [])))
+                                now_t = now()
+                                mid = conn.execute('INSERT INTO messages(store_id,from_role,from_name,from_staff_id,to_staff_id,to_super,to_managers,to_store_all,kind,subject,body_html,thread_id,read_by_json,attachments_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?) RETURNING id',
+                                    (store, 'super', 'MCQ System', None, None, 1, 1, 0, 'message', subject, body, None, '[]', '[]', now_t)).fetchone()['id']
+                                conn.execute('UPDATE messages SET thread_id=? WHERE id=?', ('T' + str(mid), mid))
+                                conn.commit()
+                                set_setting(bmarker, 1)
+                                fired.append({'store': store, 'bin': 'missing'})
+            except Exception:
+                pass
         if fired:
             try: emit_event('inbox')
             except Exception: pass
