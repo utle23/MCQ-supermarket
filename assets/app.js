@@ -933,7 +933,7 @@ function render(){
     if(!shared.includes(mod)) return renderEmployeeHome();
     // fall through to customPages/module routing for the shared pages the employee may use
   }
-  if(mod==='home') return isAdmin()?renderHome():renderStaffHome();
+  if(mod==='home') return isSuper()?renderHome():renderStaffHome();   // Super = full dashboard; Manager & Dept Lead = focused daily home
   if(mod==='inbox' && window.renderInbox) return renderInbox();
   if(mod==='announcements' && window.renderAnnouncements) return renderAnnouncements();
   if(mod==='accounts'){ if(State.account&&State.account.acctAdmin&&window.renderAccounts) return renderAccounts(); location.hash='#/home'; return; }

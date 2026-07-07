@@ -89,17 +89,20 @@ window.depStatusMount=depStatusMount;
 
 /* ============================================================ STAFF HOME (simplified, mobile-first) */
 function renderStaffHome(){
-  setAccent('#0e9f6e'); setCrumb('🏠','My Store','MCQ '+State.branch);
+  const isMgr=(State.account||{}).role==='admin';
+  setAccent('#0e9f6e'); setCrumb('🏠', isMgr?'Manager Home':'My Store','MCQ '+State.branch);
   const u=me();
   const openItems=DB.order.reduce((n,id)=>n+openCount(id),0);
+  // Focused daily set — mirrors the "What to do today" flow, plus Report Issue & Violation.
+  // Manager also gets Verify Checklists. (Shift Handover / Store Rules stay in the sidebar.)
   const actions=[
     ['✅','Store Checklist','Opening & closing checks','#10b981',"go('checklist')"],
-    ['🗑️','Bin Checklist','Tue, Thu & Fri evidence','#64748b',"go('binadmin')"],
-    ['🔁','Shift Handover','Who is on + pass notes','#0891b2',"go('handover')"],
-    ['🚩','Report an Issue','Maintenance, safety, stock…','#e53935',"go('issue')"],
-    ['🚚','Log Delivery','Truck & crate return','#3b82f6',"go('delivery','new')"],
-    ['📖','Store Rules','Handbook & standards','#8b5cf6',"go('rules')"],
+    ['🗑️','Bin Checklist','Bin evidence on bin days','#64748b',"go('binadmin')"],
+    ['🚚','Delivery & Crates','Truck & crate return','#3b82f6',"go('delivery','new')"],
   ];
+  if(isMgr) actions.push(['🛡️','Verify Checklists','Review & verify submissions','#0f766e',"go('manager')"]);
+  actions.push(['🚩','Report an Issue','Maintenance, safety, stock…','#e53935',"go('issue')"]);
+  actions.push(['⚠️','Report Violation','Log a staff rule breach','#c62828',"go('violation')"]);
   const feed=recentFeed().slice(0,6).map(f=>`<div class="feed-row"><div class="feed-ic" style="background:${soft(f.accent)};color:${f.accent}">${f.icon}</div><div class="feed-main"><div class="fm-t">${esc(f.title)}</div><div class="fm-s">${esc(f.sub)}</div></div><div class="feed-time">${esc(f.time)}</div></div>`).join('')||'<div class="empty">No recent activity at your store yet.</div>';
   $('#content').innerHTML=`
     ${todoFlowHTML()}
@@ -1473,7 +1476,7 @@ function ckRespHTML(dept){
   rec.submittedBy=myIdentityName();
   return `<div class="ck-resp-card" id="${ckRespId(dept,'card')}">
     ${staffDataList(listId,dept,[rec.p1,rec.p2])}
-    ${field('p1','Responsible Person 1',true)}
+    ${field('p1','Responsible Person 1',false)}
     ${field('p2','Responsible Person 2',false)}
     <label class="ck-resp-field ck-resp-auto"><span>Submitted by</span><span class="ck-resp-me">👤 ${esc(rec.submittedBy)}</span></label>
   </div>`;
@@ -1527,9 +1530,9 @@ function ckGate(){
     sections.push({area, total:items.length, ok, complete:ok===items.length, issues});
   });
   const resp=(State.chk.resp||{})[State.chk.dept]||{};
-  const respOk=!!String(resp.p1||'').trim();   // Submitted-by is automatic (logged-in account)
+  const respOk=!!String(resp.p1||'').trim();   // OPTIONAL now — no longer blocks submission (Submitted-by is automatic)
   const incompleteSections=sections.filter(s=>!s.complete).map(s=>s.area);
-  return {sections, incompleteSections, respOk, firstPending, complete: incompleteSections.length===0 && respOk};
+  return {sections, incompleteSections, respOk, firstPending, complete: incompleteSections.length===0};
 }
 function ckAreaDone(area){ const rows=ckRows(true).filter(r=>r.area===area); return rows.length>0 && rows.every(r=>!ckTaskIssue(r,State.chk.state[r.i])); }
 function ckUpdateSubmitBtn(){
@@ -1542,7 +1545,7 @@ function ckUpdateSubmitBtn(){
     if(note){ note.className='ck-submit-note ready'; note.innerHTML='✓ All sections complete — ready to submit'; }
   }else{
     btn.className='btn lg ck-locked';
-    const left=[]; if(g.incompleteSections.length) left.push(...g.incompleteSections); if(!g.respOk) left.push('Responsible Person');
+    const left=[]; if(g.incompleteSections.length) left.push(...g.incompleteSections);   // Responsible Person is optional — never blocks
     // how many tasks are simply unticked with no note (the "add a reason" case)
     let needNote=0; g.sections.forEach(s=>s.issues.forEach(it=>{ const st=State.chk.state[it.i]||{}; if(!st.done && !String(st.note||'').trim()) needNote++; }));
     if(note){ note.className='ck-submit-note pending'; note.innerHTML=`<b>${left.length}</b> to finish before submitting — <span>${esc(left.join(', '))}</span>${needNote?` · <b>${needNote}</b> task${needNote>1?'s':''} need a tick or a note`:''}`; }
@@ -1911,8 +1914,7 @@ function ckTempReportHTML(){
 function chkSubmit(){
   const g=ckGate();
   if(!g.complete){
-    if(!g.respOk) ckMarkRespMissing([State.chk.dept]);
-    ckBlockModal(g);
+    ckBlockModal(g);   // Responsible Person is optional now — only incomplete tasks block
     return;
   }
   ckConfirmSubmit(g);
@@ -1923,7 +1925,7 @@ function ckBlockModal(g){
     const list=s.complete?'':`<ul class="ck-block-list">${s.issues.slice(0,10).map(it=>`<li><button class="ck-block-jump" onclick="ckJumpTo(${it.i})">${esc(it.task)}</button> <span class="muted">— ${esc(it.why)}</span></li>`).join('')}${s.issues.length>10?`<li>…and ${s.issues.length-10} more</li>`:''}</ul>`;
     return `<div class="ck-block-sec"><div class="ck-block-sec-h ${s.complete?'ok':'bad'}">${s.complete?'✅':'⛔'} ${esc(s.area)} — ${s.ok}/${s.total}</div>${list}</div>`;
   }).join('');
-  const respHtml=g.respOk?'':`<div class="ck-block-sec"><div class="ck-block-sec-h bad">⛔ Responsible Person — required</div><ul class="ck-block-list"><li>Enter Responsible Person 1 and Submitted by</li></ul></div>`;
+  const respHtml='';   // Responsible Person is optional — never shown as a blocker
   const ov=document.createElement('div'); ov.className='lb-overlay ck-block-ov'; ov.style.display='flex';
   ov.onclick=e=>{ if(e.target===ov) ov.remove(); };
   ov.innerHTML=`<div class="lb-panel"><div class="card-head" style="padding:14px 16px"><h3>Not ready to submit — items still incomplete</h3><button class="x-btn" onclick="this.closest('.ck-block-ov').remove()">✕</button></div>
