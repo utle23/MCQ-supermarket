@@ -192,7 +192,11 @@ def deputy_webhook():
             au = {'role': 'super', 'store_id': None, 'staff_id': None, 'staff_name': '⏱ Attendance'}
             if ev['event'] == 'clockin' and res['late_min'] > db.LATE_GRACE_MIN:
                 # full late pipeline: violation record + staff inbox + managers copy + email
-                _deputy_late_effects(m, ev, res, dept_name=str((d.get('OperationalUnitName') if isinstance(d, dict) else '') or ''))
+                _md = (d.get('_DPMetaData') or {}) if isinstance(d, dict) else {}
+                _oui = _md.get('OperationalUnitInfo') or {}
+                _deputy_late_effects(m, ev, res,
+                                     dept_name=str((d.get('OperationalUnitName') if isinstance(d, dict) else '') or _oui.get('OperationalUnitName') or ''),
+                                     loc_name=str((d.get('CompanyName') if isinstance(d, dict) else '') or _oui.get('CompanyName') or ''))
                 continue
             if ev['event'] == 'clockin':
                 subj = '✅ Clock-in recorded — on time'
@@ -207,7 +211,7 @@ def deputy_webhook():
             pass
     return jsonify(ok=True, processed=processed, received=len(items))
 
-def _deputy_late_effects(m, ev, res, dept_name=''):
+def _deputy_late_effects(m, ev, res, dept_name='', loc_name=''):
     """Everything that happens for ONE late clock-in (>10 min past the rostered start):
     a violation record in that store's Violation module (Khoi's 6-month ladder step),
     an inbox notice to the employee + a copy to the store's managers/super, and a
@@ -218,8 +222,9 @@ def _deputy_late_effects(m, ev, res, dept_name=''):
     at_hm = _fmt_hm(ev.get('actual_start')) if ev.get('actual_start') else ''
     sched_hm = _fmt_hm(ev.get('scheduled_start')) if ev.get('scheduled_start') else ''
     sev = 'Minor' if step == 'Verbal Discussion' else 'Serious' if step == 'Written Warning' else 'Major'
-    desc = ('Clocked in %d minutes late%s%s%s.'
+    desc = ('Clocked in %d minutes late%s%s%s%s.'
             % (late, (' at ' + at_hm) if at_hm else '', (' (rostered ' + sched_hm + ')') if sched_hm else '',
+               (' · Location: ' + loc_name) if loc_name else '',
                (' · Deputy department: ' + dept_name) if dept_name else ''))
     rec = {'id': 'VIO-ATT-' + secrets.token_hex(4).upper(), 'created': db.now()[:16],
            'staffName': m.get('name') or '', 'store': m['store'], 'category': 'Late clock-in',
@@ -230,12 +235,13 @@ def _deputy_late_effects(m, ev, res, dept_name=''):
     except Exception: pass
     icon = {'Verbal Discussion': '🟠', 'Written Warning': '🔴', 'Final Warning': '⛔', 'Termination Referral': '🚫'}.get(step, '🟠')
     subj = '%s Late clock-in — %d min · %s' % (icon, late, step)
-    body_html = ('<p>You clocked in <b>%d minutes late</b>%s%s%s.</p>'
+    body_html = ('<p>You clocked in <b>%d minutes late</b>%s%s%s%s.</p>'
                  '<p>This is lateness <b>#%d</b> in the last 6 months → <b>%s</b>.</p>'
                  '<p>Reference %s · Please speak with your manager — this is a formal record.</p>'
                  % (late, (' at <b>' + at_hm + '</b>') if at_hm else '',
                     (' (rostered ' + sched_hm + ')') if sched_hm else '',
-                    (' · Deputy department: <b>' + dept_name + '</b>') if dept_name else '',
+                    (' · Location: <b>' + esc_html(loc_name) + '</b>') if loc_name else '',
+                    (' · Deputy department: <b>' + esc_html(dept_name) + '</b>') if dept_name else '',
                     nth, step, rec['id']))
     au = {'role': 'super', 'store_id': None, 'staff_id': None, 'staff_name': '⏱ Attendance'}
     try:
@@ -257,19 +263,20 @@ def _deputy_late_effects(m, ev, res, dept_name=''):
         except Exception: pass
     return rec['id']
 
-def _deputy_over_reminder(m, ev, dept_name=''):
+def _deputy_over_reminder(m, ev, dept_name='', loc_name=''):
     """Clocked out PAST the rostered finish → a personalised inbox REMINDER (deliberately
     NOT a violation — Khoi's rule: only late clock-ins go on the record)."""
     over = ev.get('over_min') or 0
     out_hm = _fmt_hm(ev.get('actual_end')) if ev.get('actual_end') else ''
     end_hm = _fmt_hm(ev.get('scheduled_end')) if ev.get('scheduled_end') else ''
     subj = '⏰ Reminder — clocked out %d min past your rostered finish' % over
-    body_html = ('<p>Hi %s — you clocked out <b>%d minutes past</b> your rostered finish%s%s%s.</p>'
+    body_html = ('<p>Hi %s — you clocked out <b>%d minutes past</b> your rostered finish%s%s%s%s.</p>'
                  '<p>This is a <b>friendly reminder only</b> (not a violation). Please try to finish on time, '
                  'or check with your manager if extra time was needed.</p>'
                  % (esc_html(m.get('name') or ''), over,
                     (' at <b>' + out_hm + '</b>') if out_hm else '',
                     (' (rostered ' + end_hm + ')') if end_hm else '',
+                    (' · Location: <b>' + esc_html(loc_name) + '</b>') if loc_name else '',
                     (' · Deputy department: <b>' + esc_html(dept_name) + '</b>') if dept_name else ''))
     au = {'role': 'super', 'store_id': None, 'staff_id': None, 'staff_name': '⏱ Attendance'}
     try:
@@ -334,6 +341,7 @@ def _deputy_poll():
         email, dep_name = _deputy_employee_email(host, token, t.get('Employee'))
         ou = t.get('OperationalUnitObject') if isinstance(t.get('OperationalUnitObject'), dict) else {}
         dept_name = str(ou.get('OperationalUnitName') or '')
+        loc_name = str(ou.get('CompanyName') or '')   # Deputy location, e.g. "MCQ Supermarket Armadale"
         m = db._match_staff_for_deputy(email, dep_name, t.get('Employee'))
         if not m or not m.get('id'): skipped += 1; continue   # gmail not in MCQ → not ours to notify
         sched_start = sched_end = None
@@ -352,7 +360,7 @@ def _deputy_poll():
             processed += 1
             if res['late_min'] > db.LATE_GRACE_MIN:
                 late_n += 1
-                try: _deputy_late_effects(m, ev, res, dept_name=dept_name)
+                try: _deputy_late_effects(m, ev, res, dept_name=dept_name, loc_name=loc_name)
                 except Exception: pass
         if need_out:
             over = max(0, round((actual_end - sched_end) / 60)) if sched_end else 0
@@ -364,7 +372,7 @@ def _deputy_poll():
             processed += 1
             if over > db.LATE_GRACE_MIN:   # a friendly REMINDER only — clocking out late is NOT a violation
                 over_n += 1
-                try: _deputy_over_reminder(m, ev, dept_name=dept_name)
+                try: _deputy_over_reminder(m, ev, dept_name=dept_name, loc_name=loc_name)
                 except Exception: pass
     return {'processed': processed, 'late': late_n, 'overtime_reminders': over_n,
             'already_seen': seen, 'skipped_unmatched': skipped, 'timesheets': len(rows), 'date': today}
