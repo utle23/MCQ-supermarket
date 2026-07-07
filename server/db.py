@@ -1948,6 +1948,40 @@ def state_updated_at(store_id):
     finally:
         conn.close()
 
+def _tpl_rows(v):
+    if isinstance(v, str):
+        try: v = json.loads(v)
+        except Exception: v = []
+    return v if isinstance(v, list) else []
+
+def _audit_template_diff(conn, store, old_v, new_v, user):
+    """Write one audit row per checklist task added/removed so template changes are
+    traceable to the exact signed-in person (rename shows as remove+add)."""
+    key = lambda r: (str(r[0]), str(r[1]), str(r[2]), str(r[3]) if len(r) > 3 else '')
+    old = {key(r) for r in _tpl_rows(old_v) if isinstance(r, list) and len(r) >= 3}
+    new = {key(r) for r in _tpl_rows(new_v) if isinstance(r, list) and len(r) >= 3}
+    for r in sorted(new - old)[:80]:
+        conn.execute("""INSERT INTO audit_logs(user_id,store_id,action,entity_type,entity_id,before_json,after_json,created_at)
+                        VALUES(?,?,?,?,?,?,?,?)""",
+                     (user, store, 'template-add', 'checklistTask', r[2][:120], None,
+                      json.dumps({'dept': r[0], 'area': r[1], 'task': r[2], 'when': r[3]}), now()))
+    for r in sorted(old - new)[:80]:
+        conn.execute("""INSERT INTO audit_logs(user_id,store_id,action,entity_type,entity_id,before_json,after_json,created_at)
+                        VALUES(?,?,?,?,?,?,?,?)""",
+                     (user, store, 'template-remove', 'checklistTask', r[2][:120],
+                      json.dumps({'dept': r[0], 'area': r[1], 'task': r[2], 'when': r[3]}), None, now()))
+
+def list_audit(store, limit=300):
+    conn = connect()
+    try:
+        if store and store != 'ALL':
+            rows = conn.execute('SELECT user_id,store_id,action,entity_type,entity_id,before_json,after_json,created_at FROM audit_logs WHERE store_id=? ORDER BY id DESC LIMIT ?', (store, int(limit))).fetchall()
+        else:
+            rows = conn.execute('SELECT user_id,store_id,action,entity_type,entity_id,before_json,after_json,created_at FROM audit_logs ORDER BY id DESC LIMIT ?', (int(limit),)).fetchall()
+        return [{k: r[k] for k in r.keys()} for r in rows]
+    finally:
+        conn.close()
+
 def save_state(store_id, state, user):
     state = dict(state or {})
     conn = connect()
@@ -2018,17 +2052,33 @@ def save_state(store_id, state, user):
         lean['staff'] = []
         lean['checklistSubs'] = '[]'
         lean['scheduleHistory'] = '[]'
-        # concurrency guard: never let an OLDER checklist template overwrite a newer one.
-        # Each edit bumps checklistTemplateVersion; a stale client (e.g. autosave from a session
-        # that loaded before someone else's edit) keeps the server's newer template instead.
+        # ---- checklist template: guarded + audited ----
+        # * client did NOT send a template (Super sessions never do) → keep the store's own.
+        # * content changed but the version was not bumped ABOVE the stored one → stale or
+        #   foreign copy → keep the store's own (an honest edit always bumps the version).
+        # * accepted changes are diffed into audit_logs with the signed-in person.
         try:
             prev = conn.execute('SELECT state_json FROM store_state WHERE store_id=?', (store_id,)).fetchone()
+            pj = {}
             if prev and prev['state_json']:
-                pj = json.loads(prev['state_json'])
-                if int(pj.get('checklistTemplateVersion') or 0) > int(state.get('checklistTemplateVersion') or 0):
-                    lean['checklistItems'] = pj.get('checklistItems')
-                    lean['checklistTemplateVersion'] = pj.get('checklistTemplateVersion')
-                    if pj.get('checklistDeadlines') is not None: lean['checklistDeadlines'] = pj.get('checklistDeadlines')
+                try: pj = json.loads(prev['state_json'])
+                except Exception: pj = {}
+            posted_items = state.get('checklistItems', None)
+            def _keep_prev():
+                lean['checklistItems'] = pj.get('checklistItems')
+                lean['checklistTemplateVersion'] = pj.get('checklistTemplateVersion')
+                if pj.get('checklistDeadlines') is not None: lean['checklistDeadlines'] = pj.get('checklistDeadlines')
+            if posted_items is None:
+                if pj: _keep_prev()
+            else:
+                prev_ver = int(pj.get('checklistTemplateVersion') or 0)
+                new_ver = int(state.get('checklistTemplateVersion') or 0)
+                changed = json.dumps(_tpl_rows(pj.get('checklistItems'))) != json.dumps(_tpl_rows(posted_items))
+                if changed and new_ver <= prev_ver and pj.get('checklistItems') is not None:
+                    _keep_prev()
+                elif changed:
+                    try: _audit_template_diff(conn, store_id, pj.get('checklistItems'), posted_items, user)
+                    except Exception: pass
         except Exception:
             pass
         if isinstance(ba, dict):

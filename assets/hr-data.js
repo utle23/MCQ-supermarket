@@ -739,7 +739,7 @@ DB.modules.issue = {
 DB.navGroups = [
   { id:'ops',    label:'Operations', icon:'fa-clipboard-list', items:['handover','history','binadmin','schedules','delivery'] },
   { id:'hr',     label:'Staff & HR', icon:'fa-users',          items:['structure','staff','schedule','performance','training','reward','raise','birthday'], admin:true },
-  { id:'mgmt',   label:'Management', icon:'fa-user-shield',     items:['manager','storeconfig','analytics','photos','whatsapp','email','data'], admin:true },
+  { id:'mgmt',   label:'Management', icon:'fa-user-shield',     items:['manager','storeconfig','analytics','photos','whatsapp','email','data','auditlog'], admin:true },
   { id:'reports',label:'Reports & Rules', icon:'fa-flag',       items:['rules'] },
   { id:'lab',    label:'AI Lab', icon:'fa-robot',                items:['aiuse'], admin:true },
   { id:'account',label:'Account', icon:'fa-user-lock',          items:['profile','faceid'] },
@@ -831,6 +831,7 @@ DB.customPages = {
   whatsapp: { label:'WhatsApp Daily Share', icon:'💬', render:'renderWhatsapp', admin:true },
   email:    { label:'Email Notifications',  icon:'✉️', render:'renderEmail', admin:true },
   data:     { label:'Data Management', icon:'🗄️', render:'renderData', admin:true },
+  auditlog: { label:'Audit Log', icon:'🕵️', render:'renderAuditLog', admin:true },
   rules:    { label:'Supermarket Rules', icon:'📖', render:'renderRules' },
   profile:  { label:'My Profile', icon:'👤', render:'renderEmployeeProfile' },
   faceid:   { label:'Face ID', icon:'🪪', render:'renderFaceId' },

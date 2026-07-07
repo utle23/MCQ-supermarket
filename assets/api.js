@@ -64,6 +64,7 @@
   function _authFetch(path, opts){ var tok=(window.localStorage&&localStorage.getItem('mcq_token'))||''; opts=opts||{};
     opts.headers=Object.assign({'Content-Type':'application/json',Authorization:'Bearer '+tok},opts.headers||{});
     return fetch((BASE||'')+path,opts).then(function(r){return r.json().catch(function(){return {ok:false};});}).catch(function(){return {ok:false};}); }
+  window.mcqAuditLog=function(store,limit){ return _authFetch('/api/audit/'+encodeURIComponent(store)+(limit?('?limit='+limit):'')); };
   window.mcqDeputyStatus=function(store){ return _authFetch('/api/deputy/status'+(store?('?store='+encodeURIComponent(store)):'')); };
   window.mcqStaffAccount=function(store,staffId,name,reset){ return _authFetch('/api/staff-account',{method:'POST',body:JSON.stringify({store:store,staff_id:staffId,name:name,reset:!!reset})}); };
   window.mcqStaffAccounts=function(store){ return _authFetch('/api/staff-accounts/'+encodeURIComponent(store)); };
@@ -175,6 +176,12 @@
   var _storeHash={};     // store -> JSON of the last state successfully saved (super: skip unchanged stores)
   function postState(store, prebuilt){
     var state = prebuilt || (FB.buildStoreState ? FB.buildStoreState(store) : null);
+    // SUPER sessions hold ONE aggregated template in memory (last-loaded store wins) — posting
+    // it would copy one store's checklist onto another. Super edits templates only through
+    // Store Config, so strip the template fields here; the server keeps each store's own.
+    try{ var acct0=(window.State&&State.account)||{};
+      if(state && (acct0.role==='super'||acct0.role==='ba')){ delete state.checklistItems; delete state.checklistTemplateVersion; delete state.checklistDeadlines; }
+    }catch(e){}
     // mirror locally FIRST so the data survives even if the network/tab dies before the POST lands
     try{ if(state && FB.writeCache) FB.writeCache(store, state); }catch(e){}
     // NOTE: no `keepalive` — the full state often exceeds the 64KB keepalive limit, which would

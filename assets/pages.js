@@ -224,7 +224,7 @@ function ckDeadline(session){
   return ((DB.checklist&&DB.checklist.deadlines)||{})[session] || CK_DEADLINE[session] || '';
 }
 function ckEditDeadline(session){ const v=prompt('Deadline for '+session+' (e.g. 10:30 AM):', ckDeadline(session)); if(v==null) return;
-  DB.checklist.deadlines=DB.checklist.deadlines||{}; DB.checklist.deadlines[session]=v.trim(); if(window.persist)window.persist(); renderChecklist(); toast('✓ Deadline updated'); }
+  DB.checklist.deadlines=DB.checklist.deadlines||{}; DB.checklist.deadlines[session]=v.trim(); ckPersistTemplate(); renderChecklist(); toast('✓ Deadline updated'); }
 /* ---- in-progress checklist DRAFT (survives accidental close / lock / app-switch) ----
    Saved to localStorage per store + day. Only small data (done flags, notes, temp
    objects, photo IDs) — no image blobs — so it stays tiny. Restored on reopen. */
@@ -339,7 +339,7 @@ function renderChecklist(){
        <button class="seg-btn ${s.session==='Mid-afternoon'?'active':''}" onclick="ckSession('Mid-afternoon')">🌤️ Mid-afternoon</button>
        <button class="seg-btn ${s.session==='Closing'?'active':''}" onclick="ckSession('Closing')">🌙 Closing</button>
      </div>
-     <span class="ck-deadline ${s.session==='Opening'?'am':'pm'}">⏰ Deadline <b>${esc(ckDeadline(s.session))}</b>${isAdmin()?` <button class="ck-dl-edit" onclick="ckEditDeadline('${ckJS(s.session)}')" title="Edit deadline">✎</button>`:''}</span>
+     <span class="ck-deadline ${s.session==='Opening'?'am':'pm'}">⏰ Deadline <b>${esc(ckDeadline(s.session))}</b>${State.account&&State.account.role==='admin'?` <button class="ck-dl-edit" onclick="ckEditDeadline('${ckJS(s.session)}')" title="Edit deadline">✎</button>`:''}</span>
      ${!viewing && ckDeadlinePassed(s.session) && !ckSubmittedFor(s.dept,s.session,today)?'<span class="ck-overdue">⏰ OVERDUE</span>':''}
      <div class="tb-spacer"></div>
      <div class="filter"><label>Date</label><input type="date" max="${today}" value="${esc(s.date)}" onchange="ckSetDate(this.value)">${viewing?`<button class="btn sm" onclick="ckSetDate('${today}')">Today</button>`:''}</div>
@@ -4608,6 +4608,64 @@ function cfgRowsStaff(c){ const roles=DB.staffRoles||['Staff']; c.data.staff=c.d
 function cfgRowsChecklist(c){ c.data.checklistItems=c.data.checklistItems||[]; return `<div class="card"><div class="card-head"><h3>Checklist template · ${c.data.checklistItems.length}</h3><span class="ch-sub">🔄 This IS ${esc(c.store)}'s live checklist — Save applies to the store immediately</span><button class="btn sm" style="margin-left:auto" onclick="cfgCkAdd()">＋ Add task</button></div><div class="table-wrap"><table class="grid cfg-table"><thead><tr><th>Dept</th><th>Area</th><th>Task</th><th>When</th><th></th></tr></thead><tbody>${c.data.checklistItems.map((r,i)=>`<tr><td><input value="${esc(r[0]||'')}" onchange="cfgCkSet(${i},0,this.value)"></td><td><input value="${esc(r[1]||'')}" onchange="cfgCkSet(${i},1,this.value)"></td><td><input value="${esc(r[2]||'')}" onchange="cfgCkSet(${i},2,this.value)"></td><td><select onchange="cfgCkSet(${i},3,this.value)"><option value="O" ${r[3]==='O'?'selected':''}>Opening</option><option value="M" ${r[3]==='M'?'selected':''}>Mid-afternoon</option><option value="C" ${r[3]==='C'?'selected':''}>Closing</option><option value="A" ${r[3]==='A'?'selected':''}>Open+Close</option></select></td><td><button class="btn sm" onclick="cfgCkDel(${i})"><i class="fas fa-trash"></i></button></td></tr>`).join('')||'<tr><td colspan="5"><div class="empty">No checklist items.</div></td></tr>'}</tbody></table></div></div>`; }
 function cfgRowsSchedules(c){ c.data.scheduleTasks=c.data.scheduleTasks||[]; const staffList=`<datalist id="cfg-staff-list">${(c.data.staff||[]).map(s=>`<option value="${esc(s.name)}" label="${esc(s.id+' · '+(s.role||''))}"></option>`).join('')}</datalist>`; return `${staffList}<div class="card"><div class="card-head"><h3>Cleaning & maintenance schedule · ${c.data.scheduleTasks.length}</h3><button class="btn sm" style="margin-left:auto" onclick="cfgSchedAdd()">＋ Add task</button></div><div class="table-wrap"><table class="grid cfg-table"><thead><tr><th>Type</th><th>Dept</th><th>Task</th><th>Staff</th><th>Days</th><th></th></tr></thead><tbody>${c.data.scheduleTasks.map((t,i)=>`<tr><td><select onchange="cfgSchedSet(${i},'type',this.value)"><option value="cleaning" ${t.type==='cleaning'?'selected':''}>Cleaning</option><option value="maintenance" ${t.type==='maintenance'?'selected':''}>Maintenance</option></select></td><td><input value="${esc(t.dept||'')}" onchange="cfgSchedSet(${i},'dept',this.value)"></td><td><input value="${esc(t.task||'')}" onchange="cfgSchedSet(${i},'task',this.value)"></td><td><input list="cfg-staff-list" value="${esc(t.who||'')}" onchange="cfgSchedSet(${i},'who',this.value)"><div class="cell-sub">IDs: ${esc((t.staffIds||[]).join(', ')||'—')}</div></td><td class="cfg-days">${SCHED_DAYS.map(d=>`<button class="${(t.days||[]).includes(d)?'on':''}" onclick="cfgSchedDay(${i},'${d}')">${d}</button>`).join('')}</td><td><button class="btn sm" onclick="cfgSchedDel(${i})"><i class="fas fa-trash"></i></button></td></tr>`).join('')||'<tr><td colspan="6"><div class="empty">No schedule tasks.</div></td></tr>'}</tbody></table></div></div>`; }
 function renderStoreConfig(){ if(!isSuper()){ $('#content').innerHTML='<div class="empty">Super Admin only.</div>'; return; } const c=cfgState(); setAccent('#0f766e'); setCrumb('🏪','Store Config','Super Admin · edit one store workspace'); if(!c.data&&!c.loading&&!c.error) setTimeout(()=>cfgLoad(c.store),0); const storeSel=`<select class="login-input" style="width:auto" onchange="cfgSelectStore(this.value)">${DB.stores.map(s=>`<option ${s===c.store?'selected':''}>${esc(s)}</option>`).join('')}</select>`; const tabs=['staff','checklist','schedules'].map(t=>`<button class="seg-btn ${c.tab===t?'active':''}" onclick="cfgTab('${t}')">${t==='staff'?'Staff':t==='checklist'?'Checklist':'Schedules'}</button>`).join(''); const body=c.loading?`<div class="card card-pad loading-state"><i class="fas fa-spinner fa-spin"></i><b>Loading ${esc(c.store)} config...</b><span>Fetching the store document safely.</span></div>`:c.error?`<div class="card card-pad error-state"><b>Could not load cloud config</b><span>${esc(c.error)}</span><button class="btn sm" onclick="cfgLoad('${ckJS(c.store)}')">Retry</button></div>`:c.data?(c.tab==='staff'?cfgRowsStaff(c):c.tab==='checklist'?cfgRowsChecklist(c):cfgRowsSchedules(c)):''; $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🏪</div><div><h2>Manage Store Config</h2><p>Choose one branch and edit its staff, checklist template, and cleaning/maintenance schedule without changing other stores.</p></div><div class="ph-actions">${storeSel}<div class="seg seg-light">${tabs}</div><button class="btn primary" onclick="cfgSave()"><i class="fas fa-save"></i>&nbsp; Save ${esc(c.store)}</button></div></div><div class="kpi-grid"><div class="kpi tone-info"><div class="k-top"><div class="k-ic">👥</div></div><div class="k-val">${c.data?(c.data.staff||[]).length:'—'}</div><div class="k-lbl">Staff</div></div><div class="kpi tone-ok"><div class="k-top"><div class="k-ic">✅</div></div><div class="k-val">${c.data?(c.data.checklistItems||[]).length:'—'}</div><div class="k-lbl">Checklist tasks</div></div><div class="kpi tone-warn"><div class="k-top"><div class="k-ic">🧽</div></div><div class="k-val">${c.data?(c.data.scheduleTasks||[]).length:'—'}</div><div class="k-lbl">Schedule tasks</div></div><div class="kpi tone-mute"><div class="k-top"><div class="k-ic">🧾</div></div><div class="k-val">${c.data?(c.data.auditLogs||[]).length:'—'}</div><div class="k-lbl">Audit events</div></div></div>${c.dirty?'<div class="rail-tip" style="margin-bottom:14px">Unsaved changes in this store config.</div>':''}${body}`; }
+
+/* ============================================================ AUDIT LOG (Manager: own store · Super: all) */
+const AUD_META={
+  'template-add':{ic:'➕',c:'#16a34a',lb:'Checklist task ADDED'},
+  'template-remove':{ic:'🗑️',c:'#dc2626',lb:'Checklist task REMOVED'},
+  'verify':{ic:'✅',c:'#0f766e',lb:'Checklist verified'},
+  'create':{ic:'🆕',c:'#2563eb',lb:'Created'},
+  'update':{ic:'✏️',c:'#d97706',lb:'Updated'},
+  'delete':{ic:'❌',c:'#dc2626',lb:'Deleted'},
+  'save':{ic:'💾',c:'#64748b',lb:'Saved'},
+  'profile':{ic:'👤',c:'#7c3aed',lb:'Profile edited'},
+  'import':{ic:'📥',c:'#0891b2',lb:'Imported'},
+  'sync':{ic:'🔗',c:'#0891b2',lb:'Synced'},
+  'enroll':{ic:'🪪',c:'#15803d',lb:'Face ID enrolled'},
+};
+function renderAuditLog(){
+  setAccent('#334155'); setCrumb('🕵️','Audit Log','Who changed what — traced to the exact account');
+  if(!State.aud) State.aud={store:isSuper()?'ALL':State.branch,q:'',act:'',rows:null};
+  const a=State.aud; if(!isSuper()) a.store=State.branch;
+  const storeSel=isSuper()?`<select class="login-input" style="width:auto" onchange="State.aud.store=this.value;State.aud.rows=null;renderAuditLog()">${['ALL',...DB.stores].map(sx=>`<option ${sx===a.store?'selected':''}>${esc(sx)}</option>`).join('')}</select>`:'';
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🕵️</div><div><h2>Audit Log</h2><p>Checklist tasks added/removed, records, accounts, verifications, config — each entry names the signed-in person.</p></div>
+    <div class="ph-actions">${storeSel}<button class="btn sm" onclick="State.aud.rows=null;renderAuditLog()">↻ Refresh</button><div class="search"><input value="${esc(a.q||'')}" oninput="State.aud.q=this.value;audPaint()" placeholder="🔍 Search task, person, action…"></div></div></div>
+    <div id="aud-filters"></div>
+    <div id="aud-body"><div class="card card-pad loading-state"><i class="fas fa-spinner fa-spin"></i><b>Loading audit trail…</b></div></div>`;
+  if(a.rows){ audPaint(); return; }
+  if(!window.mcqAuditLog){ $('#aud-body').innerHTML='<div class="empty">Server not available.</div>'; return; }
+  mcqAuditLog(a.store,400).then(r=>{
+    const el=document.getElementById('aud-body'); if(!el) return;
+    if(!(r&&r.ok)){ el.innerHTML='<div class="card card-pad empty">Could not load the audit log.</div>'; return; }
+    a.rows=r.rows||[]; audPaint();
+  });
+}
+function audPaint(){
+  const a=State.aud||{}; const all=a.rows||[];
+  const counts={}; all.forEach(r=>counts[r.action]=(counts[r.action]||0)+1);
+  const fEl=document.getElementById('aud-filters');
+  if(fEl) fEl.innerHTML=`<div class="hv-sess-pills" style="margin:0 0 10px"><button class="${!a.act?'on':''}" onclick="State.aud.act='';audPaint()">All · ${all.length}</button>${Object.entries(counts).sort((x,y)=>y[1]-x[1]).slice(0,9).map(([act,n])=>{const m=AUD_META[act]||{ic:'•',lb:act};return `<button class="${a.act===act?'on':''}" onclick="State.aud.act=State.aud.act==='${ckJS(act)}'?'':'${ckJS(act)}';audPaint()">${m.ic} ${esc(m.lb||act)} · ${n}</button>`;}).join('')}</div>`;
+  const q=(a.q||'').toLowerCase();
+  const rows=all.filter(r=>(!a.act||r.action===a.act)&&(!q||JSON.stringify(r).toLowerCase().includes(q)));
+  const WHEN={O:'Opening',M:'Mid-afternoon',C:'Closing',A:'Open+Close'};
+  const body=rows.slice(0,400).map(r=>{
+    const m=AUD_META[r.action]||{ic:'•',c:'#64748b',lb:r.action};
+    let detail=r.entity_id||'';
+    try{
+      const d=(r.after_json?JSON.parse(r.after_json):null)||(r.before_json?JSON.parse(r.before_json):null);
+      if(r.entity_type==='checklistTask'&&d) detail=`${d.dept} / ${d.area} — “${d.task}” · ${WHEN[d.when]||d.when||''}`;
+      else if(d&&typeof d==='object'){ const bits=Object.entries(d).slice(0,4).map(([k,v])=>k+': '+String(v).slice(0,40)); detail=(r.entity_id?r.entity_id+' · ':'')+bits.join(' · '); }
+    }catch(e){}
+    return `<div class="aud-row"><span class="aud-ic" style="background:${m.c}1a;color:${m.c}">${m.ic}</span>
+      <div class="aud-t"><b>${esc(m.lb||r.action)}${r.entity_type&&r.entity_type!=='checklistTask'?' · '+esc(r.entity_type):''}</b>
+        <small>${esc(detail)}</small>
+        <small class="aud-who">👤 ${esc(r.user_id||'—')}${isSuper()?' · 🏬 '+esc(r.store_id||''):''}</small></div>
+      <span class="aud-time">${esc(String(r.created_at||'').slice(5,16).replace('T',' '))}</span></div>`;
+  }).join('');
+  const el=document.getElementById('aud-body');
+  if(el) el.innerHTML=body?`<div class="card"><div class="aud-list">${body}</div></div>`:'<div class="card card-pad empty">No audit entries match.</div>';
+}
+window.renderAuditLog=renderAuditLog; window.audPaint=audPaint;
 
 /* ============================================================ DATA MANAGEMENT */
 function dataStoreId(store){ return String(store||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'unknown-store'; }

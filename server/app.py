@@ -44,6 +44,13 @@ def require_write(au):
 def uid(au):
     return (au['role'] + ':' + (au['store_id'] or '')) if au else 'system'
 
+def who(au):
+    """Human-readable audit identity: name + account/staff id + role."""
+    if not au: return 'system'
+    name = au.get('staff_name') or ''
+    ident = au.get('account_id') or au.get('staff_id') or ''
+    return ('%s (%s · %s)' % (name or au.get('role'), ident or '-', au.get('role') or '')).strip()
+
 def db_safe(s):
     return ''.join(c if c.isalnum() else '-' for c in str(s).lower()).strip('-') or 'store'
 
@@ -865,7 +872,7 @@ def post_state(store_id):
     state = d.get('state', d)
     if isinstance(state, dict):
         state['store'] = store_id    # a client can never write another store's id
-    bytes_saved = db.save_state(store_id, state, uid(au))
+    bytes_saved = db.save_state(store_id, state, who(au))
     db.write_audit(uid(au), store_id, 'save', 'store_state', store_id, None, {'bytes': bytes_saved})
     return jsonify(ok=True, store=store_id, bytes=bytes_saved, updated_at=db.now())
 
@@ -1024,6 +1031,38 @@ def get_photo(photo_id):
         resp = send_file(path, mimetype=row['mime'])
     resp.headers['Cache-Control'] = 'private, max-age=31536000, immutable'   # photo ids are unique → cache hard so images don't re-download
     return resp
+
+@api.route('/api/audit/<store_id>', methods=['GET'])
+def audit_trail(store_id):
+    """Full audit trail. Managers see THEIR store; Super sees any store or ALL."""
+    au = require_auth()
+    if au['role'] == 'admin':
+        if store_id != (au.get('store_id') or ''): abort(403)
+    elif au['role'] != 'super':
+        abort(403)
+    limit = min(500, int(request.args.get('limit') or 300))
+    return jsonify(ok=True, store=store_id, rows=db.list_audit(store_id, limit))
+
+@api.route('/api/state-snapshots/<store_id>', methods=['GET'])
+def state_snapshots(store_id):
+    au = require_auth()
+    if au['role'] != 'super': abort(403)
+    conn = db.connect()
+    rows = conn.execute("""SELECT id, created_at, created_by, length(state_json) AS bytes
+                           FROM store_state_snapshots WHERE store_id=? ORDER BY id DESC LIMIT 30""", (store_id,)).fetchall()
+    conn.close()
+    return jsonify(ok=True, store=store_id, snapshots=[{k: r[k] for k in r.keys()} for r in rows])
+
+@api.route('/api/state-snapshot/<store_id>/<int:sid>', methods=['GET'])
+def state_snapshot(store_id, sid):
+    au = require_auth()
+    if au['role'] != 'super': abort(403)
+    conn = db.connect()
+    row = conn.execute('SELECT state_json, created_at, created_by FROM store_state_snapshots WHERE store_id=? AND id=?', (store_id, sid)).fetchone()
+    conn.close()
+    if not row: abort(404)
+    return jsonify(ok=True, store=store_id, created_at=row['created_at'], created_by=row['created_by'],
+                   state=json.loads(row['state_json']))
 
 # ---------- history (normalized rows + state snapshots + audit) ----------
 @api.route('/api/history/<store_id>')
