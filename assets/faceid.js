@@ -111,7 +111,9 @@ async function faceEnrollInApp(){
     }catch(err){ toast((err&&err.message)||'Face ID setup cancelled or failed'); }
   };
   if(window.mcqModal){
-    mcqModal('🪪 Enable Face ID sign-in', '<p class="fhint" style="margin:0 0 10px">Your device biometric (Face ID / Touch ID) will sign you in as <b>'+(who)+'</b> on THIS device only. No face data ever leaves the device.</p>'+
+    var others=(MCQFace.listV2?MCQFace.listV2():[]).filter(function(c){ return (c.who||'')!==who; });
+    var shareWarn=others.length?('<div class="rail-tip" style="margin:0 0 10px;background:#fffbeb;border-color:#fde68a;color:#92400e">⚠️ This device already has Face ID for <b>'+others.map(function(c){return c.who||c.label;}).join(', ')+'</b>. A device\u2019s biometrics can\u2019t tell people apart, so on shared devices everyone confirms their own <b>Staff ID</b> at sign-in. For true one-look sign-in, enrol on your personal phone.</div>'):'';
+    mcqModal('🪪 Enable Face ID sign-in', shareWarn+'<p class="fhint" style="margin:0 0 10px">Your device biometric (Face ID / Touch ID) will sign you in as <b>'+(who)+'</b> on THIS device only. No face data ever leaves the device.</p>'+
       '<div class="field"><label>Name this device</label><input id="fid-label" value="'+suggested.replace(/"/g,'&quot;')+'"></div>'+
       '<div style="display:flex;gap:10px;margin-top:12px"><button class="btn primary" id="fid-go">🪪 Enrol this device</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>');
     var go=document.getElementById('fid-go');

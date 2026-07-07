@@ -1975,3 +1975,6 @@ html,body{max-width:100%}
 .fn-t small{color:var(--muted);font-size:11.5px}
 .fn-x{flex:none;border:0;background:transparent;color:var(--muted);font-size:14px;cursor:pointer;padding:4px}
 @media(prefers-reduced-motion:reduce){ .fid2-glyph.scan .fid2-scanline{animation:none} }
+.fid2-idrow{margin:4px 0 2px;width:100%}
+.fid2-idrow .login-input{width:150px;text-align:center;font-size:18px;letter-spacing:4px;font-weight:800;background:rgba(255,255,255,.08);border:1.5px solid rgba(255,255,255,.25);color:#fff;border-radius:12px;padding:10px}
+.fid2-idrow .login-input::placeholder{letter-spacing:0;font-size:12px;font-weight:500;color:#8fa3c8}

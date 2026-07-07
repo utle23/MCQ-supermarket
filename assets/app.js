@@ -666,11 +666,12 @@ async function fidAttempt(credId){
   fidState('scan','Confirm it\u2019s you','Use <b>Face ID / Touch ID</b> on your device to continue'+(entry.label?(' as <b>'+esc(entry.label)+'</b>')  :'')+'…','<button class="btn" onclick="closeFid()">Cancel</button>');
   try{
     const res=await MCQFace.login(credId);   // biometric → device secret → REAL server session
-    fidState('success','Welcome back, '+(res.staff_name||res._label||'')+' 👋','Signing you in…','');
-    setTimeout(()=>{ closeFid();
-      loginAs(res.role, (res.role==='super'||res.role==='ba')?'All stores':res.store,
-        {staffId:res.staff_id, name:res.staff_name, accountId:res.account_id, needsProfile:res.needs_profile, acctAdmin:res.acct_admin});
-    }, 650);
+    // SHARED device (several people enrolled): the device biometric can't tell people apart,
+    // so confirm the picked person with their own 4-digit Staff ID before signing in.
+    if((MCQFace.listV2?MCQFace.listV2():[]).length>1 && res.account_id){
+      fidConfirmId(res); return;
+    }
+    fidFinish(res);
   }catch(e){
     if(e && e.code==='server'){
       // the server no longer accepts this credential (revoked / account removed) → self-clean
@@ -683,6 +684,34 @@ async function fidAttempt(credId){
     }
     fidState('error','Face ID didn\u2019t go through', esc((e&&e.message)||'Face ID failed.'), fidBtnRetry(credId)+fidBtnPassword());
   }
+}
+function fidFinish(res){
+  fidState('success','Welcome back, '+(res.staff_name||res._label||'')+' 👋','Signing you in…','');
+  setTimeout(()=>{ closeFid();
+    loginAs(res.role, (res.role==='super'||res.role==='ba')?'All stores':res.store,
+      {staffId:res.staff_id, name:res.staff_name, accountId:res.account_id, needsProfile:res.needs_profile, acctAdmin:res.acct_admin});
+  }, 650);
+}
+/* shared-device guard: after the biometric, the picked person confirms THEIR OWN Staff ID */
+function fidConfirmId(res){
+  State._fidPending=res; State._fidTries=0;
+  fidState('scan','Confirm it\u2019s really you','You are signing in as <b>'+esc(res.staff_name||res._label||'')+'</b>. Enter <b>your</b> Staff ID to confirm — this device is shared by several people.',
+    '<div class="fid2-idrow"><input id="fid-idin" class="login-input" inputmode="numeric" maxlength="6" placeholder="Your Staff ID" autocomplete="off"></div>'+
+    '<button class="btn primary" onclick="fidCheckId()">Confirm & sign in</button><button class="btn" onclick="closeFid()">Cancel</button>');
+  setTimeout(()=>{ const i=document.getElementById('fid-idin'); if(i){ i.focus(); i.addEventListener('keydown',e=>{ if(e.key==='Enter') fidCheckId(); }); } },80);
+}
+function fidCheckId(){
+  const res=State._fidPending; if(!res){ closeFid(); return; }
+  const typed=String((document.getElementById('fid-idin')||{}).value||'').trim();
+  if(typed && typed===String(res.account_id||'')){ State._fidPending=null; fidFinish(res); return; }
+  State._fidTries=(State._fidTries||0)+1;
+  if(State._fidTries>=3){
+    State._fidPending=null;
+    fidState('error','Staff ID didn\u2019t match','That ID does not belong to <b>'+esc(res.staff_name||'')+'</b>. Pick your own name, or sign in with your password.',fidBtnPassword());
+    return;
+  }
+  const su=$('#fid-sub'); if(su) su.innerHTML='❌ Wrong ID — that\u2019s not <b>'+esc(res.staff_name||'')+'</b>\u2019s Staff ID. Try again ('+(3-State._fidTries)+' left).';
+  const i=document.getElementById('fid-idin'); if(i){ i.value=''; i.focus(); }
 }
 /* the login button reflects reality: hidden when unsupported, named when one person is enrolled */
 async function initFaceBtn(){
@@ -1338,7 +1367,7 @@ function openLightbox(src){ if(!src) return; let ov=document.getElementById('mcq
 }
 function closeLightbox(){ const ov=document.getElementById('mcq-lightbox'); if(ov) ov.style.display='none'; }
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeLightbox(); });
-Object.assign(window,{go,openDetail,closeDrawer,submitForm,reviewSave,recSaveAll,recDelete,logout,doLogin,togglePw,updateLoginHint,faceIdLogin,closeFid,fidPick,fidRetry,initFaceBtn,maybeFaceNudge,toggleGroup,toggleSidebar,closeSidebarM,openLightbox,closeLightbox});
+Object.assign(window,{go,openDetail,closeDrawer,submitForm,reviewSave,recSaveAll,recDelete,logout,doLogin,togglePw,updateLoginHint,faceIdLogin,closeFid,fidPick,fidRetry,fidCheckId,initFaceBtn,maybeFaceNudge,toggleGroup,toggleSidebar,closeSidebarM,openLightbox,closeLightbox});
 async function boot(){
   try{ const saved=sessionStorage.getItem('mcq_acct'); if(saved){ State.account=JSON.parse(saved); State.branch=State.account.branch; State.role=State.account.role==='staff'?'store':'ho'; } }catch(e){}
   if(State.account){
