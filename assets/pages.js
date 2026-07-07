@@ -209,6 +209,24 @@ function staffDisplayForDept(dept,current){
 function ckCanBuild(){ return State.account && State.account.role==='admin'; }   // Manager only — Dept Leads can no longer edit checklist tasks
 window.ckCanBuild=ckCanBuild;
 function ckItem(it,i){ return {i,dept:it[0],area:it[1],task:it[2],when:it[3],photo:photoSpec(it[4]),meta:it[5]||{}}; }
+/* ---- in-progress state is keyed by template ARRAY INDEX; if the template is reordered
+   (a task added/removed) or a draft is restored under a newer template, an index can start
+   pointing at a DIFFERENT task — which used to let one task's photos/ticks leak onto another
+   (e.g. morning CASHIER/OFFICE photos surfacing in an evening BUTCHER submission). Every
+   entry is tagged with its task identity; ckSanitizeState() drops any entry whose index no
+   longer matches its tag, so photos/ticks can never cross to another task or department. */
+function ckSig(i){ const it=DB.checklist&&DB.checklist.items&&DB.checklist.items[i];
+  return it?((it[0]||'')+'|'+(it[1]||'')+'|'+(it[2]||'')+'|'+(it[3]||'')):('#'+i); }
+function ckSanitizeState(){
+  try{ if(!State.chk||!State.chk.state) return;
+    Object.keys(State.chk.state).forEach(k=>{ const st=State.chk.state[k]; if(!st||typeof st!=='object') return;
+      const sig=ckSig(+k);
+      if(st._sig==null) st._sig=sig;                    // first-seen → tag to its current task
+      else if(st._sig!==sig) delete State.chk.state[k]; // index now maps to a DIFFERENT task → stale → drop
+    });
+  }catch(e){}
+}
+window.ckSanitizeState=ckSanitizeState;
 /* Super with a HOME STORE (set in Account Management): the whole Checklist module works
    as THAT store — its own live template, its drafts, its submissions — and everything they
    do saves to THAT store only. Supers without a home store keep the read-only overview. */
@@ -317,7 +335,8 @@ function ckRestoreDraft(){ try{
     if(d.dept&&depts.includes(d.dept)) State.chk.dept=d.dept;
     if(d.session&&['Opening','Mid-afternoon','Closing'].includes(d.session)) State.chk.session=d.session;
     if(d.area) State.chk.area=d.area;
-    try{ Object.values(d.state).forEach(st=>{ ((st&&st.photos)||[]).forEach(id=>{ if(window.MCQDB&&MCQDB.fetchPhoto) MCQDB.fetchPhoto(id); }); }); }catch(e){}
+    ckSanitizeState();   // a draft saved under a DIFFERENT template version must not restore photos onto the wrong task
+    try{ Object.values(State.chk.state).forEach(st=>{ ((st&&st.photos)||[]).forEach(id=>{ if(window.MCQDB&&MCQDB.fetchPhoto) MCQDB.fetchPhoto(id); }); }); }catch(e){}
     setTimeout(()=>{ try{ toast('↩ Restored your unsaved checklist for today'); }catch(e){} }, 500);
   }
 }catch(e){} }
@@ -362,7 +381,7 @@ function ckRemapLiveState(prevItems){
     Object.keys(old).forEach(k=>{
       const r=prevItems[+k]; if(!Array.isArray(r)) return;
       let ni=nIdx[key(r)]; if(ni==null) ni=nIdx2[r[0]+'|'+r[2]];
-      if(ni!=null) remapped[ni]=old[k];   // tasks deleted from the template drop out naturally
+      if(ni!=null){ remapped[ni]=old[k]; if(remapped[ni]&&typeof remapped[ni]==='object') remapped[ni]._sig=ckSig(ni); }   // re-tag to the new index's task
     });
     State.chk.state=remapped;
     State.chk.editing=null; State.chk.editDeptH=null; State.chk.editArea=null;
@@ -381,6 +400,7 @@ function renderChecklist(){
   if(ckHomeStore()) ckEnsureHomeTemplate();   // re-apply cached home template over any aggregate reload
   if(!State.chk){ State.chk={session:'Opening',dept:C.depts[0],area:'ALL',state:{},resp:{}}; ckRestoreDraft(); }
   ckEnsureFreshDay();
+  ckSanitizeState();   // guard against stale index→task entries from a template reorder / cross-version draft
   if(State.chk.dept==='ALL' || !C.depts.includes(State.chk.dept)) State.chk.dept=C.depts[0];
   if(!State.chk.area) State.chk.area='ALL';
   if(!State.chk.resp) State.chk.resp={};
@@ -1362,6 +1382,7 @@ function ckAdminTools(){
   </div>`;
 }
 function ckDraw(){
+  ckSanitizeState();   // drop any entry whose index no longer matches its task (prevents cross-task photo/tick leaks)
   const rows=ckList(),C=DB.checklist,groups={};
   rows.forEach(r=>{(groups[r.dept]=groups[r.dept]||{})[r.area]=(groups[r.dept][r.area]||[]);groups[r.dept][r.area].push(r);});
   let html='';
@@ -1929,6 +1950,7 @@ function ckConfirmSubmit(g){
 }
 function ckDoSubmit(){
   if(isSuper()&&!ckHomeStore()){ toast('This Super account has no store assigned — set a store in Account Management to submit checklists.'); return; }
+  ckSanitizeState();   // guarantee no stale/leaked photos or ticks from another task/department enter this submission
   const _store=ckActiveStore();
   // ---- persist a REAL submission (Manager verify / Performance / records all read this) ----
   const allRows=DB.checklist.items.map(ckItem).filter(r=>ckStoreOk(r) && r.dept===State.chk.dept && ckInSession(r,State.chk.session));
