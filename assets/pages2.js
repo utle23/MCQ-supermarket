@@ -141,7 +141,7 @@ function mcqCreateViolation(o){
   const desc=(o.description||'').trim(), action=o.action||'', followUp=o.followUp||'';
   if(!staff||!desc) return null;
   const id=makeRecordId('VIO',store);
-  const rec={id,created:new Date().toISOString().slice(0,16).replace('T',' '),staffName:staff,store,
+  const rec={id,created:perthDT(),staffName:staff,store,
     category:ruleTitle,severity,step,status:step,description:desc,actionTaken:action,followUpDate:followUp};
   auditLog('create','violation',rec.id,rec.store,null,rec);
   DB.modules.violation.records.unshift(rec);
@@ -205,7 +205,7 @@ function renderTraining(){
   const recs=scopedRecords('training');
   const done=recs.filter(r=>r.status==='Completed').length;
   const roles=Object.keys(trnTopics()).length;
-  const thisMonth=recs.filter(r=>(r.sessionDate||'').slice(0,7)===new Date().toISOString().slice(0,7)).length;
+  const thisMonth=recs.filter(r=>(r.sessionDate||'').slice(0,7)===perthMonth()).length;
   const ratingColor=v=>(TRN_RATINGS.find(r=>r[0]===v)||['','#888','#eee']);
   $('#content').innerHTML=`
     <div class="page-head"><div class="ph-ic" style="background:#fdeaea">🎓</div><div><h2>Training Assessment</h2><p>Run and score staff training sessions; track who is achieving each skill.</p></div>
@@ -269,7 +269,7 @@ function trnSave(){ const name=$('#trn-name').value.trim(), role=$('#trn-role').
   if(!name||!role){ toast('Enter trainee name and role'); return; }
   const rows=[...document.querySelectorAll('#trn-topics .trow')]; const ach=rows.filter(r=>r.classList.contains('s-ach')).length; const tot=rows.length||0;
   const id=makeRecordId('TRN',State.branch);
-  const rec={id,created:new Date().toISOString().slice(0,16).replace('T',' '),traineeName:name,traineeRole:role,trainerName:$('#trn-trainer').value,
+  const rec={id,created:perthDT(),traineeName:name,traineeRole:role,trainerName:$('#trn-trainer').value,
     sessionDate:$('#trn-date').value,status:'Completed',overallRating:State.trn.rating||'Good',score:`${ach}/${tot}`,keyAchievements:$('#trn-ach').value,needsImprovement:$('#trn-imp').value,store:State.branch};
   auditLog('create','training',rec.id,rec.store,null,rec);
   DB.modules.training.records.unshift(rec);
@@ -282,7 +282,7 @@ function renderReward(){
   setAccent('#2e7d32'); setCrumb('🏆','Monthly Rewards','Recognise & reward your team');
   const recs=scopedRecords('reward');
   const months=[...new Set(recs.map(r=>r.rewardMonth))].sort().reverse();
-  const month=State.rwdMonth||months[0]||new Date().toISOString().slice(0,7);
+  const month=State.rwdMonth||months[0]||perthMonth();
   const mRecs=recs.filter(r=>r.rewardMonth===month);
   const eom=mRecs.find(r=>r.awardType==='Employee of the Month');
   const staff=['— Select staff —',...DB.staff.filter(x=>isSuper()||x.store===State.branch).map(x=>x.name)];
@@ -313,9 +313,9 @@ function renderReward(){
 function rwdMonth(m){ State.rwdMonth=m; renderReward(); }
 function rwdExport(fmt){ const cols=[{label:'Month',get:r=>r.rewardMonth},{label:'Award',get:r=>r.awardType},{label:'Staff',get:r=>r.staffName},{label:'Store',get:r=>r.store},{label:'Amount ($)',get:r=>r.rewardAmount||0},{label:'Status',get:r=>r.status}]; expRecords('Monthly Rewards',cols,scopedRecords('reward'),fmt); }
 function rwdSubmit(){ const staff=$('#rwd-staff').value.trim(); if(!staff||staff.startsWith('—')){toast('Select a staff member');return;}
-  const month=State.rwdMonth||new Date().toISOString().slice(0,7);
+  const month=State.rwdMonth||perthMonth();
   const store=storeForWrite($('#rwd-store')?.value);
-  const rec={id:makeRecordId('RWD',store),rewardMonth:month,awardType:$('#rwd-type').value,staffName:staff,store,rewardAmount:+$('#rwd-amt').value||0,status:'Proposed',created:new Date().toISOString().slice(0,16).replace('T',' ')};
+  const rec={id:makeRecordId('RWD',store),rewardMonth:month,awardType:$('#rwd-type').value,staffName:staff,store,rewardAmount:+$('#rwd-amt').value||0,status:'Proposed',created:perthDT()};
   auditLog('create','reward',rec.id,rec.store,null,rec);
   DB.modules.reward.records.unshift(rec);
   if(window.persist) window.persist();
@@ -337,7 +337,7 @@ function renderRaise(){
     <div class="vio-grid">
       <div class="card"><div class="card-head"><h3><i class="fas fa-file-signature"></i>&nbsp; Create raise review</h3></div><div class="card-pad"><div class="grid2">
         <div class="field"><label>Staff</label>${staffPick('rai-staff','','','Search staff…',{onchange:'raiPerfHint()'})}</div>
-        <div class="field"><label>Review month</label><input type="month" id="rai-month" value="${new Date().toISOString().slice(0,7)}"></div>
+        <div class="field"><label>Review month</label><input type="month" id="rai-month" value="${perthMonth()}"></div>
         <div class="field full" id="rai-perf-wrap" style="display:none"><div class="vio-suggest" id="rai-perf"></div></div>
         <div class="field"><label>Current rate ($/h)</label><input type="number" step="0.5" id="rai-cur" placeholder="27.50"></div>
         <div class="field"><label>Proposed rate ($/h)</label><input type="number" step="0.5" id="rai-prop" placeholder="29.00"></div>
@@ -360,7 +360,7 @@ function raiExport(fmt){ const cols=[{label:'Staff',get:r=>r.staffName},{label:'
 function raiSubmit(){ const staff=$('#rai-staff').value.trim(); if(!staff||staff.startsWith('—')){toast('Select a staff member');return;}
   const staffStore=(DB.staff.find(x=>x.name===staff)||{}).store;
   const store=storeForWrite(staffStore||State.branch);
-  const rec={id:makeRecordId('RAI',store),staffName:staff,store,reviewMonth:$('#rai-month').value,currentRate:+$('#rai-cur').value||0,proposedRate:+$('#rai-prop').value||0,effectiveDate:$('#rai-eff').value,status:'Submitted',managerNotes:$('#rai-notes').value,created:new Date().toISOString().slice(0,16).replace('T',' ')};
+  const rec={id:makeRecordId('RAI',store),staffName:staff,store,reviewMonth:$('#rai-month').value,currentRate:+$('#rai-cur').value||0,proposedRate:+$('#rai-prop').value||0,effectiveDate:$('#rai-eff').value,status:'Submitted',managerNotes:$('#rai-notes').value,created:perthDT()};
   auditLog('create','raise',rec.id,rec.store,null,rec);
   DB.modules.raise.records.unshift(rec);
   if(window.persist) window.persist();

@@ -824,7 +824,7 @@ def check_overdue_and_alert():
             except Exception: continue
             deadlines = st.get('checklistDeadlines') or {}
             if now_p.weekday() == 6:   # Sunday runs a later schedule at every store
-                deadlines = {'Opening': '12:30 PM', 'Mid-afternoon': '3:30 PM', 'Closing': '7:30 PM'}
+                deadlines = {'Opening': '12:30 PM', 'Mid-afternoon': '3:30 PM', 'Closing': '6:30 PM'}
             items = st.get('checklistItems')
             if isinstance(items, str):
                 try: items = json.loads(items)

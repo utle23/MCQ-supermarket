@@ -116,8 +116,11 @@ function renderStaffHome(){
 }
 
 /* ============================================================ CHECKLIST — Opening/Closing + photo capture */
-const CK_DEADLINE={Opening:'11:00 AM','Mid-afternoon':'4:30 PM',Closing:'9:30 PM'};
-const CK_SUNDAY={Opening:'12:30 PM','Mid-afternoon':'3:30 PM',Closing:'7:30 PM'};   // Sundays run later at every store
+const CK_DEADLINE={Opening:'10:30 AM','Mid-afternoon':'4:30 PM',Closing:'9:30 PM'};
+const CK_SUNDAY={Opening:'12:30 PM','Mid-afternoon':'3:30 PM',Closing:'6:30 PM'};   // Sundays run later at every store
+/* manager must VERIFY each submitted checklist by these times (30 min after the checklist due) */
+const CK_VERIFY={Opening:'11:00 AM','Mid-afternoon':'5:00 PM',Closing:'10:00 PM'};
+const CK_SUNDAY_VERIFY={Opening:'1:00 PM','Mid-afternoon':'4:00 PM',Closing:'7:00 PM'};
 function ckJS(s){ return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'"); }
 function staffNorm(s){ return String(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase(); }
 function staffScopeList(){
@@ -248,10 +251,24 @@ function ckInSession(r,session){
   return false;
 }
 function ckDeadline(session){
-  // Sundays have their own full schedule (stores open later): 12:30 PM / 3:30 PM / 7:30 PM
+  // Sundays have their own full schedule (stores open later): 12:30 PM / 3:30 PM / 6:30 PM
   const ds=(State.chk&&State.chk.date)||ckTodayStr(); const d=new Date(ds+'T00:00');
   if(d.getDay()===0 && CK_SUNDAY[session]) return CK_SUNDAY[session];
   return ((DB.checklist&&DB.checklist.deadlines)||{})[session] || CK_DEADLINE[session] || '';
+}
+function ckVerifyDeadline(session,dateStr){
+  const ds=dateStr||ckTodayStr(); const d=new Date(ds+'T00:00');
+  return ((d.getDay()===0)?CK_SUNDAY_VERIFY:CK_VERIFY)[session]||'';
+}
+function ckPastTime(txt,dateStr){   // Perth "now" is past e.g. "10:30 AM" on dateStr?
+  try{
+    if(!txt) return false;
+    const ds=dateStr||ckTodayStr(), today=ckTodayStr();
+    if(ds<today) return true; if(ds>today) return false;
+    const m=String(txt).trim().match(/(\d{1,2}):(\d{2})\s*(AM|PM)/i); if(!m) return false;
+    let h=(+m[1])%12; if(/pm/i.test(m[3])) h+=12;
+    const n=perthNow(); return (n.getHours()*60+n.getMinutes())>(h*60+(+m[2]));
+  }catch(e){ return false; }
 }
 function ckEditDeadline(session){ const v=prompt('Deadline for '+session+' (e.g. 10:30 AM):', ckDeadline(session)); if(v==null) return;
   DB.checklist.deadlines=DB.checklist.deadlines||{}; DB.checklist.deadlines[session]=v.trim(); ckPersistTemplate(); renderChecklist(); toast('✓ Deadline updated'); }
@@ -261,7 +278,14 @@ function ckEditDeadline(session){ const v=prompt('Deadline for '+session+' (e.g.
 function ckDraftKey(){ return 'mcq_ckdraft_'+(ckActiveStore()||'store')+'_'+ckTodayStr(); }
 let _ckDraftTimer=null;
 function ckWriteDraft(){ try{ if(!State.chk) return; if(State.chk._day&&State.chk._day!==ckTodayStr()) return;   // day rolled over — never save yesterday's ticks under today's key
-  localStorage.setItem(ckDraftKey(), JSON.stringify({state:State.chk.state||{}, resp:State.chk.resp||{}, t:Date.now()})); }catch(e){} }
+  // blob: object URLs die on reload (Android kills the page while the camera is open) —
+  // save only durable photo refs so restore never shows dead tiles
+  const clean={};
+  Object.keys(State.chk.state||{}).forEach(k=>{ const st=State.chk.state[k]; if(!st) return;
+    const c=Object.assign({},st);
+    if(Array.isArray(c.photos)) c.photos=c.photos.filter(p=>typeof p==='string'&&p.indexOf('blob:')!==0);
+    clean[k]=c; });
+  localStorage.setItem(ckDraftKey(), JSON.stringify({state:clean, resp:State.chk.resp||{}, dept:State.chk.dept||'', session:State.chk.session||'', area:State.chk.area||'ALL', t:Date.now()})); }catch(e){} }
 function ckSaveDraft(){ clearTimeout(_ckDraftTimer); _ckDraftTimer=setTimeout(ckWriteDraft, 500); }   // debounced
 
 /* ---- offline submit queue: if a checklist is submitted with no connection (or the save
@@ -288,6 +312,11 @@ function ckRestoreDraft(){ try{
   const d=JSON.parse(raw);
   if(d && d.state && Object.keys(d.state).length){
     State.chk.state=d.state; State.chk.resp=d.resp||{};
+    // land back on the SAME department & session (Android may reload the app after the camera)
+    const depts=(DB.checklist&&DB.checklist.depts)||[];
+    if(d.dept&&depts.includes(d.dept)) State.chk.dept=d.dept;
+    if(d.session&&['Opening','Mid-afternoon','Closing'].includes(d.session)) State.chk.session=d.session;
+    if(d.area) State.chk.area=d.area;
     try{ Object.values(d.state).forEach(st=>{ ((st&&st.photos)||[]).forEach(id=>{ if(window.MCQDB&&MCQDB.fetchPhoto) MCQDB.fetchPhoto(id); }); }); }catch(e){}
     setTimeout(()=>{ try{ toast('↩ Restored your unsaved checklist for today'); }catch(e){} }, 500);
   }
@@ -406,7 +435,7 @@ function fbSubmit(){
   const msg=String(html).replace(/<[^>]+>/g,' ').replace(/&nbsp;/g,' ').replace(/\s+/g,' ').trim();   // plain text for the feedback list
   if(!msg){ toast('Please write your message first'); return; }
   const rec={ id:'FB-'+Date.now().toString(36), store:State.branch, name:senderName,
-    role:acct.role||'staff', message:msg, ts:new Date().toISOString() };
+    role:acct.role||'staff', message:msg, ts:perthISO() };
   DB.feedback=DB.feedback||[]; DB.feedback.unshift(rec);
   if(window.persist) window.persist();
   // also email the owner/office silently if recipients exist (confidential — not shown to store admin)
@@ -1504,7 +1533,7 @@ async function ckPhoto(input,i){
     const d=await compressImage(f);
     const ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d;
     const idx=(st.photos||[]).indexOf(preview);
-    if(idx>=0){ st.photos[idx]=ref; try{URL.revokeObjectURL(preview);}catch(e){} ckSaveDraft(); if(!r.meta.temp) ckDraw(); }
+    if(idx>=0){ st.photos[idx]=ref; try{URL.revokeObjectURL(preview);}catch(e){} ckWriteDraft(); if(!r.meta.temp) ckDraw(); }   // write-through: Android can kill the page at any moment after the camera
   }catch(e){ /* keep the instant objectURL preview if compression fails */ }
 }
 function ckRmPhoto(e,i,url){
@@ -1688,7 +1717,7 @@ function ckSaveTempReading(i,value,result,manual){
   st.aiSuggestion=null;
   st.aiManualAllowed=false;
   st.done=true;
-  st.temp={value:tempValue,inRange,type:r.meta.type,range:ckTempRange(r.meta.type).text,source:result.source||'AI Vision OCR',ocrText:result.text||'',confidence:result.confidence||null,quality:result.quality||null,manual:!!manual,confirmedBy:manual?ckTempConfirmer():'',suggestedValue:result.suggestedValue??null,rawReading:result.rawReading||result.text||'',at:new Date().toISOString()};
+  st.temp={value:tempValue,inRange,type:r.meta.type,range:ckTempRange(r.meta.type).text,source:result.source||'AI Vision OCR',ocrText:result.text||'',confidence:result.confidence||null,quality:result.quality||null,manual:!!manual,confirmedBy:manual?ckTempConfirmer():'',suggestedValue:result.suggestedValue??null,rawReading:result.rawReading||result.text||'',at:perthISO()};
   ckRecordTemp(i,st.temp);
   if(!inRange) ckQueueTempAlert(i,st.temp);
   ckDraw(); ckSaveDraft();
@@ -1769,7 +1798,7 @@ function ckRecordTemp(i,temp){
   State.tempReadings=State.tempReadings||[];
   State.tempReadings.unshift({
     item:i,session:State.chk.session,store:ckActiveStore(),dept:r.meta.dept,equipment:r.meta.equipment,type:r.meta.type,
-    value:temp.value,inRange:temp.inRange,defrosting:!!temp.defrosting,range:ckTempRange(r.meta.type).text,source:temp.source||'',confidence:temp.confidence||null,manual:!!temp.manual,confirmedBy:temp.confirmedBy||'',suggestedValue:temp.suggestedValue??null,rawReading:temp.rawReading||'',at:new Date().toISOString()
+    value:temp.value,inRange:temp.inRange,defrosting:!!temp.defrosting,range:ckTempRange(r.meta.type).text,source:temp.source||'',confidence:temp.confidence||null,manual:!!temp.manual,confirmedBy:temp.confirmedBy||'',suggestedValue:temp.suggestedValue??null,rawReading:temp.rawReading||'',at:perthISO()
   });
 }
 function ckQueueTempAlert(i,temp){
@@ -1777,7 +1806,7 @@ function ckQueueTempAlert(i,temp){
   State.tempAlerts=State.tempAlerts||[];
   State.tempAlerts.unshift({
     item:i,store:ckActiveStore(),session:State.chk.session,dept:r.meta.dept,equipment:r.meta.equipment,
-    value:temp.value,range:temp.range,emails:DB.checklist.tempAlertEmails||[],at:new Date().toISOString()
+    value:temp.value,range:temp.range,emails:DB.checklist.tempAlertEmails||[],at:perthISO()
   });
   const endpoint=window.MCQ_GMAIL_ALERT_ENDPOINT||localStorage.getItem('mcq_gmail_alert_endpoint');
   if(endpoint){
@@ -1819,7 +1848,7 @@ function ckTempEntries(){
     if(st.temp||st.defrosting) current.push({
       item:i,session:State.chk.session,store:ckActiveStore(),dept:r.meta.dept,equipment:r.meta.equipment,type:r.meta.type,
       value:st.temp?.value??null,inRange:st.defrosting?true:!!st.temp?.inRange,defrosting:!!st.defrosting,
-      range:ckTempRange(r.meta.type).text,at:st.temp?.at||new Date().toISOString()
+      range:ckTempRange(r.meta.type).text,at:st.temp?.at||perthISO()
     });
   });
   const seen=new Set(current.map(e=>`${e.item}-${e.session}`));
@@ -2032,7 +2061,7 @@ function issFormBody(c,mod){
      <div class="field" style="margin-top:14px"><label>Did the customer request follow-up?</label><div class="iss-radios" id="iss-followup"><label class="iss-radio"><input type="radio" name="iss-followup" value="No" checked> No</label><label class="iss-radio"><input type="radio" name="iss-followup" value="Yes"> Yes</label></div></div>
      <div class="field" style="margin-top:14px"><label>Photo / evidence URL <span class="opt">(optional)</span></label><input id="iss-url" placeholder="Paste a link to a photo, screenshot or online review…"></div>`;
   } else if(mod==='incident'){
-    const nowLocal=new Date(Date.now()-new Date().getTimezoneOffset()*60000).toISOString().slice(0,16);
+    const nowLocal=perthISO().slice(0,16);   // default the incident time to PERTH now, not the device timezone
     body=`${nameStore}${prioRow}
      <div class="grid2" style="margin-top:14px">
        <div class="field"><label>Area / Location</label><input id="iss-loc" maxlength="120" placeholder="e.g. Coolroom 1, Aisle 4, Loading dock…"></div>
@@ -3016,7 +3045,7 @@ function schedCompleteSubmit(){
   if(!staff){ toast('Enter completed by staff name'); return; }
   if(!c.photo){ toast('Photo evidence is required'); return; }
   const k=schedTickKey(c.taskId,c.day,c.week||0), store=c.store||schedStore();
-  const rec={id:makeRecordId(t.type==='maintenance'?'MNT':'CLN',store,c.date),tickKey:k,store,date:c.date,day:c.day,type:t.type,dept:t.dept||'',taskId:t.id,task:t.task||'',frequency:t.freq||'',assigned:t.who||'',staffName:staff,note:c.note||'',photo:c.photo,created:new Date().toISOString(),createdBy:(State.account&&State.account.name)||staff};
+  const rec={id:makeRecordId(t.type==='maintenance'?'MNT':'CLN',store,c.date),tickKey:k,store,date:c.date,day:c.day,type:t.type,dept:t.dept||'',taskId:t.id,task:t.task||'',frequency:t.freq||'',assigned:t.who||'',staffName:staff,note:c.note||'',photo:c.photo,created:perthISO(),createdBy:(State.account&&State.account.name)||staff};
   DB.scheduleHistory=DB.scheduleHistory||[]; DB.scheduleHistory.unshift(rec);
   DB.scheduleTicks=DB.scheduleTicks||{}; DB.scheduleTicks[k]=true;
   auditLog('create','scheduleHistory',rec.id,store,null,rec);
@@ -3547,8 +3576,8 @@ function hoSave(store,date){
   DB.scheduleHistory=DB.scheduleHistory||[];
   const id=hoKey(store,date);
   let e=DB.scheduleHistory.find(r=>r.id===id); const before=e?JSON.parse(JSON.stringify(e)):null;
-  if(!e){ e={id,type:'handover',store,date,created:new Date().toISOString()}; DB.scheduleHistory.unshift(e); }
-  Object.assign(e,{onDuty,startNote,endNote,by,at:new Date().toISOString()});
+  if(!e){ e={id,type:'handover',store,date,created:perthISO()}; DB.scheduleHistory.unshift(e); }
+  Object.assign(e,{onDuty,startNote,endNote,by,at:perthISO()});
   if(window.auditLog) auditLog(before?'update':'create','handover',id,store,before,e);
   if(window.persist) window.persist();
   toast('✓ Shift handover saved'); renderHandover();
@@ -3776,10 +3805,15 @@ function mgrVerify(id){
   const a=mgrAssessment();
   const s=mgrSubs().find(x=>x.id===id);
   if(!mgrSubInScope(s)){ toast('This checklist belongs to another store'); return; }
-  const apply=(o)=>{ o.status='Verified'; o.verifyNote=a.verifyNote; o.verifiedBy=a.verifiedBy; o.overallResult=a.overallResult; o.issuesFound=a.issuesFound; o.actionResponsible=a.actionResponsible; o.verifyPhotos=a.verifyPhotos; o.taskNotes=a.taskNotes; o.taskPhotos=a.taskPhotos; o.verifiedAt=new Date().toISOString(); };
+  const apply=(o)=>{ o.status='Verified'; o.verifyNote=a.verifyNote; o.verifiedBy=a.verifiedBy; o.overallResult=a.overallResult; o.issuesFound=a.issuesFound; o.actionResponsible=a.actionResponsible; o.verifyPhotos=a.verifyPhotos; o.taskNotes=a.taskNotes; o.taskPhotos=a.taskPhotos; o.verifiedAt=perthISO(); o.verifiedAtTime=perthTimeHM(); };
   if(s) apply(s);
   const real=(DB.checklistSubs||[]).find(x=>x.id===id && x.store===s.store);
-  if(real){ const before=JSON.parse(JSON.stringify(real)); apply(real); auditLog('verify','checklistSubmission',real.id,real.store,before,real,a.verifyNote); if(window.persist) window.persist(); }
+  if(real){ const before=JSON.parse(JSON.stringify(real)); apply(real); auditLog('verify','checklistSubmission',real.id,real.store,before,real,a.verifyNote);
+    // persist this ONE record straight to its own row (fast + durable, independent of the big
+    // store blob) so a verification is never lost to a slow/concurrent whole-store save
+    if(!navigator.onLine){ ckQueueSub(real); }
+    else if(window.mcqChecklistSubmit){ mcqChecklistSubmit(real).then(r=>{ if(!(r&&r.ok)) ckQueueSub(real); }).catch(()=>ckQueueSub(real)); }
+    if(window.persist) window.persist(); }
   mgrClearVerifyDraft(s);   // committed → the draft is no longer needed (it now lives in the verified record)
   // notify store admin (existing behaviour) when there's any written assessment
   const hasContent=a.verifyNote||a.issuesFound||a.actionResponsible||a.overallResult;
@@ -3987,7 +4021,7 @@ function mgrReview(id){
     <div class="mv-head">
       <div class="mv-ring"><svg viewBox="0 0 64 64"><circle class="bg" cx="32" cy="32" r="26"/><circle class="fg" cx="32" cy="32" r="26" style="stroke-dasharray:${RING.toFixed(1)};stroke-dashoffset:${ringOff.toFixed(1)}"/></svg><b>${pct}%</b></div>
       <div class="mv-title"><h2>${esc(s.department)} · ${esc(s.session)}</h2>
-        <div class="mv-chips"><span class="mv-chip">🏬 ${esc(s.store)}</span><span class="mv-chip">📅 ${esc(s.date)} · ${esc(s.dayName)}</span><span class="mv-chip">👤 ${esc(s.by)}</span>${subTime?`<span class="mv-chip">⏱ submitted ${esc(subTime)}</span>`:''}<span class="mv-chip ${verified?'ok':''}">${verified?'✅ Verified':'🕓 '+esc(s.status||'Submitted')}</span><span class="mv-chip">📷 ${photoN}</span></div></div>
+        <div class="mv-chips"><span class="mv-chip">🏬 ${esc(s.store)}</span><span class="mv-chip">📅 ${esc(s.date)} · ${esc(s.dayName)}</span><span class="mv-chip">👤 ${esc(s.by)}</span>${subTime?`<span class="mv-chip">⏱ submitted ${esc(subTime)}</span>`:''}${(()=>{const vd=ckVerifyDeadline(s.session,s.date);return vd?`<span class="mv-chip ${(!verified&&ckPastTime(vd,s.date))?'late':''}">🛡️ verify by ${esc(vd)}${(verified&&s.verifiedAtTime)?(' · done '+esc(s.verifiedAtTime)):''}</span>`:'';})()}<span class="mv-chip ${verified?'ok':''}">${verified?'✅ Verified':'🕓 '+esc(s.status||'Submitted')}</span><span class="mv-chip">📷 ${photoN}</span></div></div>
       <span class="mv-save" id="mv-draft">✓ Draft saved</span>
       <button class="mv-x" onclick="closeDrawer()" title="Close — your notes stay saved as a draft">✕</button>
     </div>
@@ -4074,9 +4108,11 @@ function renderManager(){
     }).join('')}
   </div>`:'';
   const cards=shown.map(s=>{const meta=dm[s.department]||{color:'#0f766e'}, isToday=s.date===todayStr;
-    return `<div class="pv-card" style="--c:${meta.color}"><span class="pv-stripe"></span>
+    const vDue=ckVerifyDeadline(s.session,s.date), vOverdue=vDue&&ckPastTime(vDue,s.date);
+    return `<div class="pv-card ${vOverdue?'pv-late':''}" style="--c:${meta.color}"><span class="pv-stripe"></span>
       <div class="pv-head"><b>${esc(s.department)}</b><span class="badge ${s.session==='Opening'?'warn':'info'}">${s.session}</span>${isToday?'<span class="badge ok">Today</span>':''}</div>
       <div class="pv-meta"><span>📅 ${esc(s.date)} — ${esc(s.dayName)}</span>${isSuper()?`<span>🏪 ${esc(s.store)}</span>`:''}<span>👤 ${esc(s.by)}</span></div>
+      <div class="pv-meta"><span class="pv-due ${vOverdue?'late':''}">${vOverdue?'⏰ Verify overdue':'🛡️ Verify by'} ${esc(vDue)}</span></div>
       <div class="pv-prog"><span class="pbar" style="flex:1"><i style="width:${s.progress}%"></i></span><b>${s.done}/${s.total}</b></div>
       <button class="btn primary block sm" onclick="mgrReview('${s.id}')"><i class="fas fa-eye"></i>&nbsp; Review &amp; Verify</button></div>`;}).join('');
   $('#content').innerHTML=`
@@ -4432,7 +4468,7 @@ window.mcqEmail={
   },
   log(to,subject,ok,error){
     try{ DB.emailLog=DB.emailLog||[];
-      DB.emailLog.unshift({ts:new Date().toISOString(), to:(to||[]).map(r=>r.email||r).filter(Boolean), subject:subject||'', ok:!!ok, error:error||'', store:(window.State&&State.branch)||''});
+      DB.emailLog.unshift({ts:perthISO(), to:(to||[]).map(r=>r.email||r).filter(Boolean), subject:subject||'', ok:!!ok, error:error||'', store:(window.State&&State.branch)||''});
       if(DB.emailLog.length>100) DB.emailLog.length=100;
       if(window.persist) window.persist();
       if(window.State&&State.route==='email' && typeof renderEmail==='function' && document.getElementById('email-log-body')) renderEmailLog();
@@ -4661,7 +4697,7 @@ function cfgLocalData(store){ return {store,staff:(DB.staff||[]).filter(s=>s.sto
 function cfgSelectStore(store){ const c=cfgState(); c.store=store; c.data=null; c.error=''; cfgLoad(store); renderStoreConfig(); }
 function cfgTab(tab){ cfgState().tab=tab; renderStoreConfig(); }
 async function cfgLoad(store){ const c=cfgState(); c.loading=true; c.error=''; renderStoreConfig(); try{ c.data=(window.MCQDB&&MCQDB.fetchStoreConfig)?await MCQDB.fetchStoreConfig(store):cfgLocalData(store); }catch(e){ c.error=(e&&e.message)||'Could not load store config'; c.data=cfgLocalData(store); } c.loading=false; renderStoreConfig(); }
-function cfgAudit(action,entity,id,before,after,note){ const c=cfgState(); if(!c.data)return; const u=auditUser(); c.data.auditLogs=c.data.auditLogs||[]; c.data.auditLogs.unshift({id:makeRecordId('AUD',c.store),created:new Date().toISOString(),store:c.store,user:u.name,role:u.role,action,entity,entityId:id,note:note||'',changes:auditDiff(before,after)}); }
+function cfgAudit(action,entity,id,before,after,note){ const c=cfgState(); if(!c.data)return; const u=auditUser(); c.data.auditLogs=c.data.auditLogs||[]; c.data.auditLogs.unshift({id:makeRecordId('AUD',c.store),created:perthISO(),store:c.store,user:u.name,role:u.role,action,entity,entityId:id,note:note||'',changes:auditDiff(before,after)}); }
 function cfgDirty(){ cfgState().dirty=true; }
 function cfgStaffSet(i,k,v){ const c=cfgState(), row=c.data.staff[i]; if(!row)return; const before=cfgClone(row); row[k]=k==='active'?(v==='1'?1:0):v; row.store=c.store; cfgAudit('update','staff',row.id,before,row); cfgDirty(); }
 function cfgStaffAdd(){ const c=cfgState(); c.data.staff.unshift({id:storeCode(c.store)+'-'+String(20000+Math.floor(Math.random()*9000)),name:'New staff',role:'Staff',store:c.store,phone:'',dob:'',start:todayISO(),active:1}); cfgAudit('create','staff',c.data.staff[0].id,null,c.data.staff[0]); cfgDirty(); renderStoreConfig(); }
@@ -4929,10 +4965,10 @@ function dataStoreSnapshot(store){
 function dataBackupAll(){
   try{
     const FB=window.MCQDB; const build=(FB&&FB.buildStoreState)?(s=>FB.buildStoreState(s)):dataStoreSnapshot;
-    const stamp=new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+    const stamp=perthISO().slice(0,19).replace(/[:T]/g,'-');
     const list=isSuper()?(DB.stores||DB.branches||[]):[State.branch];
     const stores={}; list.forEach(s=>{ try{ stores[s]=build(s); }catch(e){ stores[s]=dataStoreSnapshot(s); } });
-    const payload={ type:'mcq-backup', app:'MCQ Supermarket', scope:isSuper()?'all-stores':State.branch, generated:new Date().toISOString(), storeCount:list.length, stores };
+    const payload={ type:'mcq-backup', app:'MCQ Supermarket', scope:isSuper()?'all-stores':State.branch, generated:perthISO(), storeCount:list.length, stores };
     const json=JSON.stringify(payload,null,2); const blob=new Blob([json],{type:'application/json'});
     expDownload(blob, 'MCQ-backup-'+(isSuper()?'all-stores':dataStoreId(State.branch))+'-'+stamp+'.json');
     toast('💾 Backup downloaded — '+list.length+' store(s), '+dataFmtSize(blob.size));

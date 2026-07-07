@@ -34,7 +34,13 @@ function todayISO(){ return dISO(); }
 function perthTimeHM(){ const p=perthNow(); return String(p.getHours()).padStart(2,'0')+':'+String(p.getMinutes()).padStart(2,'0'); }
 function perthStamp(){ try{ return new Date().toLocaleString('en-AU',{timeZone:MCQ_TZ}); }catch(e){ return perthNow().toLocaleString(); } }
 function perthDateLbl(opts){ try{ return new Date().toLocaleDateString('en-AU',Object.assign({timeZone:MCQ_TZ},opts||{})); }catch(e){ return perthNow().toLocaleDateString(undefined,opts); } }
-try{ window.dISO=dISO; window.todayISO=todayISO; window.perthNow=perthNow; window.perthTimeHM=perthTimeHM; window.perthStamp=perthStamp; window.perthDateLbl=perthDateLbl; }catch(e){}
+// Full Perth timestamp 'YYYY-MM-DDTHH:MM:SS' — the Perth replacement for new Date().toISOString()
+// (UTC would read as YESTERDAY / the wrong hour before 8am). Slicing behaves the same.
+function perthISO(){ const p=perthNow(), z=n=>String(n).padStart(2,'0');
+  return p.getFullYear()+'-'+z(p.getMonth()+1)+'-'+z(p.getDate())+'T'+z(p.getHours())+':'+z(p.getMinutes())+':'+z(p.getSeconds()); }
+function perthMonth(){ return perthISO().slice(0,7); }                 // 'YYYY-MM' in Perth
+function perthDT(){ return perthISO().slice(0,16).replace('T',' '); }  // 'YYYY-MM-DD HH:MM' in Perth
+try{ window.dISO=dISO; window.todayISO=todayISO; window.perthNow=perthNow; window.perthTimeHM=perthTimeHM; window.perthStamp=perthStamp; window.perthDateLbl=perthDateLbl; window.perthISO=perthISO; window.perthMonth=perthMonth; window.perthDT=perthDT; }catch(e){}
 
 const STORES = ['Morley','Mirrabooka','Malaga','Subiaco','Armadale','Warehouse'];
 const DRIVERS = ['Chu Phuoc','Chu Tam','Michael Tran','Duy Quyen Pham','Duy Thanh Le','Nguyen Ba Cong','Nguyen Thanh Tri'];

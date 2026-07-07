@@ -51,7 +51,7 @@ function auditLog(action,entity,entityId,store,before,after,note){
   const st=storeForWrite(store || (after&&after.store) || (before&&before.store));
   const u=auditUser();
   DB.auditLogs=DB.auditLogs||[];
-  DB.auditLogs.unshift({id:makeRecordId('AUD',st),created:new Date().toISOString(),store:st,user:u.name,role:u.role,action,entity,entityId,note:note||'',changes:auditDiff(before,after)});
+  DB.auditLogs.unshift({id:makeRecordId('AUD',st),created:perthISO(),store:st,user:u.name,role:u.role,action,entity,entityId,note:note||'',changes:auditDiff(before,after)});
   if(DB.auditLogs.length>800) DB.auditLogs.length=800;
 }
 function syncScopeLabel(account){

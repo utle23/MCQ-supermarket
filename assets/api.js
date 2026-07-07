@@ -72,7 +72,16 @@
   // employee edits ONE staff row (own profile) — patches only, never the whole store blob
   window.mcqStaffProfile=function(store,staffId,patch){ return _authFetch('/api/staff-profile',{method:'POST',body:JSON.stringify({store:store,staff_id:staffId,patch:patch||{}})}); };
   window.mcqStaffImport=function(rows){ return _authFetch('/api/staff/import',{method:'POST',body:JSON.stringify({rows:rows||[]})}); };
-  window.mcqChecklistSubmit=function(sub){ return _authFetch('/api/checklist/submit',{method:'POST',body:JSON.stringify({sub:sub||{}})}); };
+  window.mcqChecklistSubmit=function(sub){
+    // one small checklist record → its own row. keepalive lets the POST finish even if the
+    // store device navigates away or the app is closed the instant after Submit (Android),
+    // so a finished checklist / verification is never lost. Body is well under the 64KB
+    // keepalive limit (photos are refs, not blobs).
+    var tok=(window.localStorage&&localStorage.getItem('mcq_token'))||'';
+    return fetch((BASE||'')+'/api/checklist/submit',{method:'POST',keepalive:true,
+      headers:{'Content-Type':'application/json',Authorization:'Bearer '+tok},
+      body:JSON.stringify({sub:sub||{}})})
+      .then(function(r){return r.json().catch(function(){return {ok:false};});}).catch(function(){return {ok:false};}); };
   window.mcqDeptLeads=function(store){ return _authFetch('/api/dept-leads/'+encodeURIComponent(store)); };
   window.mcqDeptLeadRemove=function(payload){ return _authFetch('/api/dept-lead/remove',{method:'POST',body:JSON.stringify(payload||{})}); };
   // ---- inbox / messaging ----
@@ -186,10 +195,18 @@
     }catch(e){}
     // mirror locally FIRST so the data survives even if the network/tab dies before the POST lands
     try{ if(state && FB.writeCache) FB.writeCache(store, state); }catch(e){}
+    // SPEED: every checklist submission (create AND verify) is saved to its own row via
+    // /api/checklist/submit and rebuilt from that table on load — so the growing history array
+    // does NOT need to ride along in every routine whole-store save. Dropping it here keeps the
+    // POST body small and fast even for stores with months of submissions (the #1 cause of the
+    // "syncing gets slower as data grows" the store devices were seeing). It stays in the local
+    // cache above, so an offline reload still shows everything.
+    var body=state;
+    try{ if(state && state.checklistSubs!=null){ body={}; for(var k in state){ if(k!=='checklistSubs') body[k]=state[k]; } } }catch(e){ body=state; }
     // NOTE: no `keepalive` — the full state often exceeds the 64KB keepalive limit, which would
     // make fetch throw and silently drop the save. Durability on unload is covered by the local
     // cache mirror above + the awaited logout flush + the retry loop.
-    return fetch(api('/api/state/'+encodeURIComponent(store)), {method:'POST', headers:headers(true), body:JSON.stringify({state:state, client:CLIENT_ID})})
+    return fetch(api('/api/state/'+encodeURIComponent(store)), {method:'POST', headers:headers(true), body:JSON.stringify({state:body, client:CLIENT_ID})})
       .then(function(r){ if(!r.ok) throw new Error('save '+r.status); return r.json().catch(function(){return {};}); });
   }
 
