@@ -124,25 +124,27 @@ function showLogin(notice){
       <div id="login-err" class="login-err"></div>
       <button class="login-btn" onclick="doLogin()">Sign In →</button>
       <div class="login-or"><span>or</span></div>
-      <button class="faceid-btn" onclick="faceIdLogin()">
+      <button class="faceid-btn" id="fid-btn" onclick="faceIdLogin()">
         <span class="fid-ic">🪪</span> Sign in with Face ID
       </button>
       <button class="activate-btn" onclick="actOpen()"><span class="act-spark">✨</span> Activate your account <span class="act-arrow">→</span></button>
       <div class="login-hint" id="login-hint"></div>
       <div class="login-feats">
-        <span>✅ Checklists</span><span>📷 Photo proof</span><span>📊 Analytics</span><span>🪪 Face ID</span>
+        <span>✅ Checklists</span><span>📷 Photo proof</span><span>📊 Analytics</span><span id="fid-feat">🪪 Face ID</span>
       </div>
     </div>
-    <!-- FaceID scanner modal -->
-    <div id="fid-modal" class="fid-modal"><div class="fid-box">
-      <div class="fid-ring"><video id="fid-video" autoplay playsinline muted></video><div class="fid-scan"></div></div>
-      <div class="fid-title">Scanning face…</div>
-      <div class="fid-sub" id="fid-sub">Look at the camera</div>
-      <button class="btn" onclick="closeFid()">Cancel</button>
+    <!-- Face ID sign-in (WebAuthn — the OS shows its own biometric sheet; no camera here) -->
+    <div id="fid-modal" class="fid2-modal"><div class="fid2-box">
+      <div class="fid2-glyph" id="fid-glyph"><i class="c tl"></i><i class="c tr"></i><i class="c bl"></i><i class="c br"></i><span class="fid2-face" id="fid-face">🙂</span><span class="fid2-scanline"></span></div>
+      <div class="fid2-title" id="fid-title">Sign in with Face ID</div>
+      <div class="fid2-sub" id="fid-sub"></div>
+      <div class="fid2-people" id="fid-people" style="display:none"></div>
+      <div class="fid2-actions" id="fid-actions"></div>
     </div></div>`;
   $('#login-id').addEventListener('keydown',e=>{ if(e.key==='Enter') doLogin(); });
   $('#login-pw').addEventListener('keydown',e=>{ if(e.key==='Enter') doLogin(); });
   updateLoginHint();
+  initFaceBtn();
 }
 function togglePw(){ const p=$('#login-pw'); p.type=p.type==='password'?'text':'password'; }
 
@@ -370,7 +372,7 @@ function doLogin(){
   if(window.MCQDB && MCQDB._api && MCQDB.login){
     const btn=$('.login-btn'); if(btn){ btn.disabled=true; btn.textContent='Signing in…'; }
     MCQDB.login('auto', '', pw, loginId).then(res=>{
-      if(res && res.ok){ loginAs(res.role, (res.role==='super'||res.role==='ba')?'All stores':res.store, {staffId:res.staff_id, name:res.staff_name, accountId:res.account_id, needsProfile:res.needs_profile, acctAdmin:res.acct_admin}); }
+      if(res && res.ok){ loginAs(res.role, (res.role==='super'||res.role==='ba')?'All stores':res.store, {staffId:res.staff_id, name:res.staff_name, accountId:res.account_id, needsProfile:res.needs_profile, acctAdmin:res.acct_admin}); maybeFaceNudge(); }
       else { if(btn){ btn.disabled=false; btn.textContent='Sign In →'; } loginFail(res&&res.error?res.error:(loginId?'Incorrect ID or password.':'Incorrect password — or enter your ID above if you have one.')); }
     }).catch(()=>{ if(btn){ btn.disabled=false; btn.textContent='Sign In →'; } loginFail('Cannot reach the server.'); });
     return;
@@ -615,34 +617,104 @@ async function logout(reason){
   showLogin(reason);
 }
 
-/* Face ID — REAL device biometric via WebAuthn (Face ID / Touch ID / Windows Hello) */
+/* ============ Face ID sign-in — WebAuthn (the OS shows its own biometric sheet) ============
+   Staged, professional flow: person picker on shared devices → OS prompt → success/error
+   states with Try-again / Use-password. Revoked credentials clean themselves up. */
+function fidRoleLabel(c){ const m={admin:'Manager',staff:'Dept Lead',employee:'Staff',super:'Super Admin',ba:'Viewer'};
+  return (m[c.role]||'')+(c.store?(' · '+c.store):''); }
+function fidState(state,title,sub,actionsHtml){
+  const g=$('#fid-glyph'), t=$('#fid-title'), su=$('#fid-sub'), ac=$('#fid-actions'), face=$('#fid-face');
+  if(g){ g.classList.remove('scan','ok','err'); if(state) g.classList.add(state==='success'?'ok':state==='error'?'err':'scan'); }
+  if(face) face.textContent=state==='success'?'✅':state==='error'?'⚠️':'🙂';
+  if(t) t.textContent=title||'';
+  if(su) su.innerHTML=sub||'';
+  if(ac) ac.innerHTML=actionsHtml||'';
+}
+function fidBtnPassword(){ return '<button class="btn" onclick="closeFid()">Use password instead</button>'; }
+function fidBtnRetry(credId){ return '<button class="btn primary" onclick="fidRetry(\''+credId+'\')">🪪 Try again</button>'; }
 async function faceIdLogin(){
-  const modal=$('#fid-modal'), sub=$('#fid-sub'), title=$('.fid-title');
-  if(!window.MCQFace){ loginFail('Face ID module not loaded'); return; }
-  modal.classList.add('open'); if(title) title.textContent='Face ID / Touch ID';
+  const modal=$('#fid-modal'); if(!modal || !window.MCQFace) return;
+  modal.classList.add('open');
+  const people=$('#fid-people'); if(people){ people.style.display='none'; people.innerHTML=''; }
+  if(!window.PublicKeyCredential){
+    fidState('error','Face ID not available','This device/browser does not support Face ID (WebAuthn).',fidBtnPassword()); return;
+  }
   const v2=MCQFace.listV2?MCQFace.listV2():[];
   if(!v2.length){
     const hasLegacy=MCQFace.legacy&&MCQFace.legacy().length;
-    if(sub) sub.textContent=hasLegacy
-      ? 'Security upgrade needed — sign in once with your ID/password, then re-enrol in Account → Face ID.'
-      : 'No Face ID on this device yet — sign in, then enrol in Account → Face ID.';
-    setTimeout(closeFid,3000); return;
+    fidState('error','No Face ID on this device yet',
+      hasLegacy?'Security upgrade needed — sign in once with your ID/password, then re-enable Face ID from the banner or Account → Face ID.'
+               :'Sign in with your password once — you will be offered Face ID right after, or enable it any time in Account → Face ID.',
+      fidBtnPassword());
+    return;
   }
-  if(sub) sub.textContent='Follow the Face ID / Touch ID prompt on your device…';
+  if(v2.length>1){   // shared store device → pick WHO you are first
+    fidState('','Who is signing in?','Choose your name, then confirm with Face ID / Touch ID.',fidBtnPassword());
+    if(people){
+      people.style.display='';
+      people.innerHTML=v2.map(c=>`<button class="fid2-person" onclick="fidPick('${esc(c.id)}')"><span class="fp-ava">${esc((c.who||c.label||'?').trim().slice(0,1).toUpperCase())}</span><span class="fp-t"><b>${esc(c.label||c.who||'')}</b><small>${esc(fidRoleLabel(c))}</small></span><span class="fp-go">›</span></button>`).join('');
+    }
+    return;
+  }
+  fidAttempt(v2[0].id);
+}
+function fidPick(credId){ const people=$('#fid-people'); if(people){ people.style.display='none'; } fidAttempt(credId); }
+function fidRetry(credId){ fidAttempt(credId); }
+async function fidAttempt(credId){
+  const v2=(MCQFace.listV2?MCQFace.listV2():[]);
+  const entry=v2.find(c=>c.id===credId)||v2[0]||{};
+  fidState('scan','Confirm it\u2019s you','Use <b>Face ID / Touch ID</b> on your device to continue'+(entry.label?(' as <b>'+esc(entry.label)+'</b>')  :'')+'…','<button class="btn" onclick="closeFid()">Cancel</button>');
   try{
-    const res=await MCQFace.login();   // biometric → device secret → REAL server session
-    if(sub) sub.innerHTML='✅ Welcome, '+esc(res.staff_name||res._label||'')+' — signing in…';
+    const res=await MCQFace.login(credId);   // biometric → device secret → REAL server session
+    fidState('success','Welcome back, '+(res.staff_name||res._label||'')+' 👋','Signing you in…','');
     setTimeout(()=>{ closeFid();
       loginAs(res.role, (res.role==='super'||res.role==='ba')?'All stores':res.store,
         {staffId:res.staff_id, name:res.staff_name, accountId:res.account_id, needsProfile:res.needs_profile, acctAdmin:res.acct_admin});
-    }, 600);
+    }, 650);
   }catch(e){
-    if(sub) sub.textContent='❌ '+((e&&e.message)||'Face ID failed');
-    setTimeout(closeFid,2400);
+    if(e && e.code==='server'){
+      // the server no longer accepts this credential (revoked / account removed) → self-clean
+      try{ if(e.credId && MCQFace.removeLocal) MCQFace.removeLocal(e.credId); }catch(_){ }
+      fidState('error','This Face ID was revoked',
+        (e.label?('The Face ID for <b>'+esc(e.label)+'</b> was removed by an administrator or the account changed. '):'')+
+        'Sign in with your password, then enable Face ID again.',fidBtnPassword());
+      initFaceBtn();
+      return;
+    }
+    fidState('error','Face ID didn\u2019t go through', esc((e&&e.message)||'Face ID failed.'), fidBtnRetry(credId)+fidBtnPassword());
   }
 }
-function closeFid(){ const m=$('#fid-modal'); if(m) m.classList.remove('open');
-  if(State._fidStream){ State._fidStream.getTracks().forEach(t=>t.stop()); State._fidStream=null; } }
+/* the login button reflects reality: hidden when unsupported, named when one person is enrolled */
+async function initFaceBtn(){
+  const btn=document.getElementById('fid-btn'); if(!btn) return;
+  const chip=document.getElementById('fid-feat'), or=document.querySelector('.login-or');
+  let sup=false; try{ sup=window.MCQFace?await MCQFace.supported():false; }catch(e){}
+  const v2=(window.MCQFace&&MCQFace.listV2)?MCQFace.listV2():[];
+  if(!sup && !v2.length){ btn.style.display='none'; if(chip) chip.style.display='none'; if(or) or.style.display='none'; return; }
+  btn.style.display='';
+  if(!v2.length){ btn.classList.add('muted'); btn.innerHTML='<span class="fid-ic">🪪</span> Face ID — ready after your first sign-in'; }
+  else if(v2.length===1){ btn.classList.remove('muted'); btn.innerHTML='<span class="fid-ic">🪪</span> Sign in with Face ID <small class="fid-who">as '+esc(v2[0].label||v2[0].who||'')+'</small>'; }
+  else { btn.classList.remove('muted'); btn.innerHTML='<span class="fid-ic">🪪</span> Sign in with Face ID <small class="fid-who">'+v2.length+' people on this device</small>'; }
+}
+/* one-time nudge after a PASSWORD login on a capable device: enable Face ID in one tap */
+async function maybeFaceNudge(){
+  try{
+    if(localStorage.getItem('mcq_fid_nudge')) return;
+    if(!(window.MCQFace&&MCQFace.listV2)) return;
+    if(MCQFace.listV2().length){ localStorage.setItem('mcq_fid_nudge','done'); return; }
+    const sup=await MCQFace.supported(); if(!sup) return;
+    setTimeout(()=>{
+      if(!State.account || document.getElementById('fid-nudge')) return;
+      const b=document.createElement('div'); b.className='fid-nudge'; b.id='fid-nudge';
+      b.innerHTML='<span class="fn-ic">🪪</span><div class="fn-t"><b>Sign in with one look next time</b><small>Enable Face ID / Touch ID for this device — takes 10 seconds.</small></div>'+
+        '<button class="btn sm primary" onclick="document.getElementById(\'fid-nudge\').remove();faceEnrollInApp()">Enable</button>'+
+        '<button class="fn-x" title="Not on this device" onclick="try{localStorage.setItem(\'mcq_fid_nudge\',\'dismiss\')}catch(e){};document.getElementById(\'fid-nudge\').remove()">✕</button>';
+      document.body.appendChild(b);
+      setTimeout(()=>{ const n=document.getElementById('fid-nudge'); if(n) n.remove(); }, 30000);
+    }, 2200);
+  }catch(e){}
+}
+function closeFid(){ const m=$('#fid-modal'); if(m) m.classList.remove('open'); }
 
 /* ============================================================ AUTO-LOGOUT (30 min idle) */
 function startIdleWatch(){
@@ -1266,7 +1338,7 @@ function openLightbox(src){ if(!src) return; let ov=document.getElementById('mcq
 }
 function closeLightbox(){ const ov=document.getElementById('mcq-lightbox'); if(ov) ov.style.display='none'; }
 document.addEventListener('keydown',e=>{ if(e.key==='Escape') closeLightbox(); });
-Object.assign(window,{go,openDetail,closeDrawer,submitForm,reviewSave,recSaveAll,recDelete,logout,doLogin,togglePw,updateLoginHint,faceIdLogin,closeFid,toggleGroup,toggleSidebar,closeSidebarM,openLightbox,closeLightbox});
+Object.assign(window,{go,openDetail,closeDrawer,submitForm,reviewSave,recSaveAll,recDelete,logout,doLogin,togglePw,updateLoginHint,faceIdLogin,closeFid,fidPick,fidRetry,initFaceBtn,maybeFaceNudge,toggleGroup,toggleSidebar,closeSidebarM,openLightbox,closeLightbox});
 async function boot(){
   try{ const saved=sessionStorage.getItem('mcq_acct'); if(saved){ State.account=JSON.parse(saved); State.branch=State.account.branch; State.role=State.account.role==='staff'?'store':'ho'; } }catch(e){}
   if(State.account){

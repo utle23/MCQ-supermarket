@@ -1935,3 +1935,43 @@ html,body{max-width:100%}
   .dep-store.bad{background:rgba(220,38,38,.12)}
 }
 @media(max-width:640px){ .dep-stat{flex:1;text-align:center} }
+
+/* ===================== Face ID v2 — professional sign-in modal ===================== */
+.fid2-modal{position:fixed;inset:0;background:rgba(8,12,28,.78);backdrop-filter:blur(8px);display:none;align-items:center;justify-content:center;z-index:120;padding:18px}
+.fid2-modal.open{display:flex}
+.fid2-box{background:linear-gradient(165deg,#101a33,#0b1226);color:#fff;border:1px solid rgba(255,255,255,.09);border-radius:24px;padding:28px 26px 22px;text-align:center;width:min(390px,100%);box-shadow:0 40px 90px rgba(0,0,0,.5)}
+.fid2-glyph{position:relative;width:120px;height:120px;margin:0 auto 16px;display:grid;place-items:center}
+.fid2-face{font-size:52px;transition:.2s}
+.fid2-glyph .c{position:absolute;width:26px;height:26px;border:3px solid #3b82f6;border-radius:8px;opacity:.95;transition:border-color .25s}
+.fid2-glyph .c.tl{top:0;left:0;border-right:0;border-bottom:0}
+.fid2-glyph .c.tr{top:0;right:0;border-left:0;border-bottom:0}
+.fid2-glyph .c.bl{bottom:0;left:0;border-right:0;border-top:0}
+.fid2-glyph .c.br{bottom:0;right:0;border-left:0;border-top:0}
+.fid2-scanline{position:absolute;left:12px;right:12px;top:14px;height:2.5px;border-radius:99px;background:linear-gradient(90deg,transparent,#38bdf8,transparent);opacity:0}
+.fid2-glyph.scan .fid2-scanline{opacity:1;animation:fidScan 1.5s ease-in-out infinite}
+@keyframes fidScan{0%,100%{top:14px}50%{top:calc(100% - 16px)}}
+.fid2-glyph.ok .c{border-color:#22c55e}
+.fid2-glyph.err .c{border-color:#ef4444}
+.fid2-title{font-size:17px;font-weight:800;margin-bottom:5px}
+.fid2-sub{font-size:12.5px;color:#b6c4e0;line-height:1.6;min-height:18px}
+.fid2-sub b{color:#fff}
+.fid2-people{display:flex;flex-direction:column;gap:8px;margin:14px 0 4px;max-height:250px;overflow:auto}
+.fid2-person{display:flex;align-items:center;gap:11px;text-align:left;background:rgba(255,255,255,.06);border:1.5px solid rgba(255,255,255,.12);border-radius:14px;padding:10px 13px;color:#fff;cursor:pointer;transition:.13s}
+.fid2-person:hover{background:rgba(59,130,246,.18);border-color:#3b82f6;transform:translateY(-1px)}
+.fp-ava{width:36px;height:36px;flex:none;border-radius:99px;background:linear-gradient(135deg,#0e9f6e,#0891b2);display:grid;place-items:center;font-weight:800;font-size:15px}
+.fp-t{flex:1;min-width:0}
+.fp-t b{display:block;font-size:13.5px}
+.fp-t small{color:#9fb2d4;font-size:11px}
+.fp-go{color:#5b6f95;font-size:20px;font-weight:800}
+.fid2-actions{display:flex;gap:9px;justify-content:center;flex-wrap:wrap;margin-top:16px}
+.fid2-actions .btn{background:rgba(255,255,255,.1);border-color:transparent;color:#fff}
+.fid2-actions .btn.primary{background:linear-gradient(120deg,#0e9f6e,#0891b2)}
+.faceid-btn .fid-who{display:block;width:100%;font-size:10.5px;font-weight:600;color:#0e9f6e;margin-top:2px}
+.faceid-btn.muted{opacity:.72;font-weight:600}
+.fid-nudge{position:fixed;left:50%;transform:translateX(-50%);bottom:18px;z-index:95;display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:12px 16px;box-shadow:0 18px 44px rgba(15,23,42,.25);max-width:min(520px,94vw);animation:mvUp .3s cubic-bezier(.16,1,.3,1)}
+.fn-ic{font-size:24px;flex:none}
+.fn-t{flex:1;min-width:0}
+.fn-t b{display:block;font-size:13px}
+.fn-t small{color:var(--muted);font-size:11.5px}
+.fn-x{flex:none;border:0;background:transparent;color:var(--muted);font-size:14px;cursor:pointer;padding:4px}
+@media(prefers-reduced-motion:reduce){ .fid2-glyph.scan .fid2-scanline{animation:none} }

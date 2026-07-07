@@ -1444,17 +1444,27 @@ def enroll_device(au, cred_id, label):
         conn.close()
 
 def device_login(device_id, secret):
-    """Exchange a device credential for a login identity (the biometric gated the secret)."""
+    """Exchange a device credential for a login identity (the biometric gated the secret).
+    When the credential is bound to an ACCOUNT, the CURRENT account row decides the
+    role/store/name — a store move or role change follows immediately, and a deleted or
+    de-activated account kills the credential (same rules as password login)."""
     conn = connect()
     try:
         row = conn.execute('SELECT * FROM device_creds WHERE id=?', (str(device_id or ''),)).fetchone()
         if not row or row['secret_hash'] != hash_pw(str(secret or '')): return None
         conn.execute('UPDATE device_creds SET last_used=? WHERE id=?', (now(), row['id']))
         conn.commit()
-        meta = {'staff_id': row['staff_id'], 'staff_name': row['staff_name'], 'account_id': row['account_id']}
         if row['account_id']:
-            a = conn.execute('SELECT * FROM accounts WHERE id=?', (row['account_id'],)).fetchone()
-            if a: meta['needs_profile'] = bool(a['needs_profile'])
+            a = conn.execute('SELECT * FROM accounts WHERE id=? AND activated=1', (row['account_id'],)).fetchone()
+            if not a: return None   # account deleted / deactivated → credential no longer valid
+            meta = {'staff_id': a['staff_id'] or row['staff_id'], 'staff_name': a['name'] or row['staff_name'],
+                    'account_id': a['id'], 'needs_profile': bool(a['needs_profile'])}
+            role = a['role']
+            store = 'ALL' if role in ('super', 'ba') else a['store_id']
+            if role not in ('super', 'ba') and store not in STORES: return None
+            return (role, store, meta)
+        # legacy credential without an account link — frozen identity from enrolment
+        meta = {'staff_id': row['staff_id'], 'staff_name': row['staff_name'], 'account_id': None}
         role = row['role']
         store = 'ALL' if role in ('super', 'ba') else row['store_id']
         if role not in ('super', 'ba') and store not in STORES: return None

@@ -47,20 +47,39 @@ window.MCQFace = (function(){
   }
 
   // SIGN IN — biometric unlocks the device secret → exchanged for a real server session
-  async function login(){
+  // Pass a credential id to sign in as a SPECIFIC person (shared-iPad person picker)
+  async function login(credId){
     if(!window.PublicKeyCredential) throw new Error('This device does not support Face ID (WebAuthn)');
     var list=load().filter(function(c){return c.v===2 && c.device_id && c.secret;});
+    if(credId) list=list.filter(function(c){return c.id===credId;});
     if(!list.length){ var e=new Error('none'); e.code='none'; throw e; }
-    var assertion=await navigator.credentials.get({ publicKey:{
-      challenge: rand(32), timeout:60000, userVerification:'required', rpId: location.hostname,
-      allowCredentials: list.map(function(c){ return {type:'public-key', id: unb64u(c.id), transports:['internal']}; })
-    }});
+    var assertion;
+    try{
+      assertion=await navigator.credentials.get({ publicKey:{
+        challenge: rand(32), timeout:60000, userVerification:'required', rpId: location.hostname,
+        allowCredentials: list.map(function(c){ return {type:'public-key', id: unb64u(c.id), transports:['internal']}; })
+      }});
+    }catch(werr){ var we=new Error(nice(werr)); we.code='webauthn'; we.name=(werr&&werr.name)||''; throw we; }
     var id=b64u(assertion.rawId), match=list.find(function(c){return c.id===id;});
-    if(!match) throw new Error('Face ID not recognised on this device');
+    if(!match){ var me=new Error('This Face ID is not enrolled for the app on this device.'); me.code='webauthn'; throw me; }
     var res=await mcqDeviceLogin(match.device_id, match.secret);
-    if(!(res&&res.ok)){ var err=new Error((res&&res.error)||'Face ID sign-in failed'); err.code='server'; throw err; }
-    res._label=match.label;
+    if(!(res&&res.ok)){
+      var err=new Error((res&&res.error)||'Face ID sign-in failed');
+      err.code='server'; err.credId=match.id; err.label=match.label||match.who||'';
+      throw err;
+    }
+    res._label=match.label; res._credId=match.id;
     return res;
+  }
+
+  // translate raw WebAuthn failures into copy a staff member can act on
+  function nice(err){
+    var n=(err&&err.name)||'', m=(err&&err.message)||'';
+    if(n==='NotAllowedError') return 'Face ID was cancelled or not recognised — try again.';
+    if(n==='SecurityError')  return 'Face ID needs the official app address (https). Open the installed app icon and try again.';
+    if(n==='InvalidStateError') return 'This device rejected the Face ID key — sign in with your password, then enrol again.';
+    if(n==='AbortError' || /timed? ?out/i.test(m)) return 'Face ID timed out — tap the button to try again.';
+    return m||'Face ID failed — try again or use your password.';
   }
 
   function legacy(){ return load().filter(function(c){return !c.v;}); }
@@ -70,7 +89,9 @@ window.MCQFace = (function(){
     if(entry&&entry.device_id&&window.mcqDeviceRevoke){ try{ mcqDeviceRevoke(entry.device_id); }catch(e){} }
     store(load().filter(function(x){return x.id!==id;}));
   }
-  return { supported:supported, enroll:enroll, login:login, list:load, listV2:listV2, legacy:legacy, remove:remove,
+  // drop a LOCAL entry only (used when the server says the credential was revoked/removed)
+  function removeLocal(id){ store(load().filter(function(x){return x.id!==id;})); }
+  return { supported:supported, enroll:enroll, login:login, list:load, listV2:listV2, legacy:legacy, remove:remove, removeLocal:removeLocal,
     listFor:function(){ return listV2(); }, syncFromDB:function(){} };   // legacy shims
 })();
 
@@ -79,14 +100,27 @@ async function faceEnrollInApp(){
   if(!window.PublicKeyCredential){ toast('This device does not support Face ID (WebAuthn).'); return; }
   var acct=(window.State&&State.account)||{};
   var who=acct.staffName||acct.name||'Me';
-  var label=window.prompt('Name this Face ID (so you can tell devices apart):', who+' · '+(navigator.platform||'this device'));
-  if(label===null) return;
-  try{
-    toast('Follow your device Face ID / Touch ID prompt…');
-    var e=await MCQFace.enroll((label||'').trim()||who);
-    toast('✅ Face ID ready — signs in as '+(e.who||who));
-    if(window.renderFaceId && State.route && State.route.mod==='faceid') renderFaceId();
-  }catch(err){ toast((err&&err.message)||'Face ID setup cancelled or failed'); }
+  var suggested=who+' · '+(navigator.platform||'this device');
+  var doEnroll=async function(label){
+    try{
+      toast('Confirm with Face ID / Touch ID on your device…');
+      var e=await MCQFace.enroll((label||'').trim()||who);
+      try{ localStorage.setItem('mcq_fid_nudge','done'); }catch(_){ }
+      toast('✅ Face ID ready — next time one look signs you in as '+(e.who||who));
+      if(window.renderFaceId && State.route && State.route.mod==='faceid') renderFaceId();
+    }catch(err){ toast((err&&err.message)||'Face ID setup cancelled or failed'); }
+  };
+  if(window.mcqModal){
+    mcqModal('🪪 Enable Face ID sign-in', '<p class="fhint" style="margin:0 0 10px">Your device biometric (Face ID / Touch ID) will sign you in as <b>'+(who)+'</b> on THIS device only. No face data ever leaves the device.</p>'+
+      '<div class="field"><label>Name this device</label><input id="fid-label" value="'+suggested.replace(/"/g,'&quot;')+'"></div>'+
+      '<div style="display:flex;gap:10px;margin-top:12px"><button class="btn primary" id="fid-go">🪪 Enrol this device</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>');
+    var go=document.getElementById('fid-go');
+    if(go) go.onclick=function(){ var v=(document.getElementById('fid-label')||{}).value||suggested; mcqModalClose(); doEnroll(v); };
+  } else {
+    var label=window.prompt('Name this Face ID (so you can tell devices apart):', suggested);
+    if(label===null) return;
+    doEnroll(label);
+  }
 }
 window.faceEnrollInApp=faceEnrollInApp;
 
