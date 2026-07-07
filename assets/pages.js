@@ -3782,16 +3782,23 @@ function mgrStoreRecipients(store){
   add((DB.emailRecipients||[]).find(r=>r.key==='mgr'));
   return out;
 }
-/* Super only: compose a rich-text email and send it to one or more stores' addresses */
+/* every STAFF member (with a gmail) at a store — this is who "Email a store" reaches */
+function storeStaffEmails(store){
+  return (DB.staff||[]).filter(x=>x.store===store && x.email && x.active!==0)
+    .map(x=>({key:'st-'+x.id,name:x.name,email:x.email}));
+}
+/* Super only: compose a rich-text email → sent to ALL STAFF of the chosen store(s).
+   Select all stores = every MCQ staff member. A test address is added when ticked. */
 function storeEmailCompose(){
   if(!isSuper()) return;
   const stores=DB.stores||[];
-  const rows=stores.map(s=>{ const n=mgrStoreRecipients(s).length;
-    return `<label class="store-pick-row"><input type="checkbox" class="se-store" value="${esc(s)}" ${n?'':'disabled'}> <b>${esc(s)}</b> <span class="muted">${n?(n+' recipient'+(n>1?'s':'')):'no email set'}</span></label>`; }).join('');
+  const rows=stores.map(s=>{ const n=storeStaffEmails(s).length;
+    return `<label class="store-pick-row"><input type="checkbox" class="se-store" value="${esc(s)}" ${n?'':'disabled'}> <b>${esc(s)}</b> <span class="muted">${n?(n+' staff'+(n>1?'':'')):'no staff email'}</span></label>`; }).join('');
   mcqModal('📧 Email a store', `
-    <div class="field"><label>Which store(s)?</label><div class="store-pick">${rows}</div>
-      <div style="margin-top:6px"><button class="btn xs" onclick="document.querySelectorAll('.se-store:not(:disabled)').forEach(c=>c.checked=true)">Select all</button>
+    <div class="field"><label>Which store(s)? <span class="muted" style="font-weight:600">— every staff member with a gmail receives it</span></label><div class="store-pick">${rows}</div>
+      <div style="margin-top:6px"><button class="btn xs" onclick="document.querySelectorAll('.se-store:not(:disabled)').forEach(c=>c.checked=true)">Select all stores (all MCQ staff)</button>
         <button class="btn xs" onclick="document.querySelectorAll('.se-store').forEach(c=>c.checked=false)">Clear</button></div></div>
+    <label class="store-pick-row" style="margin:4px 0 8px"><input type="checkbox" id="se-testcc" checked> Also send a copy to <b>utle23.23@gmail.com</b> (test)</label>
     <div class="field"><label>Subject</label><input id="se-subj" placeholder="Subject line"></div>
     <div class="field"><label>Message</label><textarea id="mail-body" rows="8" placeholder="Write your message to the store(s)…"></textarea></div>
     <div style="display:flex;gap:10px;margin-top:10px"><button class="btn primary" onclick="storeEmailSend()"><i class="fas fa-paper-plane"></i>&nbsp; Send</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>`, {wide:true});
@@ -3805,10 +3812,12 @@ function storeEmailSend(){
   if(!subj){ toast('Add a subject'); return; }
   if(!msgHasContent(body)){ toast('Write a message'); return; }
   const to=[], seen={};
-  stores.forEach(s=>mgrStoreRecipients(s).forEach(r=>{ const e=String(r.email||'').toLowerCase(); if(e&&!seen[e]){ seen[e]=1; to.push(r); } }));
-  if(!to.length){ toast('No email addresses for the selected store(s)'); return; }
-  const sent=mcqEmail.sendHtml(to, subj, `<p style="color:#64748b;font-size:12px">To: ${esc(stores.join(', '))}</p>`+body);
-  if(sent){ toast(`📧 Emailing ${to.length} recipient(s) at ${stores.length} store(s)…`); mcqModalClose(); }
+  stores.forEach(s=>storeStaffEmails(s).forEach(r=>{ const e=String(r.email||'').toLowerCase(); if(e&&!seen[e]){ seen[e]=1; to.push(r); } }));
+  if(document.getElementById('se-testcc')?.checked && !seen['utle23.23@gmail.com']){ seen['utle23.23@gmail.com']=1; to.push({name:'Test',email:'utle23.23@gmail.com'}); }
+  if(!to.length){ toast('No staff email addresses for the selected store(s)'); return; }
+  const allStaff=stores.length===(DB.stores||[]).length;
+  const sent=mcqEmail.sendHtml(to, subj, `<p style="color:#64748b;font-size:12px">To: ${allStaff?'all MCQ staff':esc(stores.join(', '))} · ${to.length} recipient(s)</p>`+body);
+  if(sent){ toast(`📧 Emailing ${to.length} staff at ${stores.length} store(s)…`); mcqModalClose(); }
 }
 window.storeEmailCompose=storeEmailCompose; window.storeEmailSend=storeEmailSend;
 function mgrEmailVerifyNote(s,note){
@@ -4664,11 +4673,16 @@ function renderEmail(){
       <label class="email-cat"><input type="checkbox" ${r.checklist?'checked':''} ${canEditAll?`onchange="notifyAllSet('${r.key}','checklist',this.checked)"`:'disabled'}> ✅ Checklists</label>
       ${canEditAll?`<button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="notifyAllDel('${r.key}')" title="Remove">🗑</button>`:''}
     </div></div>`).join('')||'<div class="fhint">No all-stores recipients yet.</div>';
+  const allStaffEmail=(DB.staff||[]).filter(s=>s.email && s.active!==0)
+    .filter((s,i,a)=>a.findIndex(x=>String(x.email).toLowerCase()===String(s.email).toLowerCase())===i);   // dedupe by email
   const allStoresCard=`<div class="card" style="margin-bottom:16px;border:1.5px solid #bfdbfe"><div class="card-head"><h3><i class="fas fa-globe" style="color:#1565c0"></i>&nbsp; Receives alerts from ALL stores</h3><span class="ch-sub">${gAll.length} recipient(s) · ${canEditAll?'Head Office — applies to every store, saves instantly':'view only · Super Admin manages this'}</span></div>
     <div class="card-pad">
       <div class="rail-tip" style="margin-bottom:12px">🌐 These people receive the ticked alert types from <b>every store</b> — maintenance/issues, violations, checklists — no matter which branch raised them.${canEditAll?'':' Only Head Office can change this list.'}</div>
       <div class="email-list">${gRows}</div>
-      ${canEditAll?`<div style="margin-top:12px"><button class="btn sm primary" onclick="notifyAllAdd()">＋ Add all-stores recipient</button></div>`:''}
+      ${canEditAll?`<datalist id="notify-all-dl">${allStaffEmail.map(s=>`<option value="${esc(s.name)}" label="${esc(s.email)}${s.store?(' · '+esc(s.store)):''}"></option>`).join('')}</datalist>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px">
+        <input class="login-input" list="notify-all-dl" placeholder="🔍 Search staff by name (fills their gmail)…" style="min-width:250px" onchange="notifyAllAddStaff(this.value);this.value=''">
+        <button class="btn sm primary" onclick="notifyAllAdd()">＋ Add recipient manually</button></div>`:''}
     </div></div>`;
   $('#content').innerHTML=`<div class="page-head"><div class="ph-ic" style="background:#e8f1fe">✉️</div><div><h2>Email Notifications</h2><p>Emails send automatically in the background via Brevo. Set who receives what below.</p></div><div class="ph-actions">${isSuper()?`<button class="btn sm primary" onclick="storeEmailCompose()"><i class="fas fa-envelope-open-text"></i>&nbsp; Email a store</button>`:''}<button class="btn sm" onclick="emailHistoryOpen()"><i class="fas fa-clock-rotate-left"></i>&nbsp; Sent history</button><button class="btn sm primary" onclick="emailTest()"><i class="fas fa-paper-plane"></i>&nbsp; Send test</button></div></div>
     ${isSuper()?`<div class="email-storebar"><span class="esb-label"><i class="fas fa-store"></i> Set up notifications for store</span>
@@ -4714,7 +4728,13 @@ function notifyAllAdd(){ if(!isSuper())return; DB.notifyAll=DB.notifyAll||{recip
   DB.notifyAll.recipients.push({key:'g'+Date.now().toString(36),name:'',email:'',issue:true,vio:false,checklist:false}); notifyAllSaveSoon(); renderEmail(); }
 function notifyAllSet(key,field,val){ if(!isSuper())return; const r=((DB.notifyAll||{}).recipients||[]).find(x=>x.key===key); if(r){ r[field]=val; notifyAllSaveSoon(); } }
 function notifyAllDel(key){ if(!isSuper())return; if(!confirm('Remove this all-stores recipient?'))return; DB.notifyAll.recipients=((DB.notifyAll||{}).recipients||[]).filter(x=>x.key!==key); notifyAllSaveSoon(); renderEmail(); }
-window.notifyAllAdd=notifyAllAdd; window.notifyAllSet=notifyAllSet; window.notifyAllDel=notifyAllDel;
+function notifyAllAddStaff(name){ if(!isSuper())return; name=(name||'').trim(); if(!name||name.startsWith('—'))return;
+  const s=(DB.staff||[]).find(x=>x.name===name && x.email); if(!s){ toast('Pick a staff member who has an email'); return; }
+  DB.notifyAll=DB.notifyAll||{recipients:[]}; DB.notifyAll.recipients=DB.notifyAll.recipients||[];
+  if(DB.notifyAll.recipients.some(r=>String(r.email||'').toLowerCase()===String(s.email).toLowerCase())){ toast('Already in the all-stores list'); return; }
+  DB.notifyAll.recipients.push({key:'g'+Date.now().toString(36),name:s.name,email:s.email,issue:true,vio:false,checklist:false});
+  notifyAllSaveSoon(); toast('🌐 '+s.name+' added — receives issues from all stores'); renderEmail(); }
+window.notifyAllAdd=notifyAllAdd; window.notifyAllSet=notifyAllSet; window.notifyAllDel=notifyAllDel; window.notifyAllAddStaff=notifyAllAddStaff;
 /* ---- per-store department-lead emails ---- */
 function leadList(store,dept){ const m=DB.checklistLeadEmails||(DB.checklistLeadEmails={}); return ((m[store]||{})[dept])||[]; }
 function leadAdd(store,dept){ const m=DB.checklistLeadEmails=DB.checklistLeadEmails||{}; m[store]=m[store]||{}; m[store][dept]=m[store][dept]||[]; m[store][dept].push({name:'',email:''}); if(window.persist) window.persist(); renderEmail(); }
