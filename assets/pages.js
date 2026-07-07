@@ -4935,7 +4935,7 @@ function accLoad(q){
     else if(sf) list=list.filter(a=>a.store_id===sf);
     const n=document.getElementById('acc-count'); if(n) n.textContent=list.length+' people'+(sf?(' · '+(sf==='__none'?'Head office':sf)):'');
     const roleSel=(a)=>['employee','staff','admin','super'].map(x=>`<option value="${x}" ${a.role===x?'selected':''}>${({employee:'Member (Staff)',staff:'Dept Lead',admin:'Manager',super:'Super Admin'})[x]}</option>`).join('');
-    const storeSel=(a)=>`<option value="" ${!a.store_id?'selected':''}>— No store —</option>`+(DB.stores||[]).map(s=>`<option ${a.store_id===s?'selected':''}>${esc(s)}</option>`).join('');
+    const storeSel=(a)=>`<option value="" ${!a.store_id?'selected':''}>— Not designated —</option>`+(DB.stores||[]).map(s=>`<option ${a.store_id===s?'selected':''}>${esc(s)}</option>`).join('');
     const depts=(DB.checklist&&DB.checklist.depts)||[];
     const deptSel=(a)=>`<option value="">—</option>`+depts.map(d=>`<option ${a.department===d?'selected':''}>${esc(d)}</option>`).join('');
     el.innerHTML=list.length?list.map(a=>a.no_account?`<tr class="acc-row-new">
@@ -4958,7 +4958,7 @@ function accLoad(q){
         <button class="btn xs" onclick="accPwToggle('${esc(a.id)}')">👁</button>
         <button class="btn xs" onclick="accPwEdit('${esc(a.id)}')" title="Set a new password">✎</button></td>
       <td>${a.activated?'<span class="badge ok">✓ Activated</span>':'<span class="badge mute">Waiting</span>'}</td>
-      <td>${a.acct_admin?'':`<button class="btn xs" style="color:var(--bad);border-color:#f3c9c9" onclick="accDel('${esc(a.id)}','${ckJS(a.name||'')}')">🗑</button>`}</td>
+      <td><button class="btn xs" title="Edit person (syncs with Staff Members)" onclick="accEditOpen('${esc(a.id)}')">✎</button>${a.acct_admin?'':` <button class="btn xs" style="color:var(--bad);border-color:#f3c9c9" onclick="accDel('${esc(a.id)}','${ckJS(a.name||'')}')">🗑</button>`}</td>
     </tr>`).join(''):'<tr><td colspan="9" style="text-align:center;padding:26px;color:var(--muted)">No accounts match.</td></tr>';
   }).catch(()=>toast('Could not load accounts'));
 }
@@ -4976,7 +4976,7 @@ function accPwEdit(id){
   mcqAccountUpdate(id,{password:String(nv)}).then(r=>{ if(r&&r.ok){ toast('🔑 Password updated'); accLoad(); } else toast('Could not update'); });
 }
 function accDel(id,name){
-  if(!confirm('Delete account '+id+(name?(' ('+name+')'):'')+'? They will no longer be able to sign in with this ID.')) return;
+  if(!confirm('Delete account '+id+(name?(' ('+name+')'):'')+'?\n\nThey can no longer sign in, and their STAFF PROFILE is archived too (restorable in Staff Members → 🗄 Archived).')) return;
   mcqAccountDelete(id).then(r=>{ if(r&&r.ok){ toast('🗑 Account deleted'); accLoad(); } else toast('Could not delete'); });
 }
 // "No account yet" rows come from the STAFF directory — removing one archives the staff
@@ -5112,7 +5112,7 @@ function accAdd(){
       <div class="field"><label>Full name</label><input id="aa-name" placeholder="e.g. Van Anh Le"></div>
       <div class="field"><label>Access level</label><select id="aa-role" onchange="document.getElementById('aa-dept-row').style.display=this.value==='staff'?'':'none'">
         <option value="employee">Member (Staff)</option><option value="staff">Dept Lead</option><option value="admin">Manager</option><option value="super">Super Admin</option></select></div>
-      <div class="field"><label>Store</label><select id="aa-store"><option value="">— No store —</option>${(DB.stores||[]).map(s=>`<option>${esc(s)}</option>`).join('')}</select></div>
+      <div class="field"><label>Store</label><select id="aa-store"><option value="">— Not designated —</option>${(DB.stores||[]).map(s=>`<option>${esc(s)}</option>`).join('')}</select></div>
       <div class="field" id="aa-dept-row" style="display:none"><label>Lead of department</label><select id="aa-dept"><option value="">—</option>${depts.map(d=>`<option>${esc(d)}</option>`).join('')}</select></div>
     </div>
     <div style="display:flex;gap:10px;margin-top:10px"><button class="btn primary" onclick="accAddGo()">＋ Create account</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>`,{wide:true});
@@ -5134,5 +5134,41 @@ function accAssign(email,name,store,dept,sel){
     .then(r=>{ if(r&&r.ok){ toast('✓ '+name+' assigned '+role+' — they activate with '+email); accLoad(); } else { toast((r&&r.error)||'Could not assign'); sel.value=''; } })
     .catch(()=>{ toast('Could not assign'); sel.value=''; });
 }
+// ---- ✎ EDIT PERSON: one modal that updates the ACCOUNT and the STAFF PROFILE together ----
+function accEditOpen(id){
+  mcqAccounts('').then(r=>{
+    const a=((r&&r.accounts)||[]).find(x=>x.id===id); if(!a){ toast('Account not found'); return; }
+    const sp=(DB.staff||[]).find(x=>a.staff_id&&String(x.id)===String(a.staff_id)&&(!a.store_id||x.store===a.store_id))||{};
+    const depts=(DB.checklist&&DB.checklist.depts)||[];
+    mcqModal('✎ Edit '+(a.name||a.id)+' — account + staff profile', `
+      <div class="ai-asst-note" style="margin-bottom:10px">🔗 Saving updates <b>both</b> Account Management and this person's profile in <b>Staff Members</b>.</div>
+      <div class="grid2">
+        <div class="field"><label>Full name</label><input id="ae-name" value="${esc(a.name||'')}"></div>
+        <div class="field"><label>Email (login key)</label><input id="ae-email" type="email" value="${esc(a.email||'')}"></div>
+        <div class="field"><label>Access level</label><select id="ae-role" onchange="document.getElementById('ae-dept-row').style.display=this.value==='staff'?'':'none'">
+          ${['employee','staff','admin','super'].map(x=>`<option value="${x}" ${a.role===x?'selected':''}>${({employee:'Member (Staff)',staff:'Dept Lead',admin:'Manager',super:'Super Admin'})[x]}</option>`).join('')}</select></div>
+        <div class="field"><label>Store</label><select id="ae-store"><option value="" ${!a.store_id?'selected':''}>— Not designated —</option>${(DB.stores||[]).map(sx=>`<option ${a.store_id===sx?'selected':''}>${esc(sx)}</option>`).join('')}</select></div>
+        <div class="field" id="ae-dept-row" style="display:${a.role==='staff'?'':'none'}"><label>Lead of department</label><select id="ae-dept"><option value="">—</option>${depts.map(d=>`<option ${a.department===d?'selected':''}>${esc(d)}</option>`).join('')}</select></div>
+        <div class="field"><label>Phone (staff profile)</label><input id="ae-phone" value="${esc(sp.phone||'')}"></div>
+        <div class="field"><label>Date of birth (staff profile)</label><input id="ae-dob" type="date" value="${esc(sp.dob||'')}"></div>
+      </div>
+      <div style="display:flex;gap:10px;margin-top:12px"><button class="btn primary" onclick="accEditSave('${esc(a.id)}','${ckJS(a.store_id||'')}','${ckJS(String(a.staff_id||''))}')">💾 Save — account + staff profile</button><button class="btn" onclick="mcqModalClose()">Cancel</button></div>`,{wide:true});
+  });
+}
+function accEditSave(id, oldStore, staffId){
+  const g=k=>(document.getElementById(k)?.value||'').trim();
+  const patch={name:g('ae-name'), email:g('ae-email'), role:g('ae-role'), store_id:g('ae-store'), department:g('ae-role')==='staff'?g('ae-dept'):''};
+  if(!patch.name){ toast('Enter a name'); return; }
+  mcqAccountUpdate(id,patch).then(async r=>{
+    if(!(r&&r.ok)){ toast((r&&r.error)||'Could not save'); return; }
+    // staff-profile-only fields (phone / DOB) — patched straight onto the linked profile
+    const store=patch.store_id||oldStore;
+    if(staffId && store && window.mcqStaffProfile){
+      try{ await mcqStaffProfile(store, staffId, {phone:g('ae-phone'), dob:g('ae-dob')}); }catch(e){}
+    }
+    toast('✓ Saved — account + staff profile updated'); mcqModalClose(); accLoad();
+  });
+}
+window.accEditOpen=accEditOpen; window.accEditSave=accEditSave;
 window.accAssign=accAssign;
 window.accAdd=accAdd; window.accAddGo=accAddGo;

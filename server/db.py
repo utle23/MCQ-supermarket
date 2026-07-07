@@ -574,6 +574,31 @@ def _sync_accounts_from_staff(conn, store_id):
             n = str(d.get('name') or '').strip()
             if n and n != str(a['name'] or '').strip():
                 conn.execute('UPDATE accounts SET name=?, updated_at=? WHERE id=?', (n, now(), a['id']))
+    # pass 2 — STORE MOVES: a LIVE profile in THIS store whose gmail belongs to an account
+    # homed at another store means the person moved (Staff Members edit). The account, their
+    # sessions and Face-ID creds follow, and the old store's live copy is archived so each
+    # person exists live in exactly ONE store.
+    for e, pair in idx_email.items():
+        sid, d = pair
+        if d.get('archived') or d.get('active') == 0: continue
+        a = conn.execute("SELECT id,store_id FROM accounts WHERE lower(email)=? AND role NOT IN ('super','ba')", (e,)).fetchone()
+        if not a or (a['store_id'] or '') == store_id: continue
+        old = a['store_id']
+        conn.execute('UPDATE accounts SET store_id=?, staff_id=?, updated_at=? WHERE id=?', (store_id, sid, now(), a['id']))
+        try:
+            conn.execute('UPDATE tokens SET store_id=? WHERE account_id=?', (store_id, a['id']))
+            conn.execute('UPDATE device_creds SET store_id=? WHERE account_id=?', (store_id, a['id']))
+        except Exception: pass
+        if old:
+            for r2 in conn.execute('SELECT id,data_json FROM staff WHERE store_id=?', (old,)).fetchall():
+                try: d2 = json.loads(r2['data_json'] or '{}')
+                except Exception: d2 = {}
+                if str(d2.get('email') or '').strip().lower() == e and not (d2.get('archived') or d2.get('active') == 0):
+                    d2['archived'] = 1; d2['active'] = 0
+                    conn.execute('UPDATE staff SET data_json=? WHERE store_id=? AND id=?', (json.dumps(d2), old, r2['id']))
+            conn.execute('INSERT INTO audit_logs(user_id,store_id,action,entity_type,entity_id,before_json,after_json,created_at) VALUES(?,?,?,?,?,?,?,?)',
+                         ('system (store-move sync)', store_id, 'update', 'staffMove', str(d.get('name') or e)[:80],
+                          json.dumps({'from': old}), json.dumps({'to': store_id, 'account': a['id']}), now()))
 
 def _next_staff_id(conn):
     """Next E#### staff id — continues the same global series bulk_import_staff uses."""
@@ -1224,7 +1249,17 @@ def update_account(aid, patch):
     """Account admin edits: role / store / department / password / name.
     The linked staff profile follows: name/department/title refresh; moving the account to
     another store archives the old store's profile and creates/relinks one in the new store."""
-    allowed = {'role', 'store_id', 'department', 'password', 'name'}
+    allowed = {'role', 'store_id', 'department', 'password', 'name', 'email'}
+    if 'email' in (patch or {}):
+        em = str(patch.get('email') or '').strip()
+        if not em or '@' not in em: return {'error': 'Enter a valid email address'}
+        conn0 = connect()
+        try:
+            dup = conn0.execute('SELECT id FROM accounts WHERE lower(email)=lower(?) AND id!=?', (em, str(aid))).fetchone()
+        finally:
+            conn0.close()
+        if dup: return {'error': 'Another account already uses this email'}
+        patch['email'] = em
     sets, vals = [], []
     for k, v in (patch or {}).items():
         if k in allowed:
@@ -1249,9 +1284,25 @@ def update_account(aid, patch):
         conn.close()
 
 def delete_account(aid):
+    """Delete a login. The person's staff profile is ARCHIVED at the same time (they vanish
+    from Staff Members and pickers, restorable via Staff Members -> Archived), and any live
+    sessions / Face-ID creds for the account die immediately."""
     conn = connect()
     try:
-        conn.execute('DELETE FROM accounts WHERE id=? AND acct_admin=0', (str(aid),))
+        row = conn.execute('SELECT * FROM accounts WHERE id=? AND acct_admin=0', (str(aid),)).fetchone()
+        if not row: return False
+        store = row['store_id']
+        if store:
+            sid = row['staff_id']
+            if not sid and row['email']:
+                hit = _store_staff_by_email(conn, store, row['email'])
+                sid = hit and hit['staff_id']
+            if sid: _archive_staff(conn, store, sid)
+        conn.execute('DELETE FROM accounts WHERE id=?', (row['id'],))
+        try:
+            conn.execute('DELETE FROM tokens WHERE account_id=?', (row['id'],))
+            conn.execute('DELETE FROM device_creds WHERE account_id=?', (row['id'],))
+        except Exception: pass
         conn.commit()
         return True
     finally:

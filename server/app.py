@@ -615,8 +615,10 @@ def account_update():
     au = require_acct_admin()
     d = request.get_json(force=True, silent=True) or {}
     ok = db.update_account(d.get('id'), d.get('patch') or {})
-    db.write_audit(uid(au), '', 'update', 'account', str(d.get('id')), None, {'fields': list((d.get('patch') or {}).keys())})
-    return jsonify(ok=ok)
+    if isinstance(ok, dict) and ok.get('error'):
+        return jsonify(ok=False, error=ok['error']), 400
+    db.write_audit(who(au), '', 'update', 'account', str(d.get('id')), None, {'fields': list((d.get('patch') or {}).keys())})
+    return jsonify(ok=bool(ok))
 
 @api.route('/api/account/delete', methods=['POST'])
 def account_delete():
