@@ -672,7 +672,7 @@ def _archive_staff(conn, store, staff_id):
     d['archived'] = 1; d['active'] = 0
     conn.execute('UPDATE staff SET data_json=? WHERE store_id=? AND id=?', (json.dumps(d), store, str(staff_id)))
 
-def apply_store_config(store_id, cfg):
+def apply_store_config(store_id, cfg, user=None):
     """Store Config (Super) edits the LIVE store workspace: the checklist template and
     schedule tasks go straight into this store's state blob (template version bumped so
     every client at the store picks the change up on next sync), and staff rows are
@@ -686,9 +686,12 @@ def apply_store_config(store_id, cfg):
             except Exception: state = {}
         out = {}
         if isinstance(cfg.get('checklistItems'), list):
+            prev_items = state.get('checklistItems')   # audit WHO added/removed which task
             state['checklistItems'] = json.dumps(cfg['checklistItems'])
             state['checklistTemplateVersion'] = int(state.get('checklistTemplateVersion') or 0) + 1
             out['checklistItems'] = len(cfg['checklistItems']); out['templateVersion'] = state['checklistTemplateVersion']
+            try: _audit_template_diff(conn, store_id, prev_items, cfg['checklistItems'], user or 'store-config')
+            except Exception: pass
         if isinstance(cfg.get('scheduleTasks'), list):
             state['scheduleTasks'] = json.dumps(cfg['scheduleTasks'])
             out['scheduleTasks'] = len(cfg['scheduleTasks'])
@@ -2059,13 +2062,22 @@ def _audit_template_diff(conn, store, old_v, new_v, user):
                      (user, store, 'template-remove', 'checklistTask', r[2][:120],
                       json.dumps({'dept': r[0], 'area': r[1], 'task': r[2], 'when': r[3]}), None, now()))
 
+# noisy machine events that carry no human-meaningful "who did what" — never shown in the log
+AUDIT_NOISE_TYPES = ('store_state', 'store_config', 'photo', 'file')
+
 def list_audit(store, limit=300):
+    """Meaningful events only: checklist submit/verify, tasks added/removed, records,
+    accounts, staff, deletions, config. Routine saves / photo & file uploads are excluded."""
     conn = connect()
     try:
+        ph = ','.join('?' * len(AUDIT_NOISE_TYPES))
+        base = f"SELECT user_id,store_id,action,entity_type,entity_id,before_json,after_json,created_at FROM audit_logs WHERE entity_type NOT IN ({ph})"
         if store and store != 'ALL':
-            rows = conn.execute('SELECT user_id,store_id,action,entity_type,entity_id,before_json,after_json,created_at FROM audit_logs WHERE store_id=? ORDER BY id DESC LIMIT ?', (store, int(limit))).fetchall()
+            rows = conn.execute(base + ' AND store_id=? ORDER BY id DESC LIMIT ?',
+                                (*AUDIT_NOISE_TYPES, store, int(limit))).fetchall()
         else:
-            rows = conn.execute('SELECT user_id,store_id,action,entity_type,entity_id,before_json,after_json,created_at FROM audit_logs ORDER BY id DESC LIMIT ?', (int(limit),)).fetchall()
+            rows = conn.execute(base + ' ORDER BY id DESC LIMIT ?',
+                                (*AUDIT_NOISE_TYPES, int(limit))).fetchall()
         return [{k: r[k] for k in r.keys()} for r in rows]
     finally:
         conn.close()

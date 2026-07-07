@@ -4718,24 +4718,27 @@ function renderStoreConfig(){ if(!isSuper()){ $('#content').innerHTML='<div clas
 
 /* ============================================================ AUDIT LOG (Manager: own store · Super: all) */
 const AUD_META={
-  'template-add':{ic:'➕',c:'#16a34a',lb:'Checklist task ADDED'},
-  'template-remove':{ic:'🗑️',c:'#dc2626',lb:'Checklist task REMOVED'},
+  'submit':{ic:'📝',c:'#2563eb',lb:'Checklist done'},
   'verify':{ic:'✅',c:'#0f766e',lb:'Checklist verified'},
+  'template-add':{ic:'➕',c:'#16a34a',lb:'Task added'},
+  'template-remove':{ic:'🗑️',c:'#dc2626',lb:'Task removed'},
   'create':{ic:'🆕',c:'#2563eb',lb:'Created'},
   'update':{ic:'✏️',c:'#d97706',lb:'Updated'},
   'delete':{ic:'❌',c:'#dc2626',lb:'Deleted'},
-  'save':{ic:'💾',c:'#64748b',lb:'Saved'},
   'profile':{ic:'👤',c:'#7c3aed',lb:'Profile edited'},
-  'import':{ic:'📥',c:'#0891b2',lb:'Imported'},
+  'import':{ic:'📥',c:'#0891b2',lb:'Staff imported'},
   'sync':{ic:'🔗',c:'#0891b2',lb:'Synced'},
   'enroll':{ic:'🪪',c:'#15803d',lb:'Face ID enrolled'},
+  'revoke':{ic:'🚫',c:'#dc2626',lb:'Face ID revoked'},
+  'remove':{ic:'❌',c:'#dc2626',lb:'Removed'},
+  'cleanup':{ic:'🧹',c:'#b45309',lb:'Data cleared'},
 };
 function renderAuditLog(){
   setAccent('#334155'); setCrumb('🕵️','Audit Log','Who changed what — traced to the exact account');
   if(!State.aud) State.aud={store:isSuper()?'ALL':State.branch,q:'',act:'',rows:null};
   const a=State.aud; if(!isSuper()) a.store=State.branch;
   const storeSel=isSuper()?`<select class="login-input" style="width:auto" onchange="State.aud.store=this.value;State.aud.rows=null;renderAuditLog()">${['ALL',...DB.stores].map(sx=>`<option ${sx===a.store?'selected':''}>${esc(sx)}</option>`).join('')}</select>`:'';
-  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🕵️</div><div><h2>Audit Log</h2><p>Checklist tasks added/removed, records, accounts, verifications, config — each entry names the signed-in person.</p></div>
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🕵️</div><div><h2>Audit Log</h2><p>Who did what — checklists done &amp; verified, tasks added/removed, accounts &amp; deletions. Super Admin only.</p></div>
     <div class="ph-actions">${storeSel}<button class="btn sm" onclick="State.aud.rows=null;renderAuditLog()">↻ Refresh</button><div class="search"><input value="${esc(a.q||'')}" oninput="State.aud.q=this.value;audPaint()" placeholder="🔍 Search task, person, action…"></div></div></div>
     <div id="aud-filters"></div>
     <div id="aud-body"><div class="card card-pad loading-state"><i class="fas fa-spinner fa-spin"></i><b>Loading audit trail…</b></div></div>`;
@@ -4761,12 +4764,21 @@ function audPaint(){
     try{
       const d=(r.after_json?JSON.parse(r.after_json):null)||(r.before_json?JSON.parse(r.before_json):null);
       if(r.entity_type==='checklistTask'&&d) detail=`${d.dept} / ${d.area} — “${d.task}” · ${WHEN[d.when]||d.when||''}`;
+      else if(r.entity_type==='checklist'&&d){   // "who did / verified which department checklist"
+        const parts=[]; if(d.dept) parts.push(d.dept); if(d.session) parts.push(d.session);
+        if(r.action==='submit'&&d.progress!=null) parts.push(d.progress+'% done');
+        if(r.action==='verify'&&d.result) parts.push(d.result);
+        detail=parts.join(' · ');
+      }
       else if(d&&typeof d==='object'){ const bits=Object.entries(d).slice(0,4).map(([k,v])=>k+': '+String(v).slice(0,40)); detail=(r.entity_id?r.entity_id+' · ':'')+bits.join(' · '); }
     }catch(e){}
+    let byPerson='';   // for checklist done/verified, name the person who did it
+    try{ const dd=r.after_json?JSON.parse(r.after_json):null; if(dd) byPerson=dd.by||dd.result&&dd.by||''; }catch(e){}
+    const showType=r.entity_type&&!['checklistTask','checklist'].includes(r.entity_type);
     return `<div class="aud-row"><span class="aud-ic" style="background:${m.c}1a;color:${m.c}">${m.ic}</span>
-      <div class="aud-t"><b>${esc(m.lb||r.action)}${r.entity_type&&r.entity_type!=='checklistTask'?' · '+esc(r.entity_type):''}</b>
-        <small>${esc(detail)}</small>
-        <small class="aud-who">👤 ${esc(r.user_id||'—')}${isSuper()?' · 🏬 '+esc(r.store_id||''):''}</small></div>
+      <div class="aud-t"><b>${esc(m.lb||r.action)}${showType?' · '+esc(r.entity_type):''}</b>
+        <small>${esc(detail)}${byPerson?' · ✍️ '+esc(byPerson):''}</small>
+        <small class="aud-who">👤 ${esc(r.user_id||'—')} · 🏬 ${esc(r.store_id||'')}</small></div>
       <span class="aud-time">${esc(String(r.created_at||'').slice(5,16).replace('T',' '))}</span></div>`;
   }).join('');
   const el=document.getElementById('aud-body');

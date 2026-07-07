@@ -584,8 +584,14 @@ def checklist_submit():
     sub['store'] = store
     sid = db.save_checklist_submission(store, sub)
     if not sid: abort(400)
-    db.write_audit(uid(au), store, 'submit', 'checklist', sid, None,
-                   {'dept': sub.get('department'), 'session': sub.get('session'), 'progress': sub.get('progress')})
+    dept = sub.get('dept') or sub.get('department')
+    verified = str(sub.get('status') or '').strip().lower() == 'verified' or sub.get('verifiedBy')
+    if verified:
+        db.write_audit(uid(au), store, 'verify', 'checklist', sid, None,
+                       {'dept': dept, 'session': sub.get('session'), 'by': sub.get('verifiedBy'), 'result': sub.get('overallResult')})
+    else:
+        db.write_audit(uid(au), store, 'submit', 'checklist', sid, None,
+                       {'dept': dept, 'session': sub.get('session'), 'progress': sub.get('progress'), 'by': sub.get('by')})
     return jsonify(ok=True, id=sid)
 
 @api.route('/api/staff/import', methods=['POST'])
@@ -875,7 +881,8 @@ def post_state(store_id):
     if isinstance(state, dict):
         state['store'] = store_id    # a client can never write another store's id
     bytes_saved = db.save_state(store_id, state, who(au), client=d.get('client'))
-    db.write_audit(uid(au), store_id, 'save', 'store_state', store_id, None, {'bytes': bytes_saved})
+    # (no audit row for routine saves — every autosave would flood the log; meaningful
+    #  events like task add/remove and submit/verify are audited on their own paths)
     return jsonify(ok=True, store=store_id, bytes=bytes_saved, updated_at=db.now())
 
 # ---------- store config ----------
@@ -908,14 +915,15 @@ def post_config(store_id):
     au = require_auth(); require_write(au); require_store(au, store_id)
     d = request.get_json(force=True, silent=True) or {}
     cfg = d.get('config', d)
-    res = db.apply_store_config(store_id, cfg if isinstance(cfg, dict) else {})
+    # apply_store_config now writes per-task add/remove audit rows (traced to this person);
+    # no coarse "saved config" row — the audit log only keeps meaningful events.
+    res = db.apply_store_config(store_id, cfg if isinstance(cfg, dict) else {}, who(au))
     # keep a copy in store_config as a change-history trail
     conn = db.connect()
     conn.execute("""INSERT INTO store_config(store_id,config_json,updated_at) VALUES(?,?,?)
                     ON CONFLICT (store_id) DO UPDATE SET config_json=excluded.config_json, updated_at=excluded.updated_at""",
                  (store_id, json.dumps(cfg), db.now()))
     conn.commit(); conn.close()
-    db.write_audit(uid(au), store_id, 'save', 'store_config', store_id, None, res)
     return jsonify(ok=True, store=store_id, **res)
 
 # ---------- message attachments (Gmail-style, 30 MB per file) ----------
@@ -946,7 +954,6 @@ def post_file():
     conn.execute('INSERT INTO files(id,store_id,name,mime,size,filename,created_at,cloud,chunks) VALUES(?,?,?,?,?,?,?,?,?)',
                  (fid, store_id, name, mime, size, fid + '.bin', db.now(), cloud, chunks))
     conn.commit(); conn.close()
-    db.write_audit(uid(au), store_id, 'create', 'file', fid, None, {'name': name, 'size': size, 'chunks': chunks})
     return jsonify(ok=True, id=fid, name=name, size=size, mime=mime)
 
 @api.route('/api/file/<fid>', methods=['GET'])
@@ -1002,7 +1009,6 @@ def post_photo():
     conn.execute('INSERT INTO photos(id,store_id,filename,mime,meta_json,created_at,cloud) VALUES(?,?,?,?,?,?,?) ON CONFLICT (id) DO UPDATE SET filename=excluded.filename, mime=excluded.mime, meta_json=excluded.meta_json, created_at=excluded.created_at, cloud=excluded.cloud',
                  (pid, store_id, pid + '.' + ext, mime, json.dumps(meta), db.now(), cloud))
     conn.commit(); conn.close()
-    db.write_audit(uid(au), store_id, 'create', 'photo', pid, None, None)
     return jsonify(ok=True, id=pid)
 
 @api.route('/api/photos/<photo_id>', methods=['GET'])
@@ -1036,11 +1042,9 @@ def get_photo(photo_id):
 
 @api.route('/api/audit/<store_id>', methods=['GET'])
 def audit_trail(store_id):
-    """Full audit trail. Managers see THEIR store; Super sees any store or ALL."""
+    """Audit trail — SUPER ADMIN only (any store or ALL). Managers no longer have access."""
     au = require_auth()
-    if au['role'] == 'admin':
-        if store_id != (au.get('store_id') or ''): abort(403)
-    elif au['role'] != 'super':
+    if au['role'] != 'super':
         abort(403)
     limit = min(500, int(request.args.get('limit') or 300))
     return jsonify(ok=True, store=store_id, rows=db.list_audit(store_id, limit))
