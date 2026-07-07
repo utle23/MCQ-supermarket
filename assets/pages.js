@@ -109,16 +109,19 @@ function renderStaffHome(){
   const feed=recentFeed().slice(0,6).map(f=>`<div class="feed-row"><div class="feed-ic" style="background:${soft(f.accent)};color:${f.accent}">${f.icon}</div><div class="feed-main"><div class="fm-t">${esc(f.title)}</div><div class="fm-s">${esc(f.sub)}</div></div><div class="feed-time">${esc(f.time)}</div></div>`).join('')||'<div class="empty">No recent activity at your store yet.</div>';
   // ONE section only — the "What to do today" flow now carries everything (Checklist → Bin →
   // Delivery [→ Verify], then Report Issue + Violation), so the old duplicate action grid is gone.
+  // "Open items" = unresolved issues / maintenance / incidents / complaints / violations at this store.
   $('#content').innerHTML=`
     <div class="staff-hero">
       <div class="sh-greet"><div class="sh-hi">Hi, ${esc((u.name||'Team').split(' ')[0])} 👋</div>
         <div class="sh-sub">MCQ ${esc(State.branch)} · ${perthDateLbl({weekday:'long',day:'numeric',month:'short'})}</div></div>
-      <div class="sh-badge"><b>${openItems}</b><span>open items</span></div>
+      <div class="sh-badge" title="Unresolved issues, maintenance, incidents, complaints & violations at your store — tap Report an Issue or the registers to action them"><b>${openItems}</b><span>open ${isMgr?'issue'+(openItems===1?'':'s'):'items'}</span></div>
     </div>
     ${profileNudgeHTML()}
+    ${isMgr?'<div id="dep-status" style="margin-bottom:16px"></div>':''}
     ${todoFlowHTML()}
     <div class="section-title">Recent at your store</div>
     <div class="card"><div class="feed">${feed}</div></div>`;
+  if(isMgr && window.depStatusMount){ try{ depStatusMount(); }catch(e){} }   // store-scoped attendance monitor (late clock-ins today)
 }
 
 /* ============================================================ CHECKLIST — Opening/Closing + photo capture */
