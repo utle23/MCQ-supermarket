@@ -576,7 +576,10 @@ function wsStart(){
     if(d.what==='announcements' && State.route&&State.route.mod==='announcements' && window.renderAnnouncements && !document.getElementById('mcq-modal')) try{ renderAnnouncements(); }catch(e){}
     // someone at MY store saved (checklist template edit, submission, config…) → re-sync so
     // every device at the store sees the SAME up-to-date checklist within seconds
-    if(d.what==='state' && d.store && State.account && (isSuper() || State.account.branch===d.store)) wsStateReload();
+    if(d.what==='state' && d.store && State.account && (isSuper() || State.account.branch===d.store)){
+      if(d.client && window.MCQDB && MCQDB.clientId===d.client){ /* echo of OUR OWN save — nothing new to fetch */ }
+      else wsStateReload();
+    }
   };
   _ws.onclose=()=>{ window.__mcqWsLive=false; _ws=null; clearInterval(_wsPing);
     if(State.account) setTimeout(wsStart, _wsRetry=Math.min(_wsRetry*2,30000)); };

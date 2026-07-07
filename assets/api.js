@@ -174,6 +174,8 @@
     try{ if(window.State) State.dataSync={status:status,message:msg}; if(window.refreshSyncUi) refreshSyncUi(); }catch(e){} }
   var saveDirty=false;   // a save failed → keep retrying until the server confirms
   var _storeHash={};     // store -> JSON of the last state successfully saved (super: skip unchanged stores)
+  var CLIENT_ID='c'+Math.random().toString(36).slice(2,10)+Date.now().toString(36);
+  FB.clientId=CLIENT_ID;
   function postState(store, prebuilt){
     var state = prebuilt || (FB.buildStoreState ? FB.buildStoreState(store) : null);
     // SUPER sessions hold ONE aggregated template in memory (last-loaded store wins) — posting
@@ -187,7 +189,7 @@
     // NOTE: no `keepalive` — the full state often exceeds the 64KB keepalive limit, which would
     // make fetch throw and silently drop the save. Durability on unload is covered by the local
     // cache mirror above + the awaited logout flush + the retry loop.
-    return fetch(api('/api/state/'+encodeURIComponent(store)), {method:'POST', headers:headers(true), body:JSON.stringify({state:state})})
+    return fetch(api('/api/state/'+encodeURIComponent(store)), {method:'POST', headers:headers(true), body:JSON.stringify({state:state, client:CLIENT_ID})})
       .then(function(r){ if(!r.ok) throw new Error('save '+r.status); return r.json().catch(function(){return {};}); });
   }
 

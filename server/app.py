@@ -874,7 +874,7 @@ def post_state(store_id):
     state = d.get('state', d)
     if isinstance(state, dict):
         state['store'] = store_id    # a client can never write another store's id
-    bytes_saved = db.save_state(store_id, state, who(au))
+    bytes_saved = db.save_state(store_id, state, who(au), client=d.get('client'))
     db.write_audit(uid(au), store_id, 'save', 'store_state', store_id, None, {'bytes': bytes_saved})
     return jsonify(ok=True, store=store_id, bytes=bytes_saved, updated_at=db.now())
 

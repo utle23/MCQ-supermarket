@@ -386,10 +386,14 @@ def verify_login(mode, store, pw, login_id=None):
 
 # ---------- realtime: tiny change-hints pushed to connected WebSocket clients ----------
 EVENT_SINKS = []   # ws_hub registers its broadcaster here (single-process / SQLite path)
-def emit_event(what, store=None):
+def emit_event(what, store=None, client=None):
     """Notify every connected client that `what` changed ('inbox' / 'announcements' /
-    'state' + store). Postgres: NOTIFY reaches every gunicorn worker. Fire-and-forget."""
-    payload = json.dumps({'what': what, 'store': store} if store else {'what': what})
+    'state' + store). `client` echoes the saver's client id so THAT device can skip
+    re-fetching its own save. Postgres: NOTIFY reaches every worker. Fire-and-forget."""
+    body = {'what': what}
+    if store: body['store'] = store
+    if client: body['client'] = client
+    payload = json.dumps(body)
     try:
         if IS_PG:
             conn = connect()
@@ -2061,7 +2065,7 @@ def list_audit(store, limit=300):
     finally:
         conn.close()
 
-def save_state(store_id, state, user):
+def save_state(store_id, state, user, client=None):
     state = dict(state or {})
     conn = connect()
     try:
@@ -2175,7 +2179,7 @@ def save_state(store_id, state, user):
                         (SELECT id FROM store_state_snapshots WHERE store_id=? ORDER BY id DESC LIMIT 20)""",
                      (store_id, store_id))
         conn.commit()
-        try: emit_event('state', store_id)   # every device at this store re-syncs (live checklist etc.)
+        try: emit_event('state', store_id, client)   # every OTHER device at this store re-syncs
         except Exception: pass
         return len(blob)
     finally:
