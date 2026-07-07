@@ -810,6 +810,7 @@ function buildSidebar(){
       navLink('announcements','fa-bullhorn','Announcements','',true)+
       navLink('issue','fa-flag','Report Issue','',true)+
       navLink('myvios','fa-gavel','My Violations','',true)+
+      navLink('myrewards','fa-gift','My Rewards','',true)+
       navLink('training','fa-graduation-cap','Training','',true)+
       navLink('feedback','fa-comment-dots','Ideas & Feedback','',true)+
       navLink('profile','fa-id-card','My Profile','',true);
@@ -824,9 +825,10 @@ function buildSidebar(){
   html += navLink('binadmin','fa-trash-can','Bin Checklist','',true);
   html += navSolo('issue','fa-flag','Report Issue');
   html += navSolo('violation','fa-gavel','Violation');
-  if(!isAdmin()){   // staff also get Training + Report Violation
+  if(!isAdmin()){   // Dept Lead also gets Training + Report Violation + their own Rewards
     html += navLink('training','fa-graduation-cap','Training','',true);
     html += navLink('violation','fa-gavel','Report Violation','',true);
+    html += navLink('myrewards','fa-gift','My Rewards','',true);
   }
   { const ub=(window.inboxUnread?inboxUnread():0);
     html += navLink('inbox','fa-inbox',isSuper()?'Inbox':'Store Inbox', ub?`<span class="count">${ub}</span>`:'', true); }
@@ -930,13 +932,14 @@ function render(){
   refreshBell();
   if(isBa()) return renderBaView();   // Chú Ba only ever sees the read-only checklist viewer
   if(isEmployee()){   // individual staff — personal workspace only
-    const own={home:renderEmployeeHome, profile:renderEmployeeProfile, myvios:renderMyViolations};
+    const own={home:renderEmployeeHome, profile:renderEmployeeProfile, myvios:renderMyViolations, myrewards:renderMyPerks};
     if(own[mod]) return own[mod]();
     const shared=['issue','feedback','inbox','announcements','training'];   // rendered by their normal renderers below
     if(!shared.includes(mod)) return renderEmployeeHome();
     // fall through to customPages/module routing for the shared pages the employee may use
   }
   if(mod==='home') return isSuper()?renderHome():renderStaffHome();   // Super = full dashboard; Manager & Dept Lead = focused daily home
+  if(mod==='myrewards' && !isAdmin()) return renderMyPerks();   // Dept Lead: own rewards/birthday/raises (employees handled above)
   if(mod==='inbox' && window.renderInbox) return renderInbox();
   if(mod==='announcements' && window.renderAnnouncements) return renderAnnouncements();
   if(mod==='accounts'){ if(State.account&&State.account.acctAdmin&&window.renderAccounts) return renderAccounts(); location.hash='#/home'; return; }

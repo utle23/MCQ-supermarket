@@ -44,13 +44,26 @@ function todoFlowHTML(){
     const pend=mgrSubs().filter(x=>x.store===store&&x.date===today&&ckIsPendingVerifySub(x)).length;
     steps.push(['🛡️','Verify & Review',pend?`${pend} checklist${pend>1?'s':''} waiting for you`:'All verified ✓',pend?'pend':'done','manager']);
   }
-  const cards=steps.map(([ic,t,sub,st,go_],i)=>`
+  const seqCards=steps.map(([ic,t,sub,st,go_],i)=>`
     <button class="tf-step ${st}" onclick="go('${go_}')">
       <span class="tf-ic">${ic}</span>
       <span class="tf-t"><b>${t}</b><small>${sub}</small></span>
       <span class="tf-st">${st==='done'?'✓':st==='over'?'!':st==='off'?'—':'›'}</span>
     </button>${i<steps.length-1?'<span class="tf-arrow" aria-hidden="true">→</span>':''}`).join('');
-  return `<div class="tf-wrap"><div class="tf-head">📋 What to do today <small>${esc(perthDateLbl({weekday:'long',day:'numeric',month:'short'}))}</small></div><div class="tf-flow">${cards}</div></div>`;
+  // "anytime" actions (no daily status / no sequence arrows) — Report Issue + Violation
+  const acts=[
+    ['🚩','Report an Issue','Maintenance, safety, stock…','issue'],
+    ['⚠️','Report Violation','Log a staff rule breach','violation'],
+  ];
+  const actCards=acts.map(([ic,t,sub,go_])=>`
+    <button class="tf-step act" onclick="go('${go_}')">
+      <span class="tf-ic">${ic}</span>
+      <span class="tf-t"><b>${t}</b><small>${sub}</small></span>
+      <span class="tf-st">›</span>
+    </button>`).join('');
+  return `<div class="tf-wrap"><div class="tf-head">📋 What to do today <small>${esc(perthDateLbl({weekday:'long',day:'numeric',month:'short'}))}</small></div>
+    <div class="tf-flow">${seqCards}</div>
+    <div class="tf-flow tf-acts">${actCards}</div></div>`;
 }
 window.todoFlowHTML=todoFlowHTML;
 
@@ -93,27 +106,17 @@ function renderStaffHome(){
   setAccent('#0e9f6e'); setCrumb('🏠', isMgr?'Manager Home':'My Store','MCQ '+State.branch);
   const u=me();
   const openItems=DB.order.reduce((n,id)=>n+openCount(id),0);
-  // Focused daily set — mirrors the "What to do today" flow, plus Report Issue & Violation.
-  // Manager also gets Verify Checklists. (Shift Handover / Store Rules stay in the sidebar.)
-  const actions=[
-    ['✅','Store Checklist','Opening & closing checks','#10b981',"go('checklist')"],
-    ['🗑️','Bin Checklist','Bin evidence on bin days','#64748b',"go('binadmin')"],
-    ['🚚','Delivery & Crates','Truck & crate return','#3b82f6',"go('delivery','new')"],
-  ];
-  if(isMgr) actions.push(['🛡️','Verify Checklists','Review & verify submissions','#0f766e',"go('manager')"]);
-  actions.push(['🚩','Report an Issue','Maintenance, safety, stock…','#e53935',"go('issue')"]);
-  actions.push(['⚠️','Report Violation','Log a staff rule breach','#c62828',"go('violation')"]);
   const feed=recentFeed().slice(0,6).map(f=>`<div class="feed-row"><div class="feed-ic" style="background:${soft(f.accent)};color:${f.accent}">${f.icon}</div><div class="feed-main"><div class="fm-t">${esc(f.title)}</div><div class="fm-s">${esc(f.sub)}</div></div><div class="feed-time">${esc(f.time)}</div></div>`).join('')||'<div class="empty">No recent activity at your store yet.</div>';
+  // ONE section only — the "What to do today" flow now carries everything (Checklist → Bin →
+  // Delivery [→ Verify], then Report Issue + Violation), so the old duplicate action grid is gone.
   $('#content').innerHTML=`
-    ${todoFlowHTML()}
     <div class="staff-hero">
       <div class="sh-greet"><div class="sh-hi">Hi, ${esc((u.name||'Team').split(' ')[0])} 👋</div>
         <div class="sh-sub">MCQ ${esc(State.branch)} · ${perthDateLbl({weekday:'long',day:'numeric',month:'short'})}</div></div>
       <div class="sh-badge"><b>${openItems}</b><span>open items</span></div>
     </div>
     ${profileNudgeHTML()}
-    <div class="section-title">What do you need to do?</div>
-    <div class="staff-actions">${actions.map(a=>`<button class="sa-tile" style="--c:${a[3]}" onclick="${a[4]}"><span class="sa-ic">${a[0]}</span><span class="sa-txt"><b>${a[1]}</b><small>${a[2]}</small></span><span class="sa-arrow">→</span></button>`).join('')}</div>
+    ${todoFlowHTML()}
     <div class="section-title">Recent at your store</div>
     <div class="card"><div class="feed">${feed}</div></div>`;
 }
@@ -610,6 +613,37 @@ function renderMyViolations(){
     ${standing}
     ${rows.length?`<div class="section-title">History</div><div class="fb-list">${body}</div>`:''}`;
 }
+/* ---- My Rewards: a person's OWN birthday gift, rewards & pay reviews (read-only).
+   Staff & Dept Leads see only themselves; managers use the full HR pages. ---- */
+function renderMyPerks(){
+  setAccent('#7c3aed'); setCrumb('🎁','My Rewards','Your recognition, birthday & pay reviews');
+  const s=myStaff();
+  const rewards=myRegRecords('reward').slice().sort((a,b)=>String(b.rewardMonth||b.created||'').localeCompare(String(a.rewardMonth||a.created||'')));
+  const raises=myRegRecords('raise').slice().sort((a,b)=>String(b.reviewMonth||b.created||'').localeCompare(String(a.reviewMonth||a.created||'')));
+  const bday=myRegRecords('birthday')[0]||null;
+  const money=v=>'$'+(Number(v||0)).toFixed(2);
+  // Birthday
+  const bCard = (bday&&(bday.favoriteGift||bday.status))
+    ? `<div class="perk-card bday"><div class="perk-ic">🎂</div><div class="perk-main"><b>Birthday gift</b>
+         <div class="perk-line">${bday.favoriteGift?('🎁 '+esc(bday.favoriteGift)):'Gift not planned yet'}</div>
+         ${s.dob?`<small>Your birthday: ${esc(s.dob)}</small>`:''}</div>${bday.status?badge(bday.status):''}</div>`
+    : `<div class="perk-card muted"><div class="perk-ic">🎂</div><div class="perk-main"><b>Birthday</b><div class="perk-line">No birthday gift recorded yet.${s.dob?'':' Add your date of birth in My Profile.'}</div></div></div>`;
+  // Rewards
+  const rCards = rewards.length ? rewards.map(r=>`<div class="perk-card reward"><div class="perk-ic">🏆</div>
+      <div class="perk-main"><b>${esc(r.awardType||'Reward')}</b><div class="perk-line">${esc(r.rewardMonth||'')}${r.rewardAmount?(' · '+money(r.rewardAmount)):''}</div></div>${r.status?badge(r.status):''}</div>`).join('')
+    : '<div class="perk-card muted"><div class="perk-ic">🏆</div><div class="perk-main"><b>Rewards</b><div class="perk-line">No rewards yet — keep up the great work! 👏</div></div></div>';
+  // Pay reviews (raises)
+  const raiCards = raises.length ? raises.map(r=>{ const up=(+r.proposedRate||0)-(+r.currentRate||0);
+      return `<div class="perk-card raise"><div class="perk-ic">💸</div>
+      <div class="perk-main"><b>Pay review${r.reviewMonth?(' · '+esc(r.reviewMonth)):''}</b>
+        <div class="perk-line">${money(r.currentRate)} → <b>${money(r.proposedRate)}</b>/h <span style="color:${up>=0?'#0a8a5f':'#d13030'};font-weight:700">(${up>=0?'+':''}${money(up)})</span>${r.effectiveDate?(' · from '+esc(r.effectiveDate)):''}</div></div>${r.status?badge(r.status):''}</div>`; }).join('')
+    : '<div class="perk-card muted"><div class="perk-ic">💸</div><div class="perk-main"><b>Pay reviews</b><div class="perk-line">No pay reviews on record.</div></div></div>';
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🎁</div><div><h2>My Rewards</h2><p>Your birthday gift, rewards &amp; pay reviews at MCQ ${esc(s.store||State.branch||'')}. Read-only — only you can see this.</p></div></div>
+    <div class="section-title">🎂 Birthday</div><div class="perk-list">${bCard}</div>
+    <div class="section-title">🏆 Rewards &amp; recognition</div><div class="perk-list">${rCards}</div>
+    <div class="section-title">💸 Pay reviews</div><div class="perk-list">${raiCards}</div>`;
+}
+window.renderMyPerks=renderMyPerks;
 function renderEmployeeProfile(){
   setAccent('#475569'); setCrumb('🪪','My Profile','Keep your details up to date');
   const s=myStaff();
