@@ -1285,7 +1285,11 @@ function recDelete(modId,id,store){
   if(!confirm('Delete this record permanently?')) return;
   const m=DB.modules[modId]; const i=m.records.findIndex(x=>x.id===id && (isSuper()?(!store||x.store===store):x.store===State.branch));
   if(i>=0 && !recordInScope(m.records[i])){ toast('This record belongs to another store'); return; }
-  if(i>=0){ const before=JSON.parse(JSON.stringify(m.records[i])); auditLog('delete',modId,before.id,before.store,before,null); m.records.splice(i,1); }
+  if(i>=0){ const before=JSON.parse(JSON.stringify(m.records[i])); auditLog('delete',modId,before.id,before.store,before,null); m.records.splice(i,1);
+    // delete on the SERVER too — the whole-store blob save is upsert-only (never removes a row),
+    // so without this the record reappears on next load (this was the "delete didn't save" bug)
+    if(window.mcqDeleteRecords) mcqDeleteRecords('records',[before.id], isSuper()?{store:before.store||store||'ALL'}:null);
+  }
   if(window.persist) window.persist();
   closeDrawer(); toast(`${id} deleted`); buildSidebar(); render();
 }
