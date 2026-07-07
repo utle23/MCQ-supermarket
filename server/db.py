@@ -2177,12 +2177,18 @@ def save_state(store_id, state, user, client=None):
                         ON CONFLICT (store_id) DO UPDATE SET state_json=excluded.state_json,
                         updated_at=excluded.updated_at, updated_by=excluded.updated_by""",
                      (store_id, blob, now(), user))
-        # capped snapshot trail (lean blob — size/timeline indicator)
-        conn.execute('INSERT INTO store_state_snapshots(store_id,state_json,created_at,created_by) VALUES(?,?,?,?)',
-                     (store_id, blob, now(), user))
-        conn.execute("""DELETE FROM store_state_snapshots WHERE store_id=? AND id NOT IN
-                        (SELECT id FROM store_state_snapshots WHERE store_id=? ORDER BY id DESC LIMIT 20)""",
-                     (store_id, store_id))
+        # capped snapshot trail (lean blob — size/timeline indicator). Only snapshot when the
+        # blob actually CHANGED vs the latest snapshot: autosaves fire every few seconds and are
+        # usually byte-identical (ticking a checkbox doesn't touch the blob), so writing a fresh
+        # snapshot each time was pure disk churn with no recovery value.
+        last_snap = conn.execute('SELECT state_json FROM store_state_snapshots WHERE store_id=? ORDER BY id DESC LIMIT 1',
+                                 (store_id,)).fetchone()
+        if not last_snap or last_snap['state_json'] != blob:
+            conn.execute('INSERT INTO store_state_snapshots(store_id,state_json,created_at,created_by) VALUES(?,?,?,?)',
+                         (store_id, blob, now(), user))
+            conn.execute("""DELETE FROM store_state_snapshots WHERE store_id=? AND id NOT IN
+                            (SELECT id FROM store_state_snapshots WHERE store_id=? ORDER BY id DESC LIMIT 20)""",
+                         (store_id, store_id))
         conn.commit()
         try: emit_event('state', store_id, client)   # every OTHER device at this store re-syncs
         except Exception: pass
