@@ -4780,7 +4780,7 @@ function renderAuditLog(){
   if(!State.aud) State.aud={store:isSuper()?'ALL':State.branch,q:'',act:'',rows:null};
   const a=State.aud; if(!isSuper()) a.store=State.branch;
   const storeSel=isSuper()?`<select class="login-input" style="width:auto" onchange="State.aud.store=this.value;State.aud.rows=null;renderAuditLog()">${['ALL',...DB.stores].map(sx=>`<option ${sx===a.store?'selected':''}>${esc(sx)}</option>`).join('')}</select>`:'';
-  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🕵️</div><div><h2>Audit Log</h2><p>Who did what — checklists done &amp; verified, tasks added/removed, accounts &amp; deletions. Super Admin only.</p></div>
+  $('#content').innerHTML=`<div class="page-head"><div class="ph-ic">🕵️</div><div><h2>Audit Log</h2><p>Who did what — checklists done &amp; verified, tasks added/removed, records &amp; deletions.${isSuper()?' Super sees every store.':' Your store ('+esc(State.branch)+').'}</p></div>
     <div class="ph-actions">${storeSel}<button class="btn sm" onclick="State.aud.rows=null;renderAuditLog()">↻ Refresh</button><div class="search"><input value="${esc(a.q||'')}" oninput="State.aud.q=this.value;audPaint()" placeholder="🔍 Search task, person, action…"></div></div></div>
     <div id="aud-filters"></div>
     <div id="aud-body"><div class="card card-pad loading-state"><i class="fas fa-spinner fa-spin"></i><b>Loading audit trail…</b></div></div>`;

@@ -1042,9 +1042,12 @@ def get_photo(photo_id):
 
 @api.route('/api/audit/<store_id>', methods=['GET'])
 def audit_trail(store_id):
-    """Audit trail — SUPER ADMIN only (any store or ALL). Managers no longer have access."""
+    """Audit trail — a store Manager sees THEIR OWN store; Super sees any store or ALL.
+    (Dept Leads / staff have no access.)"""
     au = require_auth()
-    if au['role'] != 'super':
+    if au['role'] == 'admin':
+        if store_id != (au.get('store_id') or ''): abort(403)   # manager locked to own store
+    elif au['role'] != 'super':
         abort(403)
     limit = min(500, int(request.args.get('limit') or 300))
     return jsonify(ok=True, store=store_id, rows=db.list_audit(store_id, limit))

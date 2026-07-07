@@ -831,7 +831,7 @@ DB.customPages = {
   whatsapp: { label:'WhatsApp Daily Share', icon:'💬', render:'renderWhatsapp', admin:true },
   email:    { label:'Email Notifications',  icon:'✉️', render:'renderEmail', admin:true },
   data:     { label:'Data Management', icon:'🗄️', render:'renderData', admin:true },
-  auditlog: { label:'Audit Log', icon:'🕵️', render:'renderAuditLog', super:true },
+  auditlog: { label:'Audit Log', icon:'🕵️', render:'renderAuditLog', admin:true },
   rules:    { label:'Supermarket Rules', icon:'📖', render:'renderRules' },
   profile:  { label:'My Profile', icon:'👤', render:'renderEmployeeProfile' },
   faceid:   { label:'Face ID', icon:'🪪', render:'renderFaceId' },
