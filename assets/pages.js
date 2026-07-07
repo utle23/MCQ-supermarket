@@ -230,7 +230,8 @@ function ckEditDeadline(session){ const v=prompt('Deadline for '+session+' (e.g.
    objects, photo IDs) — no image blobs — so it stays tiny. Restored on reopen. */
 function ckDraftKey(){ return 'mcq_ckdraft_'+(State.branch||'store')+'_'+ckTodayStr(); }
 let _ckDraftTimer=null;
-function ckWriteDraft(){ try{ if(!State.chk) return; localStorage.setItem(ckDraftKey(), JSON.stringify({state:State.chk.state||{}, resp:State.chk.resp||{}, t:Date.now()})); }catch(e){} }
+function ckWriteDraft(){ try{ if(!State.chk) return; if(State.chk._day&&State.chk._day!==ckTodayStr()) return;   // day rolled over — never save yesterday's ticks under today's key
+  localStorage.setItem(ckDraftKey(), JSON.stringify({state:State.chk.state||{}, resp:State.chk.resp||{}, t:Date.now()})); }catch(e){} }
 function ckSaveDraft(){ clearTimeout(_ckDraftTimer); _ckDraftTimer=setTimeout(ckWriteDraft, 500); }   // debounced
 
 /* ---- offline submit queue: if a checklist is submitted with no connection (or the save
@@ -264,10 +265,37 @@ function ckRestoreDraft(){ try{
 if(!window._ckDraftHooked){ window._ckDraftHooked=true;
   try{ document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') ckWriteDraft(); }); window.addEventListener('pagehide', ckWriteDraft); }catch(e){}
 }
+/* NEW DAY = BLANK checklist. Store devices often stay open past midnight; the in-memory
+   ticks/notes/photos from YESTERDAY must never show up pre-filled on today's checklist.
+   (Drafts are already day-keyed in localStorage — this guards the live State too.) */
+function ckEnsureFreshDay(){
+  if(!State.chk) return;
+  const today=ckTodayStr();
+  if(State.chk._day===today) return;
+  const firstInit=!State.chk._day;
+  State.chk._day=today;
+  if(!firstInit){
+    State.chk.state={}; State.chk.resp={}; State.chk.reopen={};
+    if(State.chk.date!==today) State.chk.date=today;
+    ckRestoreDraft();   // TODAY's draft only — the storage key includes today's date
+  }
+  ckCleanOldDrafts();
+}
+function ckCleanOldDrafts(){
+  try{
+    const keep=new Set([0,1,2].map(n=>dISO(new Date(perthNow().getTime()-n*864e5))));
+    for(let i=localStorage.length-1;i>=0;i--){
+      const k=localStorage.key(i)||'';
+      if(k.indexOf('mcq_ckdraft_')===0){ const d=k.slice(-10); if(/^\d{4}-\d{2}-\d{2}$/.test(d)&&!keep.has(d)) localStorage.removeItem(k); }
+    }
+  }catch(e){}
+}
+window.ckEnsureFreshDay=ckEnsureFreshDay;
 function renderChecklist(){
   const C=DB.checklist; setAccent('#0e9f6e');
   try{ ckFlushQueue(); }catch(e){}   // push any submissions that were made offline
   if(!State.chk){ State.chk={session:'Opening',dept:C.depts[0],area:'ALL',state:{},resp:{}}; ckRestoreDraft(); }
+  ckEnsureFreshDay();
   if(State.chk.dept==='ALL' || !C.depts.includes(State.chk.dept)) State.chk.dept=C.depts[0];
   if(!State.chk.area) State.chk.area='ALL';
   if(!State.chk.resp) State.chk.resp={};
@@ -2683,6 +2711,7 @@ async function ckPhotoMap(urls,max){
    only contained what was ticked on their own phone — staff submissions made on other
    devices were invisible. Submissions are matched per dept (verified/newest wins). */
 function ckReportState(session,store){
+  if(window.ckEnsureFreshDay) ckEnsureFreshDay();   // never blend yesterday's live ticks into today's report
   const branch=store||State.branch, date=todayISO();
   const rows=DB.checklist.items.map(ckItem).filter(r=>ckStoreOk(r,branch)&&ckInSession(r,session));
   const st={}; rows.forEach(r=>{ const live=(State.chk&&State.chk.state&&State.chk.state[r.i])||{};
