@@ -291,6 +291,26 @@ function ckCleanOldDrafts(){
   }catch(e){}
 }
 window.ckEnsureFreshDay=ckEnsureFreshDay;
+/* the store's template just changed on the server (someone else edited a task) — carry this
+   device's in-progress ticks/notes over to the SAME TASKS by identity, not by array index */
+function ckRemapLiveState(prevItems){
+  try{
+    if(!State.chk||!State.chk.state||!Object.keys(State.chk.state).length) return;
+    const old=State.chk.state, remapped={};
+    const key=r=>r[0]+'|'+r[1]+'|'+r[2];
+    const nIdx={}, nIdx2={};
+    ((DB.checklist&&DB.checklist.items)||[]).forEach((r,i)=>{ if(Array.isArray(r)){ nIdx[key(r)]=i; const k2=r[0]+'|'+r[2]; if(!(k2 in nIdx2)) nIdx2[k2]=i; } });
+    Object.keys(old).forEach(k=>{
+      const r=prevItems[+k]; if(!Array.isArray(r)) return;
+      let ni=nIdx[key(r)]; if(ni==null) ni=nIdx2[r[0]+'|'+r[2]];
+      if(ni!=null) remapped[ni]=old[k];   // tasks deleted from the template drop out naturally
+    });
+    State.chk.state=remapped;
+    State.chk.editing=null; State.chk.editDeptH=null; State.chk.editArea=null;
+    ckSaveDraft();
+  }catch(e){}
+}
+window.ckRemapLiveState=ckRemapLiveState;
 function renderChecklist(){
   const C=DB.checklist; setAccent('#0e9f6e');
   try{ ckFlushQueue(); }catch(e){}   // push any submissions that were made offline

@@ -386,10 +386,10 @@ def verify_login(mode, store, pw, login_id=None):
 
 # ---------- realtime: tiny change-hints pushed to connected WebSocket clients ----------
 EVENT_SINKS = []   # ws_hub registers its broadcaster here (single-process / SQLite path)
-def emit_event(what):
-    """Notify every connected client that `what` changed ('inbox' / 'announcements').
-    Postgres: NOTIFY reaches every gunicorn worker's listener thread. Fire-and-forget."""
-    payload = json.dumps({'what': what})
+def emit_event(what, store=None):
+    """Notify every connected client that `what` changed ('inbox' / 'announcements' /
+    'state' + store). Postgres: NOTIFY reaches every gunicorn worker. Fire-and-forget."""
+    payload = json.dumps({'what': what, 'store': store} if store else {'what': what})
     try:
         if IS_PG:
             conn = connect()
@@ -692,6 +692,8 @@ def apply_store_config(store_id, cfg):
             _sync_accounts_from_staff(conn, store_id)
             out['staff'] = n
         conn.commit()
+        try: emit_event('state', store_id)
+        except Exception: pass
         return out
     finally:
         conn.close()
@@ -916,6 +918,8 @@ def save_checklist_submission(store, sub):
                         VALUES(?,?,?,?) ON CONFLICT (store_id,id) DO UPDATE SET data_json=excluded.data_json, created_at=excluded.created_at''',
                      (sid, store, json.dumps(payload), now()))
         conn.commit()
+        try: emit_event('state', store)
+        except Exception: pass
         return sid
     finally:
         conn.close()
@@ -2042,6 +2046,8 @@ def save_state(store_id, state, user):
                         (SELECT id FROM store_state_snapshots WHERE store_id=? ORDER BY id DESC LIMIT 20)""",
                      (store_id, store_id))
         conn.commit()
+        try: emit_event('state', store_id)   # every device at this store re-syncs (live checklist etc.)
+        except Exception: pass
         return len(blob)
     finally:
         conn.close()

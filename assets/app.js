@@ -574,10 +574,28 @@ function wsStart(){
       if(State.route&&State.route.mod==='inbox' && window.renderInbox && !document.getElementById('mcq-modal')) try{ renderInbox(); }catch(e){}
     }
     if(d.what==='announcements' && State.route&&State.route.mod==='announcements' && window.renderAnnouncements && !document.getElementById('mcq-modal')) try{ renderAnnouncements(); }catch(e){}
+    // someone at MY store saved (checklist template edit, submission, config…) → re-sync so
+    // every device at the store sees the SAME up-to-date checklist within seconds
+    if(d.what==='state' && d.store && State.account && (isSuper() || State.account.branch===d.store)) wsStateReload();
   };
   _ws.onclose=()=>{ window.__mcqWsLive=false; _ws=null; clearInterval(_wsPing);
     if(State.account) setTimeout(wsStart, _wsRetry=Math.min(_wsRetry*2,30000)); };
   _ws.onerror=()=>{ try{ _ws&&_ws.close(); }catch(e){} };
+}
+let _wsStateT=null;
+function wsStateReload(){
+  clearTimeout(_wsStateT);
+  _wsStateT=setTimeout(async ()=>{
+    if(!State.account || !(window.MCQDB&&MCQDB.loadForAccount)) return;
+    const ae=document.activeElement, typing=ae&&/^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName||'');
+    const busy=$('.drawer.open')||document.getElementById('mv-ov')||document.getElementById('mcq-modal')||[...document.querySelectorAll('.lb-overlay,.ck-block-ov,.ck-success-ov')].some(e=>e&&e.style.display&&e.style.display!=='none');
+    if(typing||busy){ _wsStateT=setTimeout(wsStateReload,6000); return; }   // try again when the user is free
+    const prevItems=((DB.checklist&&DB.checklist.items)||[]).map(r=>Array.isArray(r)?r.slice():r);
+    const prevVer=+((DB.checklist&&DB.checklist.templateVersion)||0);
+    try{ await MCQDB.loadForAccount(State.account); }catch(e){ return; }   // flushes local dirty edits FIRST, then loads
+    const newVer=+((DB.checklist&&DB.checklist.templateVersion)||0);
+    if(newVer!==prevVer && window.ckRemapLiveState) ckRemapLiveState(prevItems);   // carry in-progress ticks to the same tasks
+  }, 900);
 }
 function wsStop(){ try{ _ws&&_ws.close(); }catch(e){} _ws=null; window.__mcqWsLive=false; clearInterval(_wsPing); }
 let _liveTimer=null;
