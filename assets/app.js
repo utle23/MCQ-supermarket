@@ -1260,8 +1260,7 @@ function reviewSave(modId,id,store){
   (m.review||[{key:'status'}]).forEach(f=>{const el=document.getElementById('d-'+f.key); if(el&&el.value!=='') r[f.key]=el.value;});
   if(!isSuper()) r.store=State.branch;
   auditLog('review',modId,r.id,r.store,before,r);
-  if(window.persist) window.persist();
-  closeDrawer(); toast(`${id} updated`); buildSidebar(); if(State.route.mod===modId) render();
+  recFlushThenClose(`${id} updated`);
 }
 /* admin full-edit: render an editable control for every field of the record */
 function editFields(r,m){
@@ -1284,8 +1283,17 @@ function recSaveAll(modId,id,store){
   r.store=storeForWrite(r.store);
   if(r.priority && m.id==='maintenance') r.severity=r.priority;
   auditLog('update',modId,r.id,r.store,before,r);
+  recFlushThenClose(`${id} saved`);
+}
+// Flush the edit to the server NOW (don't wait for the debounced save), THEN close the drawer.
+// While the drawer is still open a background reload (WS 'state' event / 30s live refresh)
+// defers (busy guard), so the edit can never be re-loaded-over before it lands — this is what
+// caused "Super changed a status to Completed/In Progress and it didn't save".
+function recFlushThenClose(msg){
+  const done=()=>{ try{ closeDrawer(); }catch(e){} toast(msg); try{ buildSidebar(); render(); }catch(e){} };
   if(window.persist) window.persist();
-  closeDrawer(); toast(`${id} saved`); buildSidebar(); render();
+  if(window.MCQDB && MCQDB.saveAll){ try{ Promise.resolve(MCQDB.saveAll()).then(done, done); return; }catch(e){} }
+  done();
 }
 function recDelete(modId,id,store){
   if(!confirm('Delete this record permanently?')) return;

@@ -219,7 +219,13 @@
     if(FB.hydrateFromCache){ try{ FB.hydrateFromCache(account); }catch(e){} }
     if(!TOKEN){ FB.lastSync={status:'local',message:'Sign in to sync with the server'}; return Promise.resolve(FB.lastSync); }
     if(account.role==='super' || account.role==='ba'){   // Chú Ba loads all stores (read-only), like super
-      try{ localStorage.removeItem('mcq_dirty_super'); }catch(_){}   // super keeps its debounced/5s/logout flushes; don't force a broad re-save (could touch uncached stores)
+      // FLUSH any pending Super edit to the server FIRST, then re-aggregate — otherwise a
+      // background reload (a WS 'state' event from any store, or the 30s live refresh) landing
+      // in the ~½s after an edit would re-load the old data over it and the edit would be LOST
+      // (e.g. changing a maintenance status to Completed/In Progress that "didn't save").
+      var preFlush=Promise.resolve();
+      try{ if(account.role==='super' && localStorage.getItem('mcq_dirty_super') && FB.saveAll){ preFlush=FB.saveAll().catch(function(){}); } }catch(_){}
+      return preFlush.then(function(){ try{ localStorage.removeItem('mcq_dirty_super'); }catch(_){}
       return fetch(api('/api/stores'), {headers:headers()}).then(function(r){return r.json();}).then(function(list){
         var ss=(list&&list.stores||[]).map(function(s){return s.id;});
         return Promise.all(ss.map(function(s){
@@ -235,6 +241,7 @@
           return FB.lastSync;
         });
       }).catch(function(e){ FB.lastSync={status:'error',message:'Server unavailable · local data'}; return FB.lastSync; });
+      });   // close preFlush.then
     }
     var store=account.branch;
     // RECONCILE: if the last session left unsaved local edits for this store (dirty flag
