@@ -2261,16 +2261,19 @@ function renderIssueRecords(){
   if(!State.iss) State.iss={tab:'records'};
   const regMods=['issue','maintenance','incident','complaint'];
   let all=[]; regMods.forEach(id=>DB.modules[id].records.forEach(r=>all.push({mod:id,icon:DB.modules[id].icon,short:DB.modules[id].short,...r})));
+  const recStore=isSuper()?(State.iss.recStore||'ALL'):State.branch;
   if(!isSuper()) all=all.filter(r=>r.store===State.branch);
-  else if(State.superStore && State.superStore!=='ALL') all=all.filter(r=>r.store===State.superStore);   // honour the global Super store filter
+  else if(recStore!=='ALL') all=all.filter(r=>r.store===recStore);   // per-page store filter
   if(isEmployee()){ const mine=(myStaff().name||(State.account&&(State.account.staffName||State.account.name))||''); all=all.filter(r=>(r.reportedBy||'')===mine); }   // staff see only their own reports
   const from=State.iss.recFrom||'', to=State.iss.recTo||'';
   all=all.filter(r=>{ const d=String(r.created||r.date||'').slice(0,10); if(from&&(!d||d<from)) return false; if(to&&(!d||d>to)) return false; return true; });
   all.sort((a,b)=>String(b.created||b.date||'').localeCompare(String(a.created||a.date||'')));
+  const storeFilter=isSuper()?`<div class="filter"><label>Store</label><select onchange="State.iss.recStore=this.value;renderIssueRecords()">${['ALL'].concat(DB.stores||[]).map(s=>`<option value="${esc(s)}" ${recStore===s?'selected':''}>${s==='ALL'?'All stores':esc(s)}</option>`).join('')}</select></div>`:'';
   $('#content').innerHTML=`
     <div class="page-head"><div class="ph-ic" style="background:#fdeaea">🚩</div><div><h2>Report an Issue · Records</h2><p>Every report — Issue / Maintenance / Incident / Complaint, newest first.</p></div>
       <div class="ph-actions">${issSeg('records')}</div></div>
     <div class="toolbar"><span class="count-chip">📋 ${all.length} report${all.length!==1?'s':''}</span>
+      ${storeFilter}
       <div class="filter f-daterange"><label>Date</label><input type="date" value="${esc(from)}" onchange="issRecDate('recFrom',this.value)"><span>→</span><input type="date" value="${esc(to)}" onchange="issRecDate('recTo',this.value)"></div>
       ${from||to?`<button class="btn sm" onclick="issRecDate('recFrom','');State.iss.recTo='';renderIssueRecords()">✕ Clear</button>`:''}
       <div class="tb-spacer"></div>${exportBtns('iss-rec-table','Report Issue Records')}</div>

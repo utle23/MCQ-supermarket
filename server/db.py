@@ -113,6 +113,8 @@ CREATE TABLE IF NOT EXISTS checklist_submissions (
   id TEXT, store_id TEXT, data_json TEXT, created_at TEXT, PRIMARY KEY (store_id, id));
 CREATE TABLE IF NOT EXISTS records (
   id TEXT, store_id TEXT, module TEXT, data_json TEXT, created_at TEXT, PRIMARY KEY (store_id, module, id));
+CREATE TABLE IF NOT EXISTS deleted_records (
+  store_id TEXT, id TEXT, deleted_at TEXT, PRIMARY KEY (store_id, id));
 CREATE TABLE IF NOT EXISTS bin_records (
   id TEXT, store_id TEXT, data_json TEXT, created_at TEXT, PRIMARY KEY (store_id, id));
 CREATE TABLE IF NOT EXISTS schedule_tasks (
@@ -2062,6 +2064,23 @@ def _audit_template_diff(conn, store, old_v, new_v, user):
                      (user, store, 'template-remove', 'checklistTask', r[2][:120],
                       json.dumps({'dept': r[0], 'area': r[1], 'task': r[2], 'when': r[3]}), None, now()))
 
+def tombstone_records(store_ids_and_ids):
+    """Mark record ids as permanently deleted so a stale device can't re-upload them.
+    store_ids_and_ids = list of (store_id, id). Old tombstones (>180d) are pruned."""
+    pairs = [(str(s), str(i)) for (s, i) in (store_ids_and_ids or []) if s and i]
+    if not pairs: return
+    conn = connect()
+    try:
+        ts = now()
+        for (s, i) in pairs:
+            conn.execute('INSERT INTO deleted_records(store_id,id,deleted_at) VALUES(?,?,?) '
+                         'ON CONFLICT (store_id,id) DO UPDATE SET deleted_at=excluded.deleted_at', (s, i, ts))
+        conn.execute("DELETE FROM deleted_records WHERE deleted_at < ?",
+                     (time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(time.time() + 8 * 3600 - 180 * 86400)),))
+        conn.commit()
+    finally:
+        conn.close()
+
 # noisy machine events that carry no human-meaningful "who did what" — never shown in the log
 AUDIT_NOISE_TYPES = ('store_state', 'store_config', 'photo', 'file')
 
@@ -2088,12 +2107,17 @@ def save_state(store_id, state, user, client=None):
     try:
         # records (per module) — MERGE (upsert): never mass-delete, so concurrent
         # editors at the same store accumulate rows instead of wiping each other.
+        # BUT skip any id that was explicitly DELETED (tombstoned) — otherwise a device that
+        # still had the old record cached would re-upload it and "un-delete" it (records that
+        # came back the next day). The tombstone makes a deletion final across all devices.
+        tomb = {row['id'] for row in conn.execute('SELECT id FROM deleted_records WHERE store_id=?', (store_id,)).fetchall()}
         modules = state.get('modules') or {}
         if isinstance(modules, dict):
             for m, arr in modules.items():
                 if not isinstance(arr, list): continue
                 for i, r in enumerate(arr):
                     rid = str((isinstance(r, dict) and r.get('id')) or (str(m) + '#' + str(i)))
+                    if rid in tomb: continue   # deleted → never re-add from a stale device
                     conn.execute('INSERT INTO records(id,store_id,module,data_json,created_at) VALUES(?,?,?,?,?) ON CONFLICT (store_id,module,id) DO UPDATE SET data_json=excluded.data_json, created_at=excluded.created_at',
                                  (rid, store_id, str(m), json.dumps(r), now()))
         # staff (merge/upsert) — ONE profile per gmail per store: a second row with an email

@@ -82,7 +82,9 @@ function vioStats(){
 function vioDate(which,val){ State.vio=State.vio||{}; State.vio[which]=val; renderViolation(); }
 function vioFilteredRecs(){
   const from=State.vio&&State.vio.from||'', to=State.vio&&State.vio.to||'';
+  const recStore=isSuper()?((State.vio&&State.vio.recStore)||'ALL'):null;
   return scopedRecords('violation').slice()
+    .filter(v=>recStore&&recStore!=='ALL'?v.store===recStore:true)   // per-page store filter (Super)
     .filter(v=>{ const d=String(v.created||'').slice(0,10); if(from&&(!d||d<from))return false; if(to&&(!d||d>to))return false; return true; })
     .sort((a,b)=>String(b.created||'').localeCompare(String(a.created||'')));
 }
@@ -97,8 +99,11 @@ function vioRecords(){
         <span class="badge ${toneOf(v.severity)}">${esc(v.severity)}</span><span class="badge ${toneOf(v.step)}">${esc(v.step||'')}</span><span class="badge ${toneOf(v.status)}">${esc(v.status)}</span>
         <span class="vcard-meta">👤 ${esc(v.staffName)} · 🏪 ${esc(v.store||'')} · ${esc((v.created||'').slice(0,16))}</span></div>
       <div class="vcard-b">${esc(v.description||'')}</div></div>`).join('');
+  const vRecStore=isSuper()?((State.vio&&State.vio.recStore)||'ALL'):State.branch;
+  const storeFilter=isSuper()?`<div class="filter"><label>Store</label><select onchange="vioDate('recStore',this.value)">${['ALL'].concat(DB.stores||[]).map(s=>`<option value="${esc(s)}" ${vRecStore===s?'selected':''}>${s==='ALL'?'All stores':esc(s)}</option>`).join('')}</select></div>`:'';
   $('#content').innerHTML=`${vioHead('records')}
     <div class="toolbar"><span class="count-chip">📋 ${recs.length} record${recs.length!==1?'s':''}</span>
+      ${storeFilter}
       <div class="filter f-daterange"><label>Date</label><input type="date" value="${esc(from)}" onchange="vioDate('from',this.value)"><span>→</span><input type="date" value="${esc(to)}" onchange="vioDate('to',this.value)"></div>
       ${from||to?`<button class="btn sm" onclick="State.vio.from='';vioDate('to','')">✕ Clear</button>`:''}
       <div class="tb-spacer"></div>${expMenu('vioExport')}</div>

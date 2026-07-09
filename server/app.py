@@ -1104,19 +1104,33 @@ def audit_log():
 def delete_records():
     au = require_auth(); require_write(au)
     d = request.get_json(force=True, silent=True) or {}
-    store = d.get('store_id'); require_store(au, store)
+    store = d.get('store_id')
     table = d.get('table')
     if table not in ('records', 'staff', 'checklist_submissions', 'bin_records', 'schedule_history'):
         abort(400)
     idcol = 'rec_id' if table == 'schedule_history' else 'id'
-    # scope: a specific store (admin or super), or ALL stores (super only)
+    # scope: a specific store (admin or super), or ALL stores (super only). NOTE: do NOT
+    # require_store on the raw value first — 'ALL' is a valid super scope and would 404.
     all_stores = (au['role'] == 'super' and store not in db.STORES)
     if not all_stores:
-        require_store(au, store)
+        require_store(au, store)   # a real store → must be accessible
     scope = '' if all_stores else ' store_id=?'
     base = [] if all_stores else [store]
     conn = db.connect()
+    tomb = []   # (store_id, id) pairs to tombstone so a stale device can't re-add them
     try:
+        # collect the (store_id, id) of the rows being deleted FIRST (for tombstoning `records`)
+        if table == 'records':
+            if d.get('all'):
+                sel = conn.execute('SELECT store_id,id FROM records' + (' WHERE' + scope if scope else ''), base).fetchall()
+            else:
+                ids0 = [str(x) for x in (d.get('ids') or []) if x is not None]
+                sel = []
+                for chunk in [ids0[i:i+400] for i in range(0, len(ids0), 400)]:
+                    if not chunk: continue
+                    cond = (scope + ' AND' if scope else '') + ' id IN (' + ','.join('?'*len(chunk)) + ')'
+                    sel += conn.execute('SELECT store_id,id FROM records WHERE' + cond, base + chunk).fetchall()
+            tomb = [(r['store_id'], r['id']) for r in sel]
         if d.get('all'):
             conn.execute('DELETE FROM ' + table + (' WHERE' + scope if scope else ''), base)
         else:
@@ -1128,6 +1142,9 @@ def delete_records():
         conn.commit()
     finally:
         conn.close()
+    if tomb:
+        try: db.tombstone_records(tomb)   # make record deletions final across all devices
+        except Exception: pass
     db.write_audit(uid(au), store, 'delete', table, 'ALL' if d.get('all') else ','.join((d.get('ids') or [])[:5]), None, None)
     return jsonify(ok=True)
 
