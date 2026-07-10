@@ -149,6 +149,10 @@
       checklistItems: JSON.stringify((DB.checklist&&DB.checklist.items)||[]),
       checklistTemplateVersion: (DB.checklist&&DB.checklist.templateVersion)||0,
       checklistDeadlines: clone((DB.checklist&&DB.checklist.deadlines)||{}),
+      // the department list is per-store now (so a store can drop e.g. BUTCHER without touching
+      // others) — versioned with the template so a stale device can't revert it
+      checklistDepts: clone((DB.checklist&&DB.checklist.depts)||[]),
+      checklistDeptMeta: clone((DB.checklist&&DB.checklist.deptMeta)||{}),
       checklistSubs: JSON.stringify(subs),
       binAdmin: JSON.stringify(buildBinAdmin(scoped?store:'')),
       jobDuties: JSON.stringify(DB.jobDuties||null), jobRoster: JSON.stringify(DB.jobRoster||null),
@@ -170,6 +174,9 @@
       if(cloudVer>=seedVer){   // cloud template is same/newer → use it; else keep the newer seed and let next save push it to every store
         let ci=d.checklistItems; if(typeof ci==='string'){ try{ ci=JSON.parse(ci); }catch(e){ ci=null; } } if(Array.isArray(ci)&&ci.length) DB.checklist.items=ci;
         if(d.checklistDeadlines && typeof d.checklistDeadlines==='object') DB.checklist.deadlines=Object.assign({},DB.checklist.deadlines,d.checklistDeadlines);
+        // per-store department list (versioned with the template): a store may drop a department
+        if(Array.isArray(d.checklistDepts)&&d.checklistDepts.length) DB.checklist.depts=clone(d.checklistDepts);
+        if(d.checklistDeptMeta && typeof d.checklistDeptMeta==='object') DB.checklist.deptMeta=Object.assign({},DB.checklist.deptMeta,clone(d.checklistDeptMeta));
         if(d.checklistTemplateVersion!=null) DB.checklist.templateVersion=cloudVer;
       }
       if(window.normalizeChecklistTemplate) window.normalizeChecklistTemplate();

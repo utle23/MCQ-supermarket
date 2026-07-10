@@ -194,7 +194,7 @@
     // it would copy one store's checklist onto another. Super edits templates only through
     // Store Config, so strip the template fields here; the server keeps each store's own.
     try{ var acct0=(window.State&&State.account)||{};
-      if(state && (acct0.role==='super'||acct0.role==='ba')){ delete state.checklistItems; delete state.checklistTemplateVersion; delete state.checklistDeadlines; }
+      if(state && (acct0.role==='super'||acct0.role==='ba')){ delete state.checklistItems; delete state.checklistTemplateVersion; delete state.checklistDeadlines; delete state.checklistDepts; delete state.checklistDeptMeta; }
     }catch(e){}
     // mirror locally FIRST so the data survives even if the network/tab dies before the POST lands
     try{ if(state && FB.writeCache) FB.writeCache(store, state); }catch(e){}

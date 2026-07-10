@@ -14,7 +14,7 @@ Design notes
 * To move to MySQL on PythonAnywhere: swap `connect()` for a MySQL connector and
   change `AUTOINC`/types; all SQL is kept simple and portable.
 """
-import os, sqlite3, json, time, hashlib, secrets, re as _re
+import os, sqlite3, json, time, hashlib, secrets, re as _re, unicodedata
 
 BASE   = os.path.dirname(os.path.abspath(__file__))
 # DATA_DIR lets a host (e.g. a Render persistent disk) place the DB file + uploads on durable
@@ -1921,6 +1921,44 @@ def post_announcement(au, store, title, body_html, image_id=None, department=Non
     finally:
         conn.close()
 
+def _dept_norm(s):
+    """Accent-insensitive, lower-cased department/role key (mirrors the client's staffNorm)."""
+    try:
+        s = unicodedata.normalize('NFD', str(s or ''))
+        s = ''.join(c for c in s if unicodedata.category(c) != 'Mn')
+    except Exception:
+        s = str(s or '')
+    return s.lower().strip()
+
+def announcement_recipients(store, department):
+    """Staff (with a real email) who should be Gmail-notified about an announcement.
+       store not a real store (e.g. 'ALL') → every store; else just that store.
+       department empty → EVERYONE in scope; else only staff whose dept OR any role
+       matches (normalized) — mirrors the client's inDept() so the email set == the
+       in-app audience. Deduped by email; archived / inactive staff are skipped."""
+    conn = connect()
+    try:
+        stores = [store] if (store in STORES) else list(STORES)
+        dn = _dept_norm(department)
+        out = {}
+        for st in stores:
+            for r in conn.execute('SELECT data_json FROM staff WHERE store_id=?', (st,)).fetchall():
+                try: d = json.loads(r['data_json'] or '{}')
+                except Exception: d = {}
+                if d.get('archived') or d.get('active') == 0: continue
+                email = str(d.get('email') or '').strip()
+                if '@' not in email: continue
+                if dn:
+                    roles = d.get('roles') if isinstance(d.get('roles'), list) else []
+                    if _dept_norm(d.get('dept')) != dn and not any(_dept_norm(x) == dn for x in roles):
+                        continue
+                key = email.lower()
+                if key not in out:
+                    out[key] = {'email': email, 'name': (d.get('name') or email)}
+        return list(out.values())
+    finally:
+        conn.close()
+
 def list_announcements(au):
     conn = connect()
     try:
@@ -2134,6 +2172,7 @@ def save_state(store_id, state, user, client=None):
                     email_owner[e0] = (str(r0['id']), bool(d0.get('archived') or d0.get('active') == 0))
             for i, s in enumerate(staff):
                 sid = str((isinstance(s, dict) and (s.get('id') or s.get('code'))) or ('s#' + str(i)))
+                if sid in tomb: continue   # deleted staff → never re-add from a stale device's blob
                 e = str((s.get('email') if isinstance(s, dict) else '') or '').strip().lower()
                 if e:
                     own = email_owner.get(e)
@@ -2188,21 +2227,32 @@ def save_state(store_id, state, user, client=None):
                 try: pj = json.loads(prev['state_json'])
                 except Exception: pj = {}
             posted_items = state.get('checklistItems', None)
+            posted_depts = state.get('checklistDepts', None)
             def _keep_prev():
                 lean['checklistItems'] = pj.get('checklistItems')
                 lean['checklistTemplateVersion'] = pj.get('checklistTemplateVersion')
                 if pj.get('checklistDeadlines') is not None: lean['checklistDeadlines'] = pj.get('checklistDeadlines')
+                # the department list is versioned WITH the template — revert it too on a stale save
+                if pj.get('checklistDepts') is not None: lean['checklistDepts'] = pj.get('checklistDepts')
+                if pj.get('checklistDeptMeta') is not None: lean['checklistDeptMeta'] = pj.get('checklistDeptMeta')
             if posted_items is None:
                 if pj: _keep_prev()
             else:
                 prev_ver = int(pj.get('checklistTemplateVersion') or 0)
                 new_ver = int(state.get('checklistTemplateVersion') or 0)
-                changed = json.dumps(_tpl_rows(pj.get('checklistItems'))) != json.dumps(_tpl_rows(posted_items))
+                items_changed = json.dumps(_tpl_rows(pj.get('checklistItems'))) != json.dumps(_tpl_rows(posted_items))
+                depts_changed = (posted_depts is not None) and (json.dumps(pj.get('checklistDepts') or []) != json.dumps(posted_depts or []))
+                changed = items_changed or depts_changed
                 if changed and new_ver <= prev_ver and pj.get('checklistItems') is not None:
                     _keep_prev()
-                elif changed:
+                elif items_changed:
                     try: _audit_template_diff(conn, store_id, pj.get('checklistItems'), posted_items, user)
                     except Exception: pass
+            # a client that doesn't send the per-store dept list at all (e.g. an older cached
+            # build) must NEVER wipe it — carry the stored list forward.
+            if state.get('checklistDepts', None) is None and pj.get('checklistDepts') is not None:
+                lean['checklistDepts'] = pj.get('checklistDepts')
+                if pj.get('checklistDeptMeta') is not None: lean['checklistDeptMeta'] = pj.get('checklistDeptMeta')
         except Exception:
             pass
         if isinstance(ba, dict):

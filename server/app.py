@@ -815,6 +815,13 @@ def announcement_post():
     aid = db.post_announcement(au, store, d.get('title'), d.get('body_html'), d.get('image_id'), d.get('department'), d.get('attachments'))
     db.write_audit(uid(au), store, 'post', 'announcement', str(aid), None, {'title': d.get('title')})
     db.emit_event('announcements')
+    # Gmail the matching staff (general → everyone in scope; a team announcement → only
+    # staff labelled that role) — off the request thread so posting stays instant.
+    try:
+        _notify_announcement(store, d.get('title'), d.get('body_html'), d.get('department'),
+                             (au.get('name') if isinstance(au, dict) else None) or store)
+    except Exception:
+        pass
     return jsonify(ok=True, id=aid)
 
 @api.route('/api/announcement/update', methods=['POST'])
@@ -1119,17 +1126,18 @@ def delete_records():
     conn = db.connect()
     tomb = []   # (store_id, id) pairs to tombstone so a stale device can't re-add them
     try:
-        # collect the (store_id, id) of the rows being deleted FIRST (for tombstoning `records`)
-        if table == 'records':
+        # collect the (store_id, id) of the rows being deleted FIRST — so a stale device that
+        # still holds them in its blob can't resurrect them on its next save (records + staff)
+        if table in ('records', 'staff'):
             if d.get('all'):
-                sel = conn.execute('SELECT store_id,id FROM records' + (' WHERE' + scope if scope else ''), base).fetchall()
+                sel = conn.execute('SELECT store_id,id FROM ' + table + (' WHERE' + scope if scope else ''), base).fetchall()
             else:
                 ids0 = [str(x) for x in (d.get('ids') or []) if x is not None]
                 sel = []
                 for chunk in [ids0[i:i+400] for i in range(0, len(ids0), 400)]:
                     if not chunk: continue
                     cond = (scope + ' AND' if scope else '') + ' id IN (' + ','.join('?'*len(chunk)) + ')'
-                    sel += conn.execute('SELECT store_id,id FROM records WHERE' + cond, base + chunk).fetchall()
+                    sel += conn.execute('SELECT store_id,id FROM ' + table + ' WHERE' + cond, base + chunk).fetchall()
             tomb = [(r['store_id'], r['id']) for r in sel]
         if d.get('all'):
             conn.execute('DELETE FROM ' + table + (' WHERE' + scope if scope else ''), base)
@@ -1215,6 +1223,55 @@ def _brevo_send(recipients, subject, html, attachment=None, from_email=None, fro
         return False, 'brevo ' + str(e.code) + ' ' + e.read().decode('utf-8', 'ignore')[:200]
     except Exception as e:
         return False, str(e)
+
+def _brevo_bcc(recipients, subject, html):
+    """One announcement email to many staff WITHOUT exposing addresses (BCC), chunked to
+       Brevo's per-message recipient limit. Best-effort: failures are swallowed."""
+    key = os.environ.get('BREVO_API_KEY', '')
+    rcpts = [r for r in (recipients or []) if r.get('email')]
+    if not rcpts or not key: return
+    sender = {'email': os.environ.get('MCQ_FROM_EMAIL', 'mcqcafe.notify@gmail.com'),
+              'name':  os.environ.get('MCQ_FROM_NAME', 'MCQ Supermarket Notification')}
+    for i in range(0, len(rcpts), 90):
+        chunk = rcpts[i:i+90]
+        payload = {'sender': sender,
+                   'to': [{'email': sender['email'], 'name': sender['name']}],
+                   'bcc': [{'email': r['email'], 'name': r.get('name') or r['email']} for r in chunk],
+                   'subject': subject or 'MCQ Supermarket', 'htmlContent': html or ''}
+        req = urllib.request.Request('https://api.brevo.com/v3/smtp/email',
+            data=json.dumps(payload).encode('utf-8'),
+            headers={'api-key': key, 'content-type': 'application/json', 'accept': 'application/json'}, method='POST')
+        try:
+            with urllib.request.urlopen(req, timeout=15, context=_TLS): pass
+        except Exception:
+            pass
+
+def _esc_html(s):
+    return (str(s or '').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;'))
+
+def _announcement_email_html(title, body_html, scope_lbl, dept_lbl, who):
+    aud = ('👥 ' + _esc_html(dept_lbl) + ' team') if dept_lbl else '👥 Everyone'
+    return ('<div style="font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;max-width:600px;margin:0 auto">'
+            '<div style="background:#0f5132;color:#fff;padding:16px 20px;border-radius:10px 10px 0 0">'
+            '<div style="font-size:12px;letter-spacing:.4px;opacity:.85">📣 MCQ SUPERMARKET · ANNOUNCEMENT</div>'
+            '<div style="font-size:20px;font-weight:700;margin-top:6px">' + (_esc_html(title) or 'New announcement') + '</div></div>'
+            '<div style="border:1px solid #e5e7eb;border-top:0;border-radius:0 0 10px 10px;padding:18px 20px;color:#111">'
+            '<div style="font-size:12px;color:#6b7280;margin-bottom:14px">🏪 ' + _esc_html(scope_lbl) + ' · ' + aud + ' · by ' + _esc_html(who) + '</div>'
+            '<div style="font-size:15px;line-height:1.55;color:#111">' + (body_html or '') + '</div>'
+            '<div style="margin-top:22px;padding-top:14px;border-top:1px solid #eee;font-size:12px;color:#9ca3af">'
+            'Open the MCQ Ops app to read the full announcement. Automated notification — please don\'t reply.</div></div></div>')
+
+def _notify_announcement(store, title, body_html, department, who):
+    """Resolve the audience and Gmail them on a background thread (posting stays instant)."""
+    recips = db.announcement_recipients(store, department)
+    if not recips or not os.environ.get('BREVO_API_KEY', ''):
+        return
+    scope_lbl = store if (store in db.STORES) else 'All stores'
+    dept_lbl = (str(department).strip() if department else '')
+    subj = '📣 ' + (str(title).strip() if title else 'New announcement') + ' · MCQ ' + scope_lbl
+    html = _announcement_email_html(title, body_html, scope_lbl, dept_lbl, who)
+    import threading as _th
+    _th.Thread(target=_brevo_bcc, args=(recips, subj, html), daemon=True).start()
 
 @api.route('/api/send-email', methods=['POST'])
 def send_email():

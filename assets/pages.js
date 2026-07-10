@@ -1699,7 +1699,8 @@ function doRenameDept(dept,name){
 }
 /* ---- inline header editing (double-click) ---- */
 function ckCancelHeads(){ State.chk.editDeptH=null; State.chk.editArea=null; ckDraw(); }
-function ckDeptHEdit(dept){ State.chk.dept=dept; State.chk.editDeptH=dept; State.chk.editArea=null; State.chk.editing=null; renderChecklist(); setTimeout(()=>{const el=document.getElementById('ckh-dept'); if(el){el.focus();el.select();}},30); }
+function ckDeptHEdit(dept){ if(ckCanBuild()) State.chk.buildView=1;   // double-click a dept button on the locked "done" screen → flip into edit mode so the rename/delete UI is visible
+  State.chk.dept=dept; State.chk.editDeptH=dept; State.chk.editArea=null; State.chk.editing=null; renderChecklist(); setTimeout(()=>{const el=document.getElementById('ckh-dept'); if(el){el.focus();el.select();}},30); }
 function ckSaveDeptH(dept){ const v=(document.getElementById('ckh-dept')||{}).value||''; State.chk.editDeptH=null; if(doRenameDept(dept,v)){ ckPersistTemplate(); toast('✓ Department renamed'); } renderChecklist(); }
 function ckDelDept(dept){
   if(!confirm(`Delete the entire "${dept}" department and ALL its sections & tasks?`)) return;
@@ -2010,8 +2011,10 @@ function ckDoSubmit(){
   // whole-store save (never lost); the blob save above is the fallback. Queue if offline.
   if(!navigator.onLine){ ckQueueSub(sub); }
   else if(window.mcqChecklistSubmit){ mcqChecklistSubmit(sub).then(r=>{ if(!(r&&r.ok)) ckQueueSub(sub); }).catch(()=>ckQueueSub(sub)); }
-  if(window.mcqEmail) mcqEmail.notify('checklist', `Checklist submitted · ${sub.dept} ${sub.session} · ${_store}`,
-    `Department: ${sub.dept}\nSession: ${sub.session}\nStore: ${_store}\nProgress: ${doneN}/${totalN} (${sub.progress}%)\nSubmitted by: ${sub.by||'—'}\nResponsible: ${sub.responsible||'—'}${out?`\n⚠️ ${out} temperature alert(s)`:''}`, {dept:sub.dept});
+  // "Checklist submitted" → Store Inbox for the manager ONLY (no Gmail — it's a routine event).
+  if(window.mcqMsgSend) try{ mcqMsgSend({kind:'message', store:_store, to_managers:true,
+    subject:`📋 Checklist submitted · ${sub.dept} ${sub.session} · ${_store}`,
+    body_html:`<p><b>${esc(sub.dept)}</b> · ${esc(sub.session)} · ${esc(_store)}</p><p>Progress: <b>${doneN}/${totalN}</b> (${sub.progress}%)<br>Submitted by: ${esc(sub.by||'—')}<br>Responsible: ${esc(sub.responsible||'—')}${out?`<br>⚠️ ${out} temperature alert(s)`:''}</p><p style="color:#6b7280">Open the checklist to verify.</p>`}); }catch(e){}
   if(State.chk&&State.chk.reopen) delete State.chk.reopen[sub.dept+'|'+sub.session];   // clear re-open flag so the Done screen shows
   ckSubmitSuccess(sub,out);
   renderChecklist();   // repaint underneath → shows the "Submitted ✓" Done screen
@@ -3910,29 +3913,34 @@ function mgrVerify(id){
     else if(window.mcqChecklistSubmit){ mcqChecklistSubmit(real).then(r=>{ if(!(r&&r.ok)) ckQueueSub(real); }).catch(()=>ckQueueSub(real)); }
     if(window.persist) window.persist(); }
   mgrClearVerifyDraft(s);   // committed → the draft is no longer needed (it now lives in the verified record)
-  // notify store admin (existing behaviour) when there's any written assessment
   const hasContent=a.verifyNote||a.issuesFound||a.actionResponsible||a.overallResult;
-  const sent=hasContent&&s&&mgrEmailVerifyNote(s,mgrAssessmentText(a));
-  // notify department lead(s): manual list + leads synced from Account access (role Dept Lead
-  // + department) — merged & deduped by email, then one branded PDF to all of them
+  const _flagged=(typeof mgrTaskNotes==='function')?mgrTaskNotes(s):[];   // per-task notes captured during verify
+  // Email the department lead(s) ONLY when the verify surfaced something actionable — an
+  // "issues found" note OR at least one per-task note. No routine "all good" email, and no
+  // separate store-admin email (the manager runs the verify themselves).
+  const leadReason=!!(a.issuesFound||_flagged.length);
   let leadSent=false;
-  const manualLeads=leadList(s.store,s.department).filter(l=>l.email);
-  if(manualLeads.length) leadSent=true;
-  (async()=>{
-    let synced=[];
-    try{ if(window.mcqDeptLeads){ const r=await mcqDeptLeads(s.store);
-      synced=((r&&r.leads)||[]).filter(l=>l.email && staffNorm(l.department)===staffNorm(s.department)); } }catch(e){}
-    const seen={}; const leads=[...manualLeads,...synced].filter(l=>{ const e=String(l.email).toLowerCase(); if(seen[e]) return false; seen[e]=1; return true; });
-    if(leads.length){ try{ mgrSendLeadPDF(s,a,leads); }catch(err){} }
-  })();
-  // → ALSO into the Store Inbox (assessment + collected task notes + manager photos)
-  try{ const _n=mgrTaskNotes(s);
+  if(leadReason){
+    // manual list + leads synced from Account access (role Dept Lead + department),
+    // merged & deduped by email, then one branded PDF to all of them
+    const manualLeads=leadList(s.store,s.department).filter(l=>l.email);
+    if(manualLeads.length) leadSent=true;
+    (async()=>{
+      let synced=[];
+      try{ if(window.mcqDeptLeads){ const r=await mcqDeptLeads(s.store);
+        synced=((r&&r.leads)||[]).filter(l=>l.email && staffNorm(l.department)===staffNorm(s.department)); } }catch(e){}
+      const seen={}; const leads=[...manualLeads,...synced].filter(l=>{ const e=String(l.email).toLowerCase(); if(seen[e]) return false; seen[e]=1; return true; });
+      if(leads.length){ try{ mgrSendLeadPDF(s,a,leads); }catch(err){} }
+    })();
+  }
+  // → ALSO into the Store Inbox (assessment + collected task notes + manager photos) — inbox only, never Gmail
+  try{ const _n=_flagged;
     const notesHtml=_n.length?('<p><b>Flagged tasks ('+_n.length+'):</b></p><ul>'+_n.map(n=>`<li>${n.done?'✅':'❌'} <b>${esc(n.task)}</b>${n.note?' — '+esc(n.note):''}${(n.mgrPhotos||[]).length?'<br>'+inlinePhotoHtml(n.mgrPhotos):''}</li>`).join('')+'</ul>'):'';
     if((hasContent||_n.length) && window.mcqMsgSend) mcqMsgSend({kind:'message', store:s.store,
     subject:`✅ Verified · ${s.department} ${s.session} · ${s.date||''}${s.created?(' · '+String(s.created).slice(11,16)):''}`,
     body_html:`<p>${esc(mgrAssessmentText(a)).replace(/\n/g,'<br>')}</p>${notesHtml}${inlinePhotoHtml(a.verifyPhotos)}`}); }catch(e){}
   closeDrawer&&closeDrawer();
-  toast(leadSent?('✓ Verified · PDF sent to '+s.department+' lead'):sent==='silent'?('✓ Verified · note sent to '+s.store+' admin'):'✓ Checklist verified');
+  toast(leadSent?('✓ Verified · PDF sent to '+s.department+' lead'):'✓ Checklist verified');
   renderManager(); }
 function mgrAssessmentText(a){
   return `Verified by: ${a.verifiedBy}
