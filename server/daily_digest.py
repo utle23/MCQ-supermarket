@@ -379,6 +379,26 @@ def super_admin_emails(conn):
     return out
 
 
+def post_store_inboxes(summaries, date):
+    """Also drop each store's daily report into that store's own in-app inbox (its Manager /
+       Dept-Lead see it), so the report is not only emailed to Super Admins but recorded per
+       store. Text summary only — the full PDF still rides the email (keeps the DB small)."""
+    au = {'role': 'super', 'staff_name': '📋 Daily Report', 'staff_id': None}
+    posted = 0
+    for s in summaries:
+        store = s.get('store')
+        if not store:
+            continue
+        try:
+            subject = '📋 Daily report · %s · %s' % (store, date)
+            body = summary_html([s], date)
+            db.send_message(au, store, 'document', subject, body, to_managers=True)
+            posted += 1
+        except Exception as e:
+            print('[digest] inbox post failed for', store, ':', e)
+    return posted
+
+
 def run(recipient_override=None):
     """Build one PDF per store for today and email them. Returns a small status dict.
     recipient_override = a single address (test send) or a list; else all Super Admins."""
@@ -408,12 +428,20 @@ def run(recipient_override=None):
     subject = 'MCQ Supermarket — Daily Summary (%s)' % date
     html = summary_html(summaries, date)
     sent = send_brevo(recipients, subject, html, attachments)
+    # ALSO record each store's report in its own store inbox (skip on a test/override send so a
+    # test doesn't spam the real store inboxes).
+    inboxed = 0
+    if recipient_override is None:
+        try: inboxed = post_store_inboxes(summaries, date)
+        except Exception as e: print('[digest] inbox posting failed:', e)
     for f in _TMP_PHOTOS:
         try: os.remove(f)
         except Exception: pass
     del _TMP_PHOTOS[:]
-    print('[digest] done:', len(summaries), 'stores,', len(attachments), 'PDFs,', len(recipients), 'recipients, sent=%s' % sent)
-    return {'ok': bool(sent), 'stores': len(summaries), 'pdfs': len(attachments), 'recipients': len(recipients)}
+    print('[digest] done:', len(summaries), 'stores,', len(attachments), 'PDFs,', len(recipients),
+          'recipients, sent=%s, store-inboxes=%d' % (sent, inboxed))
+    return {'ok': bool(sent), 'stores': len(summaries), 'pdfs': len(attachments),
+            'recipients': len(recipients), 'store_inboxes': inboxed}
 
 
 def main():
