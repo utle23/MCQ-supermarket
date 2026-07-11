@@ -1533,7 +1533,9 @@ function ckRespHTML(dept){
   // Native <select> instead of a <datalist> input: tapping a datalist suggestion silently
   // fails to register on iPad Safari (what the store managers use), so the picked name never
   // stuck. A <select> opens the reliable iOS picker, so the choice always lands.
-  const field=(key,label)=>`<label class="ck-resp-field"><span>${esc(label)}</span><select id="${ckRespId(dept,key)}" class="ck-resp-select" onchange="ckResp('${ckJS(dept)}','${key}',this.value)">${staffSelectOptions(dept,rec[key],'Select '+dept+' staff')}</select></label>`;
+  // fallbackAll → if this department has no labelled staff, list every store member so the
+  // picker is never empty (the old datalist let you type a name; a <select> cannot).
+  const field=(key,label)=>`<label class="ck-resp-field"><span>${esc(label)}</span><select id="${ckRespId(dept,key)}" class="ck-resp-select" onchange="ckResp('${ckJS(dept)}','${key}',this.value)">${staffSelectOptions(dept,rec[key],'Select '+dept+' staff',{fallbackAll:true})}</select></label>`;
   // "Submitted by" is automatic now — every person signs in with their own account,
   // so the submission is stamped with the logged-in identity.
   rec.submittedBy=myIdentityName();
