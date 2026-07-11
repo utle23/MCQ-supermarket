@@ -1506,15 +1506,16 @@ function ckRespId(dept,field){ return 'ck-resp-'+field+'-'+String(dept).toLowerC
 function ckRespHTML(dept){
   State.chk.resp=State.chk.resp||{};
   const rec=(State.chk.resp[dept]=State.chk.resp[dept]||{p1:'',p2:'',submittedBy:''});
-  const listId=ckRespId(dept,'staff-list');
-  const field=(key,label,required)=>`<label class="ck-resp-field"><span>${esc(label)}${required?' <b>*</b>':''}</span><input id="${ckRespId(dept,key)}" list="${listId}" value="${esc(rec[key]||'')}" placeholder="Select ${esc(dept)} staff" oninput="ckResp('${ckJS(dept)}','${key}',this.value)"></label>`;
+  // Native <select> instead of a <datalist> input: tapping a datalist suggestion silently
+  // fails to register on iPad Safari (what the store managers use), so the picked name never
+  // stuck. A <select> opens the reliable iOS picker, so the choice always lands.
+  const field=(key,label)=>`<label class="ck-resp-field"><span>${esc(label)}</span><select id="${ckRespId(dept,key)}" class="ck-resp-select" onchange="ckResp('${ckJS(dept)}','${key}',this.value)">${staffSelectOptions(dept,rec[key],'Select '+dept+' staff')}</select></label>`;
   // "Submitted by" is automatic now — every person signs in with their own account,
   // so the submission is stamped with the logged-in identity.
   rec.submittedBy=myIdentityName();
   return `<div class="ck-resp-card" id="${ckRespId(dept,'card')}">
-    ${staffDataList(listId,dept,[rec.p1,rec.p2])}
-    ${field('p1','Responsible Person 1',false)}
-    ${field('p2','Responsible Person 2',false)}
+    ${field('p1','Responsible Person 1')}
+    ${field('p2','Responsible Person 2')}
     <label class="ck-resp-field ck-resp-auto"><span>Submitted by</span><span class="ck-resp-me">👤 ${esc(rec.submittedBy)}</span></label>
   </div>`;
 }
