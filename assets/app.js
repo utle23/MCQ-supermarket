@@ -1424,4 +1424,14 @@ async function boot(){
     startAccountSync();
   } else showLogin();
 }
+// Safety net: a deleted/missing EVIDENCE photo must never show a broken-image icon or disturb
+// the page — hide it quietly. (Photo Gallery tiles use CSS backgrounds and already fail silently.)
+document.addEventListener('error', function(e){
+  var t=e.target;
+  if(t && t.tagName==='IMG' && !t.dataset.mcqBroken){
+    if(t.classList.contains('ba-thumb') || t.classList.contains('ck-slot-img') || (t.closest && t.closest('.wa-gallery'))){
+      t.dataset.mcqBroken='1'; t.style.display='none';
+    }
+  }
+}, true);
 document.addEventListener('DOMContentLoaded',boot);
