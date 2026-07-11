@@ -3548,8 +3548,30 @@ function hvDayLabel(d){
   }catch(e){ return d; }
 }
 const HV_SESS={'Opening':'☀️','Mid-afternoon':'🌤️','Closing':'🌙'};
+/* ---- on-demand FULL checklist history ------------------------------------------------
+   The routine app load only carries the last ~45 days of submissions (fast as history grows).
+   History / Data Management / Photo Gallery pull the COMPLETE history here so those views — and
+   their delete actions — always see everything. DB.checklistSubs already holds the recent slice;
+   we merge in the older ones (dedupe by id, never clobber a locally-edited/verified copy). */
+function ckHistScope(){ return isSuper() ? 'ALL' : State.branch; }
+function ckHistReady(scope){ scope=scope||ckHistScope(); return !!(window._ckHistLoaded && window._ckHistLoaded[scope]===true); }
+function ckHistTried(scope){ scope=scope||ckHistScope(); return !!(window._ckHistTried && window._ckHistTried[scope]); }
+function ckFetchFullHistory(scope, cb){
+  scope=scope||ckHistScope();
+  window._ckHistLoaded=window._ckHistLoaded||{}; window._ckHistTried=window._ckHistTried||{};
+  if(window._ckHistLoaded[scope]===true||window._ckHistLoaded[scope]==='loading'){ cb&&cb(false); return; }
+  if(!window.mcqFetchHistory || !(window.localStorage&&localStorage.getItem('mcq_token'))){ window._ckHistTried[scope]=true; cb&&cb(false); return; }
+  window._ckHistLoaded[scope]='loading';
+  mcqFetchHistory(scope).then(function(subs){
+    const have={}; (DB.checklistSubs=DB.checklistSubs||[]).forEach(s=>{ if(s&&s.id) have[s.id]=1; });
+    let added=0; (subs||[]).forEach(s=>{ if(s&&s.id&&!have[s.id]){ have[s.id]=1; DB.checklistSubs.push(s); added++; } });
+    window._ckHistLoaded[scope]=true; window._ckHistTried[scope]=true; cb&&cb(added>0);
+  }).catch(function(){ window._ckHistLoaded[scope]=false; window._ckHistTried[scope]=true; cb&&cb(false); });
+}
 function renderHistory(){
   const h=histState(); setAccent('#0f766e'); setCrumb('🧾','Checklist History','Checklist, bin, cleaning & delivery records');
+  // pull older submissions in the background; recent ones show instantly, older fill in on arrival
+  if(!ckHistReady()&&!ckHistTried()) ckFetchFullHistory(ckHistScope(),added=>{ if(added&&State.route&&State.route.mod==='history') renderHistory(); });
   const storePick=isSuper()?`<label class="hv-f"><span>🏬</span><select onchange="histSet('store',this.value)">${['All stores',...DB.stores].map(sx=>`<option ${sx===h.store?'selected':''}>${esc(sx)}</option>`).join('')}</select></label>`:'';
   // tab counts respect the store + date filters (not the text search)
   const _q=h.q; h.q='';
@@ -4355,6 +4377,8 @@ function pgPhotos(){
 }
 function renderPhotos(){
   setAccent('#0891b2'); setCrumb('🖼️','Photo Gallery','Evidence photos from checklists & reports');
+  // older submissions carry older photos — pull the full history in the background
+  if(!ckHistReady()&&!ckHistTried()) ckFetchFullHistory(ckHistScope(),added=>{ if(added&&State.route&&State.route.mod==='photos') renderPhotos(); });
   const pg=pgState(), all=pgPhotos();
   const stores=isSuper()?['All stores',...DB.stores]:[State.branch];
   if(!stores.includes(pg.store)) pg.store=stores[0];
@@ -5028,6 +5052,13 @@ function dataResetStore(store){ if(!isSuper()) return;
 }
 function renderData(){
   setAccent('#b45309'); setCrumb('🗄️','Data Management','Export, delete & free up space');
+  // Deletes here operate on DB.checklistSubs, so we must hold the COMPLETE history first —
+  // otherwise a "delete all / delete range" would silently skip older, unloaded submissions.
+  if(!ckHistReady()&&!ckHistTried()){
+    ckFetchFullHistory(ckHistScope(),()=>{ if(State.route&&State.route.mod==='data') renderData(); });
+    $('#content').innerHTML='<div class="card card-pad loading-state"><i class="fas fa-spinner fa-spin"></i><b>Loading full history…</b><span>Fetching every submission so deletions apply to all of it, not just recent items.</span></div>';
+    return;
+  }
   const counts=Object.values(DB.modules).map(m=>({l:m.label,n:isSuper()?(m.records||[]).length:(m.records||[]).filter(r=>r.store===State.branch).length,i:m.icon}));
   const scope=isSuper()?'Super Admin · aggregate view':'Store workspace · '+State.branch;
   const doc=isSuper()?'mcq_store_states/{each-store}':'mcq_store_states/'+dataStoreId(State.branch);

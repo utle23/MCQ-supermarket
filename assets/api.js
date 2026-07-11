@@ -147,6 +147,21 @@
       return fetch((BASE||'')+'/api/delete',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+tok},body:JSON.stringify(body)}).catch(function(){});
     }catch(e){}
   };
+  // Full checklist submission history, on demand. The routine /api/state load only carries the
+  // last ~45 days; History / Data Management / Photo Gallery call this to see EVERYTHING (so their
+  // delete actions operate on the complete history, never a truncated slice). scope: a store id, or
+  // 'ALL' (Super/Chú Ba). Returns a plain array of submissions (empty on any failure/offline).
+  window.mcqFetchHistory = function(scope){
+    try{
+      var tok=(window.localStorage&&localStorage.getItem('mcq_token'))||'';
+      if(!tok) return Promise.resolve([]);
+      var qs='?store='+encodeURIComponent(scope||'ALL');
+      return fetch((BASE||'')+'/api/checklist/history'+qs,{headers:{Authorization:'Bearer '+tok}})
+        .then(function(r){ return r.ok?r.json():{subs:[]}; })
+        .then(function(j){ return (j&&j.subs)||[]; })
+        .catch(function(){ return []; });
+    }catch(e){ return Promise.resolve([]); }
+  };
   var TOKEN = (window.localStorage && localStorage.getItem('mcq_token')) || '';
   var api = function(p){ return (BASE||'') + p; };
   function headers(json){ var h={}; if(json) h['Content-Type']='application/json'; if(TOKEN) h['Authorization']='Bearer '+TOKEN; return h; }

@@ -877,8 +877,27 @@ def stores():
 @api.route('/api/state/<store_id>', methods=['GET'])
 def get_state(store_id):
     au = require_auth(); require_store(au, store_id)
-    state = db.load_state(store_id)
+    # routine load carries only recent checklist history (the full history is fetched on demand
+    # by the History / Data Management / Photo views) — keeps loads fast as submissions pile up.
+    state = db.load_state(store_id, subs_recent_days=CK_SUBS_RECENT_DAYS)
     return jsonify(ok=True, store=store_id, state=state, updated_at=db.state_updated_at(store_id))
+
+CK_SUBS_RECENT_DAYS = 45   # routine /api/state window for checklist submissions
+
+@api.route('/api/checklist/history', methods=['GET'])
+def checklist_history():
+    """Full checklist submission history, loaded on demand when the user opens History /
+       Data Management / Photo Gallery (so those views + their deletes see EVERYTHING,
+       while the routine app load stays light)."""
+    au = require_auth()
+    store = request.args.get('store') or au.get('store_id') or ''
+    if store in ('', 'ALL', 'All stores'):
+        if au['role'] not in ('super', 'ba'): abort(403)   # only Super/Chú Ba see every store
+        subs = db.all_checklist_subs()
+    else:
+        require_store(au, store)
+        subs = db.checklist_subs_for(store)
+    return jsonify(ok=True, store=store or 'ALL', subs=subs)
 
 @api.route('/api/state/<store_id>', methods=['POST'])
 def post_state(store_id):

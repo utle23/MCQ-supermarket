@@ -38,7 +38,8 @@
     catch(e){ console.warn('[FB] local cache skipped', e&&e.message); }
   }
   function captureBase(){ if(!baseState) baseState=buildState('',{full:true}); }
-  function resetToBase(){ captureBase(); applyState(clone(baseState)); }
+  function resetToBase(){ try{ window._ckHistLoaded={}; window._ckHistTried={}; }catch(e){}   // fresh data → History/Data must re-pull full submissions
+    captureBase(); applyState(clone(baseState)); }
   function parseJSON(v,fallback){ if(v==null) return fallback; if(typeof v==='string'){ try{return JSON.parse(v);}catch(e){return fallback;} } return v; }
   function isAllStore(store){ return !store || store==='All stores' || store==='ALL'; }
   function inStore(r,store){ return isAllStore(store) || r.store===store; }

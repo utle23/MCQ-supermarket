@@ -2282,7 +2282,32 @@ def save_state(store_id, state, user, client=None):
     finally:
         conn.close()
 
-def load_state(store_id):
+def _days_ago_str(n):
+    """Perth (UTC+8) calendar date n days ago, as 'YYYY-MM-DD' — comparable to created_at."""
+    return time.strftime('%Y-%m-%d', time.gmtime(time.time() + 8 * 3600 - int(n) * 86400))
+
+def checklist_subs_for(store_id):
+    """Full checklist submission history for ONE store (used by the on-demand /api/checklist/history)."""
+    conn = connect()
+    try:
+        return [json.loads(r['data_json']) for r in
+                conn.execute('SELECT data_json FROM checklist_submissions WHERE store_id=? ORDER BY created_at', (store_id,)).fetchall()]
+    finally:
+        conn.close()
+
+def all_checklist_subs():
+    """Full checklist submission history across EVERY store (Super history/Data Management)."""
+    conn = connect()
+    try:
+        return [json.loads(r['data_json']) for r in
+                conn.execute('SELECT data_json FROM checklist_submissions ORDER BY created_at').fetchall()]
+    finally:
+        conn.close()
+
+def load_state(store_id, subs_recent_days=None):
+    # subs_recent_days: when set, the routine load returns only the last N days of checklist
+    # submissions (keeps the payload/CPU small as history grows). The FULL history is served
+    # on demand via /api/checklist/history for the History / Data Management / Photo views.
     conn = connect()
     try:
         row = conn.execute('SELECT state_json FROM store_state WHERE store_id=?', (store_id,)).fetchone()
@@ -2294,8 +2319,13 @@ def load_state(store_id):
         state['modules'] = mods
         state['staff'] = [json.loads(r['data_json']) for r in
                           conn.execute('SELECT data_json FROM staff WHERE store_id=?', (store_id,)).fetchall()]
-        subs = [json.loads(r['data_json']) for r in
-                conn.execute('SELECT data_json FROM checklist_submissions WHERE store_id=?', (store_id,)).fetchall()]
+        if subs_recent_days:
+            cutoff = _days_ago_str(subs_recent_days)
+            sub_rows = conn.execute('SELECT data_json FROM checklist_submissions WHERE store_id=? AND created_at>=? ORDER BY created_at DESC LIMIT 1500',
+                                    (store_id, cutoff)).fetchall()
+        else:
+            sub_rows = conn.execute('SELECT data_json FROM checklist_submissions WHERE store_id=?', (store_id,)).fetchall()
+        subs = [json.loads(r['data_json']) for r in sub_rows]
         state['checklistSubs'] = json.dumps(subs)
         sh = [json.loads(r['data_json']) for r in
               conn.execute('SELECT data_json FROM schedule_history WHERE store_id=? ORDER BY id', (store_id,)).fetchall()]
