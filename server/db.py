@@ -694,6 +694,16 @@ def apply_store_config(store_id, cfg, user=None):
             out['checklistItems'] = len(cfg['checklistItems']); out['templateVersion'] = state['checklistTemplateVersion']
             try: _audit_template_diff(conn, store_id, prev_items, cfg['checklistItems'], user or 'store-config')
             except Exception: pass
+        # departments / dept styling / deadlines are per-store too — persist them alongside the
+        # tasks (array/object, matching the blob) so a Super editing one store's checklist also
+        # moves its department list & deadlines to THAT store, and nowhere else.
+        if isinstance(cfg.get('checklistDepts'), list):
+            state['checklistDepts'] = cfg['checklistDepts']
+            out['checklistDepts'] = len(cfg['checklistDepts'])
+        if isinstance(cfg.get('checklistDeptMeta'), dict):
+            state['checklistDeptMeta'] = cfg['checklistDeptMeta']
+        if isinstance(cfg.get('checklistDeadlines'), dict):
+            state['checklistDeadlines'] = cfg['checklistDeadlines']
         if isinstance(cfg.get('scheduleTasks'), list):
             state['scheduleTasks'] = json.dumps(cfg['scheduleTasks'])
             out['scheduleTasks'] = len(cfg['scheduleTasks'])

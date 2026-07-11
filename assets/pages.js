@@ -215,7 +215,10 @@ function staffDisplayForDept(dept,current){
 // save to their own store's blob only, so stores stay isolated. Super does NOT build here
 // (the client shares one template array; a Super edit would propagate to every store) — Super
 // edits each store's template safely & independently via Store Config.
-function ckCanBuild(){ return State.account && State.account.role==='admin'; }   // Manager only — Dept Leads can no longer edit checklist tasks
+function ckCanBuild(){ const a=State.account; if(!a) return false;
+  if(a.role==='admin') return true;                       // Manager edits their own store
+  if(a.role==='super' && ckHomeStore()) return true;      // Super edits the ONE store they picked
+  return false; }                                          // Dept Leads / overview cannot edit tasks
 window.ckCanBuild=ckCanBuild;
 function ckItem(it,i){ return {i,dept:it[0],area:it[1],task:it[2],when:it[3],photo:photoSpec(it[4]),meta:it[5]||{}}; }
 /* ---- in-progress state is keyed by template ARRAY INDEX; if the template is reordered
@@ -252,12 +255,18 @@ window.ckSanitizeState=ckSanitizeState;
 /* Super with a HOME STORE (set in Account Management): the whole Checklist module works
    as THAT store — its own live template, its drafts, its submissions — and everything they
    do saves to THAT store only. Supers without a home store keep the read-only overview. */
-function ckHomeStore(){ const a=State.account||{}; return (a.role==='super'&&a.homeStore)?a.homeStore:null; }
+// A Super's "home store" for the Checklist module is either the account's fixed homeStore OR
+// the store they pick at runtime (State.chk.superStore). When set, the whole home-store flow
+// (load that store's LIVE template, scope its submissions, edit + save to THAT store) applies.
+function ckHomeStore(){ const a=State.account||{}; if(a.role!=='super') return null; return (State.chk&&State.chk.superStore)||a.homeStore||null; }
 function ckActiveStore(){ return ckHomeStore()||State.branch; }
+function ckApplyHomeTpl(c){ DB.checklist.items=c.items;
+  if(c.depts) DB.checklist.depts=c.depts; if(c.deptMeta) DB.checklist.deptMeta=c.deptMeta;
+  if(c.deadlines) DB.checklist.deadlines=c.deadlines; }
 async function ckEnsureHomeTemplate(){
   const hs=ckHomeStore(); if(!hs) return true;
   const c=State._homeTpl;
-  if(c&&c.store===hs){ DB.checklist.items=c.items; if(c.deadlines) DB.checklist.deadlines=c.deadlines; return true; }
+  if(c&&c.store===hs){ ckApplyHomeTpl(c); return true; }
   if(State._homeTplLoading) return false;
   State._homeTplLoading=true;
   try{
@@ -266,8 +275,12 @@ async function ckEnsureHomeTemplate(){
     const j=await r.json();
     let items=j&&j.state&&j.state.checklistItems; if(typeof items==='string'){ try{ items=JSON.parse(items); }catch(e){ items=null; } }
     if(Array.isArray(items)&&items.length){
-      State._homeTpl={store:hs, items, deadlines:(j.state.checklistDeadlines&&typeof j.state.checklistDeadlines==='object')?j.state.checklistDeadlines:null};
-      DB.checklist.items=items; if(State._homeTpl.deadlines) DB.checklist.deadlines=State._homeTpl.deadlines;
+      const st=j.state;
+      State._homeTpl={store:hs, items,
+        depts:(Array.isArray(st.checklistDepts)&&st.checklistDepts.length)?st.checklistDepts:null,
+        deptMeta:(st.checklistDeptMeta&&typeof st.checklistDeptMeta==='object')?st.checklistDeptMeta:null,
+        deadlines:(st.checklistDeadlines&&typeof st.checklistDeadlines==='object')?st.checklistDeadlines:null};
+      ckApplyHomeTpl(State._homeTpl);
       let subs=j.state.checklistSubs; if(typeof subs==='string'){ try{ subs=JSON.parse(subs); }catch(e){ subs=null; } }
       if(Array.isArray(subs)){   // merge the home store's submissions so Done/locked state is accurate
         const have=new Set((DB.checklistSubs||[]).map(x=>x.id));
@@ -426,7 +439,7 @@ function renderChecklist(){
   try{ ckFlushQueue(); }catch(e){}   // push any submissions that were made offline
   if(ckHomeStore() && !(State._homeTpl&&State._homeTpl.store===ckHomeStore())){
     ckEnsureHomeTemplate();   // async → re-renders when the home store's live template arrives
-    $('#content').innerHTML='<div class="card card-pad loading-state"><i class="fas fa-spinner fa-spin"></i><b>Loading '+esc(ckHomeStore())+' checklist…</b><span>Your Super account is linked to this store — its live checklist is being fetched.</span></div>';
+    $('#content').innerHTML='<div class="card card-pad loading-state"><i class="fas fa-spinner fa-spin"></i><b>Loading '+esc(ckHomeStore())+' checklist…</b><span>Fetching this store\'s live checklist template so you see (and edit) exactly what it uses right now.</span></div>';
     return;
   }
   if(ckHomeStore()) ckEnsureHomeTemplate();   // re-apply cached home template over any aggregate reload
@@ -444,7 +457,7 @@ function renderChecklist(){
   const submittedReal=!viewing && !!bestSub && !reopened;
   const buildView=!!(submittedReal && State.chk.buildView && ckCanBuild());   // locked screen offers "Edit tasks" for builders
   const submitted=submittedReal && !buildView;   // submitted today → LOCKED done screen (Re-open / builder available until verified)
-  setCrumb('✅','Store Operation Checklist',`${ckHomeStore()?ckHomeStore()+' (your store)':superScopeLabel()} · ${s.session}${viewing?' · '+s.date:''}`);
+  setCrumb('✅','Store Operation Checklist',`${ckHomeStore()?(ckHomeStore()+((State.chk&&State.chk.superStore)?' · live checklist (editable)':' (your store)')):superScopeLabel()} · ${s.session}${viewing?' · '+s.date:''}`);
   const chips=C.depts.map(d=>{ const m=C.deptMeta[d]||{}; const col=m.color||'#0e9f6e';
     return `<button class="dept-chip ${d===s.dept?'active':''}" style="--dc:${col}" ${ckCanBuild()?`ondblclick="ckDeptHEdit('${ckJS(d)}')" title="Double-click to rename / delete"`:''} onclick="ckDept('${ckJS(d)}')">${m.icon?`<i class="fas ${m.icon}"></i> `:''}${esc(d)}</button>`; }).join('')
     + (ckCanBuild()?`<button class="dept-chip ghost" onclick="ckAddDept()" title="Add department"><i class="fas fa-plus"></i>&nbsp;Add</button>`:'');
@@ -452,7 +465,7 @@ function renderChecklist(){
   $('#content').innerHTML=`
    <div class="page-head"><div class="ph-ic">✅</div>
      <div><h2>Store Operation Checklist</h2><p>Photos are optional — attach one if you want evidence, or for AI to read a temperature display.</p></div>
-     <div class="ph-actions">${checklistExportMenu()}</div></div>
+     <div class="ph-actions">${ckSuperStorePicker()}${checklistExportMenu()}</div></div>
    <div class="ck-sessionbar card">
      <div class="seg ck-seg">
        <button class="seg-btn ${s.session==='Opening'?'active':''}" onclick="ckSession('Opening')">☀️ Opening</button>
@@ -1652,7 +1665,42 @@ function ckRmPhoto(e,i,url){
 function ckSession(v){ckUseSession(v);State.chk.area='ALL';renderChecklist();}
 function ckDept(d){State.chk.dept=d;State.chk.area='ALL';renderChecklist();}
 /* ---- admin checklist CRUD (add / edit / delete task) ---- */
-function ckPersistTemplate(){ try{ DB.checklist=DB.checklist||{}; DB.checklist.templateVersion=(+(DB.checklist.templateVersion||0))+1; }catch(e){} if(window.persist) window.persist(); }
+function ckPersistTemplate(){
+  try{ DB.checklist=DB.checklist||{}; DB.checklist.templateVersion=(+(DB.checklist.templateVersion||0))+1; }catch(e){}
+  const hs=ckHomeStore();
+  if(isSuper()&&hs){ ckSaveSuperStoreTemplate(hs); return; }   // Super edits ONE store → save straight to THAT store
+  if(window.persist) window.persist();
+}
+// Super editing a picked store's checklist saves through the isolated Store-Config path
+// (per-store, version-bumped, audited) — NEVER the aggregate blob (which strips templates and
+// would copy one store's checklist onto another).
+function ckSaveSuperStoreTemplate(store){
+  if(!(window.MCQDB&&MCQDB.saveStoreConfig)){ toast('Cannot save right now — reconnect and try again'); return; }
+  const cfg={ checklistItems:(DB.checklist&&DB.checklist.items)||[],
+    checklistDepts:(DB.checklist&&DB.checklist.depts)||[],
+    checklistDeptMeta:(DB.checklist&&DB.checklist.deptMeta)||{},
+    checklistDeadlines:(DB.checklist&&DB.checklist.deadlines)||{} };
+  // keep the local cache in step so a background reload re-applies THESE edited items, not stale ones
+  if(State._homeTpl&&State._homeTpl.store===store){ State._homeTpl.items=cfg.checklistItems; State._homeTpl.depts=cfg.checklistDepts; State._homeTpl.deptMeta=cfg.checklistDeptMeta; State._homeTpl.deadlines=cfg.checklistDeadlines; }
+  MCQDB.saveStoreConfig(store,cfg).then(()=>toast('✓ Saved to '+store+' · its devices update on next sync')).catch(()=>toast('Could not save to '+store));
+}
+// Super-only: pick which store's live checklist to view & edit (blank = read-only overview).
+function ckSuperStorePicker(){
+  if(!isSuper()) return '';
+  const cur=(State.chk&&State.chk.superStore)||'';
+  return `<label class="ck-storepick" style="display:inline-flex;align-items:center;gap:6px;font-weight:800;color:#0f766e">🏬
+    <select onchange="ckSetSuperStore(this.value)" style="padding:7px 10px;border:1.5px solid var(--line);border-radius:10px;font-family:inherit;font-size:12.5px;background:#fff">
+      <option value="">— Overview (read-only) —</option>
+      ${(DB.stores||[]).map(s=>`<option value="${esc(s)}" ${s===cur?'selected':''}>${esc(s)}</option>`).join('')}
+    </select></label>`;
+}
+function ckSetSuperStore(v){
+  State.chk=State.chk||{};
+  State.chk.superStore=v||'';
+  State._homeTpl=null;                              // force a fresh load of the picked store's live template
+  State.chk.buildView=0; State.chk.reopen={}; State.chk.dept=null;
+  renderChecklist();
+}
 function ckEditTask(i){ State.chk.editing=i; renderChecklist(); }
 function ckCancelEdit(){ State.chk.editing=null; renderChecklist(); }
 function ckSaveTask(i){
