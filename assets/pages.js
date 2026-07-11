@@ -226,12 +226,25 @@ function ckItem(it,i){ return {i,dept:it[0],area:it[1],task:it[2],when:it[3],pho
    longer matches its tag, so photos/ticks can never cross to another task or department. */
 function ckSig(i){ const it=DB.checklist&&DB.checklist.items&&DB.checklist.items[i];
   return it?((it[0]||'')+'|'+(it[1]||'')+'|'+(it[2]||'')+'|'+(it[3]||'')):('#'+i); }
+/* Per-session state buckets. Opening / Mid-afternoon / Closing each keep their OWN ticks,
+   notes and photos — even for a task that belongs to BOTH sessions (when='A'). State is
+   keyed by task index, and an 'A' task keeps the same index AND signature in both sessions,
+   so a single shared bucket leaked a morning Opening photo onto the afternoon Closing
+   checklist. State.chk.state is ALWAYS the same object as State.chk.sess[current session]. */
+function ckSess(){ if(!State.chk) return {}; State.chk.sess=State.chk.sess||{}; return State.chk.sess; }
+function ckBuckets(){ const s=ckSess(); const a=Object.keys(s).map(k=>s[k]); if(State.chk&&State.chk.state&&a.indexOf(State.chk.state)<0) a.push(State.chk.state); return a; }
+function ckLinkActive(){ if(!State.chk) return; const s=ckSess(), k=State.chk.session||'Opening'; State.chk.session=k; State.chk.state=s[k]=s[k]||State.chk.state||{}; }
+function ckUseSession(sess){ if(!State.chk) return; const s=ckSess(); if(State.chk.session) s[State.chk.session]=State.chk.state||s[State.chk.session]||{}; State.chk.session=sess; State.chk.state=s[sess]=s[sess]||{}; }
+function ckClearAllState(){ if(!State.chk) return; const s=ckSess(); Object.keys(s).forEach(k=>s[k]={}); State.chk.state={}; s[State.chk.session||'Opening']=State.chk.state; }
+function ckShiftAllState(i){ if(!State.chk) return; const s=ckSess(); Object.keys(s).forEach(k=>{ const old=s[k]||{}, ns={}; Object.keys(old).forEach(kk=>{ const n=+kk; if(n===i)return; ns[n>i?n-1:n]=old[kk]; }); s[k]=ns; }); const cur=State.chk.session||'Opening'; s[cur]=s[cur]||{}; State.chk.state=s[cur]; }
 function ckSanitizeState(){
-  try{ if(!State.chk||!State.chk.state) return;
-    Object.keys(State.chk.state).forEach(k=>{ const st=State.chk.state[k]; if(!st||typeof st!=='object') return;
-      const sig=ckSig(+k);
-      if(st._sig==null) st._sig=sig;                    // first-seen → tag to its current task
-      else if(st._sig!==sig) delete State.chk.state[k]; // index now maps to a DIFFERENT task → stale → drop
+  try{ if(!State.chk) return;
+    ckBuckets().forEach(state=>{ if(!state) return;
+      Object.keys(state).forEach(k=>{ const st=state[k]; if(!st||typeof st!=='object') return;
+        const sig=ckSig(+k);
+        if(st._sig==null) st._sig=sig;                    // first-seen → tag to its current task
+        else if(st._sig!==sig) delete state[k];           // index now maps to a DIFFERENT task → stale → drop
+      });
     });
   }catch(e){}
 }
@@ -307,12 +320,13 @@ let _ckDraftTimer=null;
 function ckWriteDraft(){ try{ if(!State.chk) return; if(State.chk._day&&State.chk._day!==ckTodayStr()) return;   // day rolled over — never save yesterday's ticks under today's key
   // blob: object URLs die on reload (Android kills the page while the camera is open) —
   // save only durable photo refs so restore never shows dead tiles
-  const clean={};
-  Object.keys(State.chk.state||{}).forEach(k=>{ const st=State.chk.state[k]; if(!st) return;
+  const s=ckSess(); if(State.chk.session) s[State.chk.session]=State.chk.state||s[State.chk.session]||{};   // park the session being edited
+  const cleanBucket=(obj)=>{ const clean={}; Object.keys(obj||{}).forEach(k=>{ const st=obj[k]; if(!st) return;
     const c=Object.assign({},st);
     if(Array.isArray(c.photos)) c.photos=c.photos.filter(p=>typeof p==='string'&&p.indexOf('blob:')!==0);
-    clean[k]=c; });
-  localStorage.setItem(ckDraftKey(), JSON.stringify({state:clean, resp:State.chk.resp||{}, dept:State.chk.dept||'', session:State.chk.session||'', area:State.chk.area||'ALL', t:Date.now()})); }catch(e){} }
+    clean[k]=c; }); return clean; };
+  const sess={}; Object.keys(s).forEach(k=>{ sess[k]=cleanBucket(s[k]); });
+  localStorage.setItem(ckDraftKey(), JSON.stringify({sess, resp:State.chk.resp||{}, dept:State.chk.dept||'', session:State.chk.session||'', area:State.chk.area||'ALL', t:Date.now()})); }catch(e){} }
 function ckSaveDraft(){ clearTimeout(_ckDraftTimer); _ckDraftTimer=setTimeout(ckWriteDraft, 500); }   // debounced
 
 /* ---- offline submit queue: if a checklist is submitted with no connection (or the save
@@ -337,17 +351,22 @@ if(!window._ckQueueInit){ window._ckQueueInit=true;
 function ckRestoreDraft(){ try{
   const raw=localStorage.getItem(ckDraftKey()); if(!raw) return;
   const d=JSON.parse(raw);
-  if(d && d.state && Object.keys(d.state).length){
-    State.chk.state=d.state; State.chk.resp=d.resp||{};
-    // land back on the SAME department & session (Android may reload the app after the camera)
-    const depts=(DB.checklist&&DB.checklist.depts)||[];
-    if(d.dept&&depts.includes(d.dept)) State.chk.dept=d.dept;
-    if(d.session&&['Opening','Mid-afternoon','Closing'].includes(d.session)) State.chk.session=d.session;
-    if(d.area) State.chk.area=d.area;
-    ckSanitizeState();   // a draft saved under a DIFFERENT template version must not restore photos onto the wrong task
-    try{ Object.values(State.chk.state).forEach(st=>{ ((st&&st.photos)||[]).forEach(id=>{ if(window.MCQDB&&MCQDB.fetchPhoto) MCQDB.fetchPhoto(id); }); }); }catch(e){}
-    setTimeout(()=>{ try{ toast('↩ Restored your unsaved checklist for today'); }catch(e){} }, 500);
-  }
+  // new drafts carry per-session buckets (d.sess); old drafts a single flat state (d.state)
+  // that belonged to whatever session it was saved under → normalise both to buckets.
+  let sess=(d.sess&&typeof d.sess==='object')?d.sess:null;
+  if(!sess && d.state && typeof d.state==='object' && Object.keys(d.state).length){ sess={}; sess[d.session||'Opening']=d.state; }
+  if(!sess) return;
+  if(!Object.keys(sess).some(k=>sess[k]&&Object.keys(sess[k]).length)) return;
+  State.chk.sess=sess; State.chk.resp=d.resp||{};
+  // land back on the SAME department & session (Android may reload the app after the camera)
+  const depts=(DB.checklist&&DB.checklist.depts)||[];
+  if(d.dept&&depts.includes(d.dept)) State.chk.dept=d.dept;
+  if(d.session&&['Opening','Mid-afternoon','Closing'].includes(d.session)) State.chk.session=d.session;
+  if(d.area) State.chk.area=d.area;
+  ckLinkActive();      // point the active state at the restored session's bucket
+  ckSanitizeState();   // a draft saved under a DIFFERENT template version must not restore photos onto the wrong task
+  try{ ckBuckets().forEach(b=>Object.values(b||{}).forEach(st=>{ ((st&&st.photos)||[]).forEach(id=>{ if(window.MCQDB&&MCQDB.fetchPhoto) MCQDB.fetchPhoto(id); }); })); }catch(e){}
+  setTimeout(()=>{ try{ toast('↩ Restored your unsaved checklist for today'); }catch(e){} }, 500);
 }catch(e){} }
 if(!window._ckDraftHooked){ window._ckDraftHooked=true;
   try{ document.addEventListener('visibilitychange', ()=>{ if(document.visibilityState==='hidden') ckWriteDraft(); }); window.addEventListener('pagehide', ckWriteDraft); }catch(e){}
@@ -362,9 +381,10 @@ function ckEnsureFreshDay(){
   const firstInit=!State.chk._day;
   State.chk._day=today;
   if(!firstInit){
-    State.chk.state={}; State.chk.resp={}; State.chk.reopen={}; State.chk.buildView=0;
+    State.chk.state={}; State.chk.sess={}; State.chk.resp={}; State.chk.reopen={}; State.chk.buildView=0;
     if(State.chk.date!==today) State.chk.date=today;
     ckRestoreDraft();   // TODAY's draft only — the storage key includes today's date
+    ckLinkActive();     // no draft → ensure the active session still has a live bucket
   }
   ckCleanOldDrafts();
 }
@@ -382,17 +402,20 @@ window.ckEnsureFreshDay=ckEnsureFreshDay;
    device's in-progress ticks/notes over to the SAME TASKS by identity, not by array index */
 function ckRemapLiveState(prevItems){
   try{
-    if(!State.chk||!State.chk.state||!Object.keys(State.chk.state).length) return;
-    const old=State.chk.state, remapped={};
+    if(!State.chk) return;
+    const s=ckSess();
+    if(!ckBuckets().some(b=>b&&Object.keys(b).length)) return;
     const key=r=>r[0]+'|'+r[1]+'|'+r[2];
     const nIdx={}, nIdx2={};
     ((DB.checklist&&DB.checklist.items)||[]).forEach((r,i)=>{ if(Array.isArray(r)){ nIdx[key(r)]=i; const k2=r[0]+'|'+r[2]; if(!(k2 in nIdx2)) nIdx2[k2]=i; } });
-    Object.keys(old).forEach(k=>{
-      const r=prevItems[+k]; if(!Array.isArray(r)) return;
-      let ni=nIdx[key(r)]; if(ni==null) ni=nIdx2[r[0]+'|'+r[2]];
-      if(ni!=null){ remapped[ni]=old[k]; if(remapped[ni]&&typeof remapped[ni]==='object') remapped[ni]._sig=ckSig(ni); }   // re-tag to the new index's task
-    });
-    State.chk.state=remapped;
+    const remapOne=(old)=>{ const remapped={};
+      Object.keys(old||{}).forEach(k=>{
+        const r=prevItems[+k]; if(!Array.isArray(r)) return;
+        let ni=nIdx[key(r)]; if(ni==null) ni=nIdx2[r[0]+'|'+r[2]];
+        if(ni!=null){ remapped[ni]=old[k]; if(remapped[ni]&&typeof remapped[ni]==='object') remapped[ni]._sig=ckSig(ni); }   // re-tag to the new index's task
+      }); return remapped; };
+    Object.keys(s).forEach(k=>{ s[k]=remapOne(s[k]); });   // every session bucket follows the same identity remap
+    ckLinkActive();
     State.chk.editing=null; State.chk.editDeptH=null; State.chk.editArea=null;
     ckSaveDraft();
   }catch(e){}
@@ -407,8 +430,9 @@ function renderChecklist(){
     return;
   }
   if(ckHomeStore()) ckEnsureHomeTemplate();   // re-apply cached home template over any aggregate reload
-  if(!State.chk){ State.chk={session:'Opening',dept:C.depts[0],area:'ALL',state:{},resp:{}}; ckRestoreDraft(); }
+  if(!State.chk){ State.chk={session:'Opening',dept:C.depts[0],area:'ALL',state:{},resp:{}}; State.chk.sess={Opening:State.chk.state}; ckRestoreDraft(); }
   ckEnsureFreshDay();
+  ckLinkActive();      // keep State.chk.state pointed at the current session's bucket
   ckSanitizeState();   // guard against stale index→task entries from a template reorder / cross-version draft
   if(State.chk.dept==='ALL' || !C.depts.includes(State.chk.dept)) State.chk.dept=C.depts[0];
   if(!State.chk.area) State.chk.area='ALL';
@@ -1623,7 +1647,7 @@ function ckRmPhoto(e,i,url){
   const st=State.chk.state[i], r=ckItem(DB.checklist.items[i],i);
   if(st&&st.photos){st.photos=st.photos.filter(u=>u!==url); if(r.meta.temp&&!st.photos.length){st.temp=null;st.aiStatus=null;st.aiError='';st.aiSuggestion=null;st.aiManualAllowed=false;st.done=false;} ckDraw(); ckSaveDraft();}
 }
-function ckSession(v){State.chk.session=v;State.chk.area='ALL';renderChecklist();}
+function ckSession(v){ckUseSession(v);State.chk.area='ALL';renderChecklist();}
 function ckDept(d){State.chk.dept=d;State.chk.area='ALL';renderChecklist();}
 /* ---- admin checklist CRUD (add / edit / delete task) ---- */
 function ckPersistTemplate(){ try{ DB.checklist=DB.checklist||{}; DB.checklist.templateVersion=(+(DB.checklist.templateVersion||0))+1; }catch(e){} if(window.persist) window.persist(); }
@@ -1708,7 +1732,7 @@ function ckDelDept(dept){
   DB.checklist.items=DB.checklist.items.filter(it=>it[0]!==dept);
   DB.checklist.depts=(DB.checklist.depts||[]).filter(d=>d!==dept);
   if(DB.checklist.deptMeta) delete DB.checklist.deptMeta[dept];
-  State.chk.state={}; State.chk.editDeptH=null; State.chk.editing=null;
+  ckClearAllState(); State.chk.editDeptH=null; State.chk.editing=null;
   State.chk.dept=(DB.checklist.depts||[])[0]||''; State.chk.area='ALL';
   ckPersistTemplate(); renderChecklist(); toast('🗑 Department deleted');
 }
@@ -1719,7 +1743,7 @@ function ckSaveSection(dept,area){ const v=((document.getElementById('ckh-area')
 function ckDelSection(dept,area){
   if(!confirm(`Delete the "${area}" section in ${dept} and ALL its tasks?`)) return;
   DB.checklist.items=DB.checklist.items.filter(it=>!(it[0]===dept&&it[1]===area));
-  State.chk.state={};          // item indexes shifted — clear in-progress ticks for a clean re-render
+  ckClearAllState();           // item indexes shifted — clear in-progress ticks for a clean re-render
   State.chk.editing=null; State.chk.area='ALL';
   ckPersistTemplate(); renderChecklist(); toast('🗑 Section deleted');
 }
@@ -1735,8 +1759,7 @@ function ckRenameSection(dept,area){
 function ckDelTask(i){
   if(!confirm('Delete this checklist task permanently?')) return;
   DB.checklist.items.splice(i,1);
-  const ns={}; Object.entries(State.chk.state||{}).forEach(([k,v])=>{k=+k; if(k===i)return; ns[k>i?k-1:k]=v;});
-  State.chk.state=ns;
+  ckShiftAllState(i);   // drop the deleted task's entry and shift the rest — in EVERY session bucket
   if(State.chk.editing===i) State.chk.editing=null; else if(State.chk.editing>i) State.chk.editing--;
   ckPersistTemplate(); renderChecklist(); toast('🗑 Task deleted');
 }
