@@ -2247,6 +2247,7 @@ def save_state(store_id, state, user, client=None):
                 except Exception: pj = {}
             posted_items = state.get('checklistItems', None)
             posted_depts = state.get('checklistDepts', None)
+            prev_ver = int(pj.get('checklistTemplateVersion') or 0)
             def _keep_prev():
                 lean['checklistItems'] = pj.get('checklistItems')
                 lean['checklistTemplateVersion'] = pj.get('checklistTemplateVersion')
@@ -2257,7 +2258,6 @@ def save_state(store_id, state, user, client=None):
             if posted_items is None:
                 if pj: _keep_prev()
             else:
-                prev_ver = int(pj.get('checklistTemplateVersion') or 0)
                 new_ver = int(state.get('checklistTemplateVersion') or 0)
                 items_changed = json.dumps(_tpl_rows(pj.get('checklistItems'))) != json.dumps(_tpl_rows(posted_items))
                 depts_changed = (posted_depts is not None) and (json.dumps(pj.get('checklistDepts') or []) != json.dumps(posted_depts or []))
@@ -2272,6 +2272,16 @@ def save_state(store_id, state, user, client=None):
             if state.get('checklistDepts', None) is None and pj.get('checklistDepts') is not None:
                 lean['checklistDepts'] = pj.get('checklistDepts')
                 if pj.get('checklistDeptMeta') is not None: lean['checklistDeptMeta'] = pj.get('checklistDeptMeta')
+            # MONOTONIC version: never store a LOWER template version than we already had. A stale
+            # blob save (same items but an old version number, e.g. from a device whose local
+            # version drifted) must not roll the version back — otherwise a later stale-but-higher
+            # device could out-version and clobber an accepted edit.
+            if pj.get('checklistItems') is not None:
+                try:
+                    if int(lean.get('checklistTemplateVersion') or 0) < prev_ver:
+                        lean['checklistTemplateVersion'] = prev_ver
+                except Exception:
+                    pass
         except Exception:
             pass
         if isinstance(ba, dict):

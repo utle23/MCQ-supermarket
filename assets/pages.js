@@ -1678,13 +1678,20 @@ function ckDept(d){State.chk.dept=d;State.chk.area='ALL';renderChecklist();}
 function ckPersistTemplate(){
   try{ DB.checklist=DB.checklist||{}; DB.checklist.templateVersion=(+(DB.checklist.templateVersion||0))+1; }catch(e){}
   const hs=ckHomeStore();
-  if(isSuper()&&hs){ ckSaveSuperStoreTemplate(hs); return; }   // Super edits ONE store → save straight to THAT store
+  if(isSuper()&&hs){ ckSaveStoreTemplate(hs); return; }        // Super edits the ONE store they picked
+  // Manager editing their OWN store's checklist → save through the per-store read-modify-write path
+  // (the server bumps the version from its CURRENT value). The aggregate blob save's version guard
+  // used to SILENTLY REJECT a manager's edit whenever their device's base version had drifted
+  // (another device, or a Super Store-Config edit, had advanced it) — so the change "reverted" the
+  // next day. Routing template edits here makes them land regardless of drift. Records/staff still
+  // save via the normal blob.
+  if(State.account && State.account.role==='admin' && State.branch){ ckSaveStoreTemplate(State.branch); return; }
   if(window.persist) window.persist();
 }
-// Super editing a picked store's checklist saves through the isolated Store-Config path
-// (per-store, version-bumped, audited) — NEVER the aggregate blob (which strips templates and
-// would copy one store's checklist onto another).
-function ckSaveSuperStoreTemplate(store){
+// Save a store's checklist template through the isolated Store-Config path (per-store, version
+// bumped SERVER-SIDE from its current value, audited) — never the aggregate blob. Used by a
+// Manager on their own store AND by Super on a picked store; both are immune to version drift.
+function ckSaveStoreTemplate(store){
   if(!(window.MCQDB&&MCQDB.saveStoreConfig)){ toast('Cannot save right now — reconnect and try again'); return; }
   const cfg={ checklistItems:(DB.checklist&&DB.checklist.items)||[],
     checklistDepts:(DB.checklist&&DB.checklist.depts)||[],
@@ -1692,7 +1699,7 @@ function ckSaveSuperStoreTemplate(store){
     checklistDeadlines:(DB.checklist&&DB.checklist.deadlines)||{} };
   // keep the local cache in step so a background reload re-applies THESE edited items, not stale ones
   if(State._homeTpl&&State._homeTpl.store===store){ State._homeTpl.items=cfg.checklistItems; State._homeTpl.depts=cfg.checklistDepts; State._homeTpl.deptMeta=cfg.checklistDeptMeta; State._homeTpl.deadlines=cfg.checklistDeadlines; }
-  MCQDB.saveStoreConfig(store,cfg).then(()=>toast('✓ Saved to '+store+' · its devices update on next sync')).catch(()=>toast('Could not save to '+store));
+  MCQDB.saveStoreConfig(store,cfg).catch(()=>toast('Could not save — check your connection and try again'));
 }
 // Super-only: pick which store's live checklist to view & edit (blank = read-only overview).
 function ckSuperStorePicker(){
