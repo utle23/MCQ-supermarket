@@ -3825,7 +3825,7 @@ function ckOpsPulse(){
       pct:Math.min(100,Math.round(submitted/expectedPer*100)),
       overdue: ckDeadlinePassed(sess) && submitted<expectedPer };
   });
-  const pendingVerify=subs.filter(ckIsPendingVerifySub).length;
+  const pendingVerify=todaySubs.filter(ckIsPendingVerifySub).length;   // TODAY's pending (consistent with the rest of this dashboard, which is all today-scoped)
   let tempAlerts=0; todaySubs.forEach(s=>(s.items||[]).forEach(it=>{ if(it.temp&&it.temp.inRange===false) tempAlerts++; }));
   const overdue=sessions.reduce((n,s)=>n+(s.overdue?(s.expected-s.submitted):0),0);
   return {sessions, pendingVerify, tempAlerts, overdue, today};
@@ -4290,7 +4290,10 @@ function renderManager(){
   issues.sort((a,b)=>String(b.created||b.date||'').localeCompare(String(a.created||a.date||'')));
   const verifiedToday=subs.filter(s=>s.date===todayStr&&ckIsVerifiedSub(s)).length;
   const critical=issues.filter(r=>['Critical','Major'].includes(r.severity)||['Critical','Urgent'].includes(r.priority)||r.step==='Final Warning').length;
-  const stats=[['🕒',allPending.length,'Awaiting verification','warn'],['✅',verifiedToday,'Verified today','ok'],['🚩',issues.length,'Open issues','info'],['🔴',critical,'Critical / urgent','bad']];
+  // "Awaiting verification" counts the SELECTED day's pending (default today) so it matches the
+  // list below + the "Verified today" tile — not a multi-week backlog. Old un-verified days are
+  // still surfaced by the empty-state hint ("… still pending on other dates").
+  const stats=[['🕒',pending.length,'Awaiting verification','warn'],['✅',verifiedToday,'Verified today','ok'],['🚩',issues.length,'Open issues','info'],['🔴',critical,'Critical / urgent','bad']];
   const dm=(DB.checklist&&DB.checklist.deptMeta)||{}; const capN=18, shown=pending.slice(0,capN);
   const storeTitle=isSuper()?(storeScope==='ALL'?'all stores':storeScope):State.branch;
   const storeCards=isSuper()?`<div class="mgr-store-grid">
