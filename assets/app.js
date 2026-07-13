@@ -1240,7 +1240,9 @@ function openDetail(modId,id,store){
       <div class="grid2">${editFields(r,m)}</div>
       <div style="display:flex;gap:10px;margin-top:16px">
         <button class="btn primary" style="flex:1" onclick="recSaveAll('${modId}','${esc(id)}','${ckJS(r.store||'')}')">💾 Save changes</button>
-        <button class="btn" style="color:var(--bad);border-color:#f3c9c9" onclick="recDelete('${modId}','${esc(id)}','${ckJS(r.store||'')}')"><i class="fas fa-trash"></i>&nbsp; Delete</button>
+        ${modId==='violation'
+          ? `<button class="btn" style="color:var(--bad);border-color:#f3c9c9" onclick="closeDrawer();(window.vioRemovePrompt||function(){})('${ckJS(id)}','${ckJS(r.store||'')}','${ckJS(r.staffName||'')}')"><i class="fas fa-trash"></i>&nbsp; Remove (reason)</button>`
+          : `<button class="btn" style="color:var(--bad);border-color:#f3c9c9" onclick="recDelete('${modId}','${esc(id)}','${ckJS(r.store||'')}')"><i class="fas fa-trash"></i>&nbsp; Delete</button>`}
       </div>`
       :`<dl class="dl">${rows}</dl><div class="rail-tip" style="margin-top:20px">👀 Viewing as Staff. Head Office can edit &amp; close this record.</div>`}</div>`;
   $('#drawer').classList.add('open'); $('#drawer-mask').classList.add('open');

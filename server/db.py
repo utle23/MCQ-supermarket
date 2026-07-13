@@ -429,7 +429,16 @@ def auth_from_token(token):
     conn = connect()
     try:
         row = conn.execute('SELECT role,store_id,expires_at,staff_id,staff_name,account_id FROM tokens WHERE token=?', (token,)).fetchone()
-        if not row or row['expires_at'] < time.time(): return None
+        now_t = time.time()
+        if not row or row['expires_at'] < now_t: return None
+        # SLIDING expiry: an actively-used token is renewed so nobody is thrown out mid-shift
+        # (the fixed 7-day window used to log people out while they were working). Only write
+        # when >1 day has elapsed since the last renewal → ~1 write per token per day.
+        try:
+            if (row['expires_at'] - now_t) < (TOKEN_TTL - 86400):
+                conn.execute('UPDATE tokens SET expires_at=? WHERE token=?', (now_t + TOKEN_TTL, token))
+                conn.commit()
+        except Exception: pass
         return {'role': row['role'], 'store_id': row['store_id'],
                 'staff_id': row['staff_id'] if 'staff_id' in row.keys() else None,
                 'staff_name': row['staff_name'] if 'staff_name' in row.keys() else None,
