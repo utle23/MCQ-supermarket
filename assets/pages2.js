@@ -212,31 +212,58 @@ function vioPerson(name){
     const act=vioIsActive(r);
     return `<div class="vp-row ${act?'':'off'}">
       <span class="badge ${toneOf(r.severity)}">${esc(r.severity||'')}</span>
-      <div class="vp-main"><b>${esc(r.category||'Violation')}</b><small>${esc((r.created||'').slice(0,16))} · logged as ${esc(r.step||'—')}${act?'':` · <i>${esc(r.status)}</i>`}</small>
+      <div class="vp-main"><b>${esc(r.category||'Violation')}</b><small>${esc((r.created||'').slice(0,16))} · logged as ${esc(r.step||'—')}${act?'':` · <i>${esc(r.status)}</i>`}${!act&&r.removeReason?` · <span style="color:#64748b">reason: ${esc(r.removeReason)}</span>`:''}</small>
         ${r.description?`<div class="vp-desc">${esc(r.description)}</div>`:''}</div>
       ${vioCanManage()?(act
-        ? `<button class="btn xs" style="color:var(--bad);border-color:#f3c9c9" onclick="vioSetStatus('${ckJS(r.id)}','${ckJS(r.store||'')}','Removed','${ckJS(name)}')">Remove</button>`
+        ? `<button class="btn xs" style="color:var(--bad);border-color:#f3c9c9" onclick="vioRemovePrompt('${ckJS(r.id)}','${ckJS(r.store||'')}','${ckJS(name)}')">Remove</button>`
         : `<button class="btn xs" onclick="vioSetStatus('${ckJS(r.id)}','${ckJS(r.store||'')}','restore','${ckJS(name)}')">Restore</button>`):''}
     </div>`; }).join(''):'<div class="empty">No violations on record.</div>';
   mcqModal(`⚖️ ${esc(name)} — violation record`, `${head}
     <div class="vp-note fhint" style="margin:10px 0">Standing is based on <b>active</b> violations. Removing one (reason accepted) lowers the level automatically.</div>
     <div class="vp-list">${rows}</div>`, {wide:true});
 }
-function vioSetStatus(id,store,status,name){
+/* Removing a violation needs a written REASON (mandatory) — captured on the record + audit.
+   This especially matters for the Deputy auto "Late clock-in" violations so a manager can't
+   silently wipe a lateness record. The Remove button opens vioRemovePrompt → vioConfirmRemove. */
+function vioRemovePrompt(id,store,name){
   const recs=(((DB.modules||{}).violation||{}).records||[]);
   const r=recs.find(x=>x.id===id&&(!store||x.store===store)); if(!r) return;
+  const isLate = r.category==='Late clock-in' || String(r.id||'').startsWith('VIO-ATT') || r.auto===true;
+  mcqModal(isLate?'⏰ Remove late clock-in violation':'🗑 Remove violation', `
+    <div class="rail-tip" style="margin-bottom:12px">Removing this lowers <b>${esc(name)}</b>'s standing. A written <b>reason is required</b>${isLate?' to remove a late clock-in':''} — it is kept on the record and in the audit log.</div>
+    <div class="vp-desc" style="margin:0 0 12px;background:#f8fafc;border:1px solid var(--line);border-radius:10px;padding:10px">
+      <b>${esc(r.category||'Violation')}</b> · ${esc(r.step||'')} · ${esc((r.created||'').slice(0,16))}${r.description?`<div style="margin-top:4px;color:#64748b">${esc(r.description)}</div>`:''}</div>
+    <label class="field"><span style="font-weight:800">Reason for removing <span class="req">*</span></span>
+      <textarea id="vio-remove-reason" rows="3" placeholder="${isLate?'e.g. Approved late start · traffic accident · clocked in by mistake · roster error':'e.g. Accepted explanation · logged in error'}" oninput="var b=document.getElementById('vio-remove-go'); if(b){ b.disabled=!this.value.trim(); b.style.opacity=this.value.trim()?'1':'.5'; }" style="width:100%;margin-top:5px"></textarea></label>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button class="btn" onclick="mcqModalClose()">Cancel</button>
+      <button class="btn" id="vio-remove-go" disabled style="background:linear-gradient(135deg,#e53935,#c62828);color:#fff;border:0;opacity:.5" onclick="vioConfirmRemove('${ckJS(id)}','${ckJS(store||'')}','${ckJS(name)}')"><i class="fas fa-trash"></i>&nbsp; Remove violation</button>
+    </div>`, {});
+  setTimeout(()=>{ var t=document.getElementById('vio-remove-reason'); if(t) t.focus(); }, 60);
+}
+function vioConfirmRemove(id,store,name){
+  var el=document.getElementById('vio-remove-reason'); var reason=(el&&el.value||'').trim();
+  if(!reason){ toast('Please enter a reason to remove this violation'); if(el) el.focus(); return; }
+  vioSetStatus(id,store,'Removed',name,reason);
+}
+function vioSetStatus(id,store,status,name,reason){
+  const recs=(((DB.modules||{}).violation||{}).records||[]);
+  const r=recs.find(x=>x.id===id&&(!store||x.store===store)); if(!r) return;
+  if(status!=='restore' && !String(reason||'').trim()){ toast('A reason is required to remove a violation'); return; }   // safety net: never remove without a reason
   const before=JSON.parse(JSON.stringify(r));
-  if(status==='restore'){ r.status=r.step||'Verbal Discussion'; }
-  else { r.status=status; }
-  auditLog('update','violation',r.id,r.store,before,r, status==='restore'?'restored':'removed (reason accepted)');
+  if(status==='restore'){ r.status=r.step||'Verbal Discussion'; delete r.removeReason; delete r.removedBy; delete r.removedAt; }
+  else { r.status=status; r.removeReason=String(reason).trim();
+    r.removedBy=(State.account&&(State.account.name||State.account.staffName))||'Manager';
+    r.removedAt=(typeof perthDT==='function')?perthDT():''; }
+  auditLog('update','violation',r.id,r.store,before,r, status==='restore'?'restored':('removed · reason: '+r.removeReason));
   if(window.persist) window.persist();
-  if(window.mcqChecklistSubmit){/* no-op */}
   toast(status==='restore'?'↩ Violation restored':'🗑 Violation removed — standing updated');
-  if(name) vioPerson(name);         // refresh the modal (standing recomputes live)
+  if(name) vioPerson(name);         // refresh the modal (standing recomputes live; also replaces the reason modal)
   if(State.route&&State.route.mod==='violation') renderViolation();   // refresh stats/records behind it
 }
 function vioLookup(){ const el=document.getElementById('vio-lookup'); const n=el&&el.value.trim(); if(n&&!n.startsWith('—')) vioPerson(n); else toast('Pick a staff member first'); }
 window.vioPerson=vioPerson; window.vioSetStatus=vioSetStatus; window.vioLookup=vioLookup;
+window.vioRemovePrompt=vioRemovePrompt; window.vioConfirmRemove=vioConfirmRemove;
 
 /* ============================================================ TRAINING ASSESSMENT */
 const TRN_RATINGS=[['Excellent','#2E7D32','#E8F5E9'],['Good','#1565C0','#E3F2FD'],['Satisfactory','#F57C00','#FFF3E0'],['Needs work','#C62828','#FDECEA']];
