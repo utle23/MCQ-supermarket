@@ -1510,9 +1510,20 @@ def cleanup_old(store, before, kinds):
             conn.execute('DELETE FROM photos WHERE store_id=? AND created_at<?', (store, cut))
             counts['photos'] = len(rows)
         if 'checklistSubs' in kinds:
-            n = conn.execute('SELECT COUNT(*) c FROM checklist_submissions WHERE store_id=? AND created_at<?', (store, cut)).fetchone()['c']
-            conn.execute('DELETE FROM checklist_submissions WHERE store_id=? AND created_at<?', (store, cut))
-            counts['checklistSubs'] = n
+            # Delete by the submission's OWN date (from data_json), NOT created_at. created_at gets
+            # bumped to the verify time when a checklist is verified, so an old checklist verified
+            # recently would otherwise survive an "older than" cleanup (the bug users hit).
+            before10 = str(before)[:10]
+            del_ids = []
+            for r in conn.execute('SELECT id, data_json, created_at FROM checklist_submissions WHERE store_id=?', (store,)).fetchall():
+                try: eff = str((json.loads(r['data_json'] or '{}') or {}).get('date') or '')[:10]
+                except Exception: eff = ''
+                if not eff: eff = str(r['created_at'] or '')[:10]
+                if eff and eff < before10: del_ids.append(r['id'])
+            for i in range(0, len(del_ids), 400):
+                chunk = del_ids[i:i+400]
+                conn.execute('DELETE FROM checklist_submissions WHERE store_id=? AND id IN (%s)' % ','.join('?' * len(chunk)), [store] + chunk)
+            counts['checklistSubs'] = len(del_ids)
         if 'scheduleHistory' in kinds:
             n = conn.execute('SELECT COUNT(*) c FROM schedule_history WHERE store_id=? AND created_at<?', (store, cut)).fetchone()['c']
             conn.execute('DELETE FROM schedule_history WHERE store_id=? AND created_at<?', (store, cut))
