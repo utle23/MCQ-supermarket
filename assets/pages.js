@@ -5080,35 +5080,6 @@ function dataClearAll(){
   if(window.auditLog) auditLog('delete','records','ALL',State.branch,null,null);
   if(window.persist) window.persist(); toast('🗑 All records cleared'); renderData();
 }
-function dataDelInRange(d,from,to){ d=String(d||'').slice(0,10); return !!d&&(!from||d>=from)&&(!to||d<=to); }
-function dataRecDate(r){ return String(r.date||r.created||r.at||r.reported||r.createdAt||'').slice(0,10); }
-function dataDeleteRange(){
-  const g=id=>document.getElementById(id);
-  const from=(g('dr-from')||{}).value||'', to=(g('dr-to')||{}).value||'';
-  const doSubs=!!(g('dr-subs')||{}).checked, doPhotos=!!(g('dr-photos')||{}).checked, doRecs=!!(g('dr-records')||{}).checked;
-  State.dataDel={from,to};
-  if(!doSubs&&!doPhotos&&!doRecs){ toast('Pick at least one type to delete'); return; }
-  if(!from&&!to){ toast('Pick a “from” and/or “to” date'); return; }
-  const inScope=store=>isSuper()||store===State.branch;
-  const subs=DB.checklistSubs||[];
-  let nSubs=0,nPhotos=0,nRecs=0;
-  if(doSubs) nSubs=subs.filter(s=>inScope(s.store)&&dataDelInRange(s.date,from,to)).length;
-  if(doPhotos&&!doSubs) subs.forEach(s=>{ if(inScope(s.store)&&dataDelInRange(s.date,from,to)) (s.items||[]).forEach(it=>{ nPhotos+=(it.photos||[]).length; }); });
-  if(doRecs) Object.values(DB.modules).forEach(m=>{ nRecs+=(m.records||[]).filter(r=>inScope(r.store)&&dataDelInRange(dataRecDate(r),from,to)).length; });
-  const parts=[]; if(doSubs)parts.push(nSubs+' submission(s)'); if(doPhotos&&!doSubs)parts.push(nPhotos+' photo(s)'); if(doRecs)parts.push(nRecs+' record(s)');
-  if(!(nSubs+nRecs+nPhotos)){ toast('Nothing matches that date range / scope'); return; }
-  if(!confirm('Delete '+parts.join(' + ')+'\ndated '+(from||'…')+' → '+(to||'…')+(isSuper()?' across ALL stores':' for '+State.branch)+'?\nThis cannot be undone.')) return;
-  const opt=isSuper()?{store:'ALL'}:null;
-  if(doPhotos&&!doSubs) subs.forEach(s=>{ if(inScope(s.store)&&dataDelInRange(s.date,from,to)) (s.items||[]).forEach(it=>{ it.photos=[]; }); });
-  if(doSubs){ const rm=subs.filter(s=>inScope(s.store)&&dataDelInRange(s.date,from,to)).map(s=>s.id).filter(Boolean);
-    DB.checklistSubs=subs.filter(s=>!(inScope(s.store)&&dataDelInRange(s.date,from,to)));
-    if(window.mcqDeleteRecords&&rm.length) mcqDeleteRecords('checklist_submissions',rm,opt); }
-  if(doRecs){ const rm=[]; Object.values(DB.modules).forEach(m=>{ (m.records||[]).forEach(r=>{ if(inScope(r.store)&&dataDelInRange(dataRecDate(r),from,to)&&r.id) rm.push(r.id); }); m.records=(m.records||[]).filter(r=>!(inScope(r.store)&&dataDelInRange(dataRecDate(r),from,to))); });
-    if(window.mcqDeleteRecords&&rm.length) mcqDeleteRecords('records',rm,opt); }
-  if(window.auditLog) auditLog('delete','dateRange',(from||'')+'..'+(to||''),State.branch,{subs:nSubs,photos:nPhotos,records:nRecs},null);
-  if(window.persist) window.persist();
-  toast('🗑 Deleted '+parts.join(' + ')); renderData();
-}
 function dataResetStore(store){ if(!isSuper()) return;
   if(!confirm('RESET all data for '+store+' (records, submitted checklists, schedule history)?\nStaff & templates kept. Cannot be undone.')) return;
   Object.values(DB.modules).forEach(m=>{ m.records=(m.records||[]).filter(r=>r.store!==store); });
@@ -5211,24 +5182,10 @@ function renderData(){
       ${mods.map(c=>`<tr><td>${c.i} <b>${esc(c.l)}</b></td><td class="num">${c.n}</td><td class="num">${dataFmtSize(c.b)}</td><td>${c.n?`<button class="btn sm" onclick="dataExportModule('${c.id}','excel')">⬇ Excel</button>`:'—'}</td><td>${c.n?`<button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="dataDeleteModule('${c.id}')">🗑</button>`:'—'}</td></tr>`).join('')}
       <tr><td>📋 <b>Submitted checklists</b></td><td class="num">${subs.length}</td><td class="num">${dataFmtSize(dataBytes(subs))}</td><td>—</td><td>${subs.length?`<button class="btn sm" style="color:var(--bad);border-color:#f3c9c9" onclick="dataClearSubs()">🗑</button>`:'—'}</td></tr>
     </tbody></table></div></div>`; })()}
-    <div class="card danger-zone" style="margin-top:16px;border:1.5px solid #f3c9c9"><div class="card-head"><h3 style="color:var(--bad)">⚠️ Cleanup &amp; free space</h3><span class="ch-sub">PythonAnywhere databases have size limits — delete old data to stay within them</span></div>
+    <div class="card danger-zone" style="margin-top:16px;border:1.5px solid #f3c9c9"><div class="card-head"><h3 style="color:var(--bad)">⚠️ Danger zone — wipe &amp; reset</h3><span class="ch-sub">Nuclear delete/reset · cannot be undone</span></div>
       <div class="card-pad">
-        <p style="color:var(--muted);font-size:12.5px;margin:0 0 12px">Deleting clears the data from ${isSuper()?'every store document':'this store’s document'} and frees space. Staff, checklist templates and schedules are kept. <b>Export first if you need a copy.</b></p>
-        <div class="data-range">
-          <div class="dr-head"><i class="fas fa-calendar-day"></i> Delete by date range — choose what to remove</div>
-          <div class="dr-row">
-            <label>From <input type="date" id="dr-from" value="${esc((State.dataDel&&State.dataDel.from)||'')}"></label>
-            <label>To <input type="date" id="dr-to" value="${esc((State.dataDel&&State.dataDel.to)||'')}"></label>
-          </div>
-          <div class="dr-targets">
-            <label class="dr-opt"><input type="checkbox" id="dr-subs" checked> Submitted checklists</label>
-            <label class="dr-opt"><input type="checkbox" id="dr-photos"> Photos only (keep checklist rows)</label>
-            <label class="dr-opt"><input type="checkbox" id="dr-records"> Operational records</label>
-          </div>
-          <button class="btn" style="color:var(--bad);border-color:#f3c9c9;margin-top:4px" onclick="dataDeleteRange()"><i class="fas fa-trash"></i>&nbsp; Delete in date range</button>
-        </div>
-        <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:14px">
-          <button class="btn" style="color:var(--bad);border-color:#f3c9c9" onclick="dataClearSubs()">🗑 Delete submitted checklists</button>
+        <p style="color:var(--muted);font-size:12.5px;margin:0 0 12px">These clear operational data from ${isSuper()?'every store':'this store'}. Staff, checklist templates and schedules are kept. <b>Export a backup first.</b><br>To just free space by removing <b>old</b> photos / submissions, use <b>“🧹 Clean up old data”</b> above.</p>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
           <button class="btn" style="color:var(--bad);border-color:#f3c9c9" onclick="dataClearAll()">🗑 Delete all records + submissions</button>
         </div>
         ${isSuper()?`<div class="section-title" style="margin-top:18px">Reset a single store</div>
