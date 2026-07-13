@@ -197,22 +197,24 @@ def deputy_webhook():
         # notify the employee's inbox
         try:
             au = {'role': 'super', 'store_id': None, 'staff_id': None, 'staff_name': '⏱ Attendance'}
+            _md = (d.get('_DPMetaData') or {}) if isinstance(d, dict) else {}
+            _oui = _md.get('OperationalUnitInfo') or {}
+            _dept = str((d.get('OperationalUnitName') if isinstance(d, dict) else '') or _oui.get('OperationalUnitName') or '')
+            _loc = str((d.get('CompanyName') if isinstance(d, dict) else '') or _oui.get('CompanyName') or '')
             if ev['event'] == 'clockin' and res['late_min'] > db.LATE_GRACE_MIN:
                 # full late pipeline: violation record + staff inbox + managers copy + email
-                _md = (d.get('_DPMetaData') or {}) if isinstance(d, dict) else {}
-                _oui = _md.get('OperationalUnitInfo') or {}
-                _deputy_late_effects(m, ev, res,
-                                     dept_name=str((d.get('OperationalUnitName') if isinstance(d, dict) else '') or _oui.get('OperationalUnitName') or ''),
-                                     loc_name=str((d.get('CompanyName') if isinstance(d, dict) else '') or _oui.get('CompanyName') or ''))
+                _deputy_late_effects(m, ev, res, dept_name=_dept, loc_name=_loc)
+                continue
+            if ev['event'] == 'clockout' and res['over_min'] > db.LATE_GRACE_MIN:
+                # late clock-out → silent NON-violation record (management-only); no employee message
+                _deputy_late_clockout(m, ev, dept_name=_dept, loc_name=_loc)
                 continue
             if ev['event'] == 'clockin':
                 subj = '✅ Clock-in recorded — on time'
                 body_html = '<p>Thanks — you clocked in on time%s. Have a great shift! 💚</p>' % (' at ' + _fmt_hm(ev['actual_start']) if ev['actual_start'] else '')
             else:
                 subj = '👋 Clock-out recorded'
-                body_html = ('<p>You clocked out%s.%s</p>'
-                             % ((' at ' + _fmt_hm(ev['actual_end']) if ev['actual_end'] else ''),
-                                (' You stayed <b>%d minutes past</b> your rostered finish.' % res['over_min'] if res['over_min'] > 0 else '')))
+                body_html = '<p>You clocked out%s. Thanks! 👋</p>' % (' at ' + _fmt_hm(ev['actual_end']) if ev['actual_end'] else '')
             db.send_message(au, ev['store_id'], 'message', subj, body_html, to_staff_id=ev['staff_id'], to_super=False, to_managers=False)
         except Exception:
             pass
@@ -270,25 +272,26 @@ def _deputy_late_effects(m, ev, res, dept_name='', loc_name=''):
         except Exception: pass
     return rec['id']
 
-def _deputy_over_reminder(m, ev, dept_name='', loc_name=''):
-    """Clocked out PAST the rostered finish → a personalised inbox REMINDER (deliberately
-    NOT a violation — Khoi's rule: only late clock-ins go on the record)."""
+def _deputy_late_clockout(m, ev, dept_name='', loc_name=''):
+    """Clocked out PAST the rostered finish (> LATE_GRACE_MIN) → recorded in the store's
+    Violation module as a NON-violation 'Late clock-out' entry so Super/Manager can see it.
+    Deliberately SILENT: no employee notification, no email, and it never counts as a strike
+    (Khoi's rule — clocking out late is not a violation, just tracked)."""
     over = ev.get('over_min') or 0
     out_hm = _fmt_hm(ev.get('actual_end')) if ev.get('actual_end') else ''
     end_hm = _fmt_hm(ev.get('scheduled_end')) if ev.get('scheduled_end') else ''
-    subj = '⏰ Reminder — clocked out %d min past your rostered finish' % over
-    body_html = ('<p>Hi %s — you clocked out <b>%d minutes past</b> your rostered finish%s%s%s%s.</p>'
-                 '<p>This is a <b>friendly reminder only</b> (not a violation). Please try to finish on time, '
-                 'or check with your manager if extra time was needed.</p>'
-                 % (esc_html(m.get('name') or ''), over,
-                    (' at <b>' + out_hm + '</b>') if out_hm else '',
-                    (' (rostered ' + end_hm + ')') if end_hm else '',
-                    (' · Location: <b>' + esc_html(loc_name) + '</b>') if loc_name else '',
-                    (' · Deputy department: <b>' + esc_html(dept_name) + '</b>') if dept_name else ''))
-    au = {'role': 'super', 'store_id': None, 'staff_id': None, 'staff_name': '⏱ Attendance'}
-    try:
-        db.send_message(au, m['store'], 'message', subj, body_html, to_staff_id=m['id'], to_super=False, to_managers=False)
+    desc = ('Clocked out %d minutes past the rostered finish%s%s%s%s.'
+            % (over, (' at ' + out_hm) if out_hm else '', (' (rostered ' + end_hm + ')') if end_hm else '',
+               (' · Location: ' + loc_name) if loc_name else '',
+               (' · Deputy department: ' + dept_name) if dept_name else ''))
+    rec = {'id': 'ATT-OUT-' + secrets.token_hex(4).upper(), 'created': db.now()[:16],
+           'staffName': m.get('name') or '', 'store': m['store'], 'category': 'Late clock-out',
+           'severity': 'Info', 'step': '', 'status': 'Logged', 'description': desc,
+           'actionTaken': 'Automatic attendance monitor (Deputy)', 'followUpDate': '',
+           'reportedBy': 'Attendance monitor', 'auto': True, 'nonViolation': True}
+    try: db.add_violation_record(m['store'], rec)
     except Exception: pass
+    return rec['id']
 
 def esc_html(s):
     return str(s or '').replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
@@ -377,9 +380,9 @@ def _deputy_poll():
                   'scheduled_end': sched_end, 'actual_end': actual_end, 'late_min': 0, 'over_min': over}
             db.record_attendance(ev)
             processed += 1
-            if over > db.LATE_GRACE_MIN:   # a friendly REMINDER only — clocking out late is NOT a violation
+            if over > db.LATE_GRACE_MIN:   # late clock-out → silent NON-violation record (management-only), no employee notice
                 over_n += 1
-                try: _deputy_over_reminder(m, ev, dept_name=dept_name, loc_name=loc_name)
+                try: _deputy_late_clockout(m, ev, dept_name=dept_name, loc_name=loc_name)
                 except Exception: pass
     return {'processed': processed, 'late': late_n, 'overtime_reminders': over_n,
             'already_seen': seen, 'skipped_unmatched': skipped, 'timesheets': len(rows), 'date': today}

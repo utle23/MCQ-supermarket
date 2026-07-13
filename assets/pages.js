@@ -614,21 +614,31 @@ const VIO_STEPS=['Verbal Discussion','Written Warning','Final Warning','Terminat
 const VIO_STEP_COL=['#f59e0b','#fb8c00','#d32f2f','#7b1b1b'];
 function vioStepIdxForCount(n){ return n<=0?-1 : n<=3?0 : n===4?1 : n===5?2 : 3; }
 function vioIsActive(r){ return !['Resolved','Cancelled','Removed','Waived'].includes(String((r&&r.status)||'')); }
+/* An INFO record (attendance "Late clock-out") is tracked in the Violation module but is NOT a
+   violation — it never counts toward standing, never emails, and can't be "removed" (only noted). */
+function vioIsInfo(r){ return !!(r && (r.nonViolation || r.category==='Late clock-out')); }
+/* Classify a record for the type filter/buttons. */
+function vioTypeOf(r){
+  if(vioIsInfo(r)) return 'clockout';
+  if(r && (r.category==='Late clock-in' || String(r.id||'').startsWith('VIO-ATT') || (r.auto && /clock.?in/i.test(r.category||'')))) return 'clockin';
+  return 'manual';
+}
 function vioRecordsFor(name,store){
   return (((DB.modules||{}).violation||{}).records||[]).filter(r=>r.staffName===name&&(!store||r.store===store));
 }
 function vioStandingFromRecords(recs){
-  const active=(recs||[]).filter(vioIsActive), idx=vioStepIdxForCount(active.length);
-  return {count:active.length, total:(recs||[]).length, idx, step:idx>=0?VIO_STEPS[idx]:null, color:idx>=0?VIO_STEP_COL[idx]:'#0e9f6e', active};
+  const real=(recs||[]).filter(r=>!vioIsInfo(r));   // Late clock-out (info) never counts toward standing
+  const active=real.filter(vioIsActive), idx=vioStepIdxForCount(active.length);
+  return {count:active.length, total:real.length, idx, step:idx>=0?VIO_STEPS[idx]:null, color:idx>=0?VIO_STEP_COL[idx]:'#0e9f6e', active};
 }
 function vioStanding(name,store){ return vioStandingFromRecords(vioRecordsFor(name,store)); }
 function vioLadderHTML(idx){
   return `<div class="vio-ladder">${VIO_STEPS.map((s,i)=>`<div class="vio-step-pill ${(idx>=0&&i<=idx)?'on':''} ${i===idx?'cur':''}" style="--sc:${VIO_STEP_COL[i]}"><span class="vsp-dot">${i<idx?'✓':(i===idx?'●':'')}</span>${esc(s)}</div>`).join('')}</div>`;
 }
-window.vioStanding=vioStanding; window.vioStandingFromRecords=vioStandingFromRecords; window.vioLadderHTML=vioLadderHTML; window.vioIsActive=vioIsActive; window.VIO_STEPS=VIO_STEPS;
+window.vioStanding=vioStanding; window.vioStandingFromRecords=vioStandingFromRecords; window.vioLadderHTML=vioLadderHTML; window.vioIsActive=vioIsActive; window.vioIsInfo=vioIsInfo; window.vioTypeOf=vioTypeOf; window.VIO_STEPS=VIO_STEPS;
 function renderMyViolations(){
   setAccent('#b45309'); setCrumb('⚖️','My Violations','Your standing & record');
-  const rows=myRegRecords('violation').slice().sort((a,b)=>String(b.created||b.date||'').localeCompare(String(a.created||a.date||'')));
+  const rows=myRegRecords('violation').slice().filter(r=>!vioIsInfo(r)).sort((a,b)=>String(b.created||b.date||'').localeCompare(String(a.created||a.date||'')));   // Late clock-out is not a violation — never shown to the employee
   const COL=VIO_STEP_COL, steps=VIO_STEPS;
   // count-based standing: only ACTIVE (not removed/resolved) violations count toward the level
   const st=vioStandingFromRecords(rows), idx=st.idx;

@@ -31,7 +31,9 @@ function vioHead(a){ return `<div class="page-head"><div class="ph-ic" style="ba
 
 function vioStats(){
   setCrumb('⚠️','Violation Rules','Stats & escalation');
-  const recs=scopedRecords('violation');
+  const allRecs=scopedRecords('violation');
+  const recs=allRecs.filter(r=>!vioIsInfo(r));   // strike / KPIs / charts = REAL violations only
+  const infos=allRecs.filter(vioIsInfo);         // Late clock-out — tracked, never a violation
   const active=recs.filter(r=>!['Resolved','Cancelled'].includes(r.status));
   const byStaff={}; active.forEach(r=>{(byStaff[r.staffName]=byStaff[r.staffName]||[]).push(r);});
   const TH=3, watch=Object.entries(byStaff).filter(([n,v])=>v.length>=2).sort((a,b)=>b[1].length-a[1].length);
@@ -52,6 +54,12 @@ function vioStats(){
       <div class="card-pad"><div class="chart-grid cols-2"><div><div class="mini-h">${isSuper()?'By store':'This store'}</div><div class="chart-box"><canvas id="vd-store"></canvas></div></div><div><div class="mini-h">By warning step</div><div class="chart-box"><canvas id="vd-step"></canvas></div></div></div></div></div>`; }
   const superCmp = isSuper()?`<div class="card"><div class="card-head"><h3>Store comparison</h3><span class="ch-sub">stacked by step</span></div><div class="card-pad"><div class="chart-box"><canvas id="vio-bystore"></canvas></div></div></div>`:'';
   $('#content').innerHTML=`${vioHead('stats')}
+    <div class="section-title" style="margin-top:0">Filter by type — click to see records</div>
+    <div class="vio-typebar" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:16px">
+      ${vioTypeTile('clockin','🕐','#c62828','Clock-in late','counts as a strike',recs.filter(r=>vioTypeOf(r)==='clockin').length)}
+      ${vioTypeTile('clockout','🚪','#0891b2','Clock-out late','tracked · not a violation',infos.length)}
+      ${vioTypeTile('manual','⚠️','#b45309','Other violations','manual cases',recs.filter(r=>vioTypeOf(r)==='manual').length)}
+    </div>
     <div class="card" style="margin-bottom:14px"><div class="card-pad vio-lookup-bar">
       <span class="vio-lookup-lbl">🔎 Look up a staff member — see all their violations &amp; current standing:</span>
       ${staffPick('vio-lookup','','','Search staff…',{onchange:'vioLookup()'})}
@@ -83,25 +91,36 @@ function vioDate(which,val){ State.vio=State.vio||{}; State.vio[which]=val; rend
 function vioFilteredRecs(){
   const from=State.vio&&State.vio.from||'', to=State.vio&&State.vio.to||'';
   const recStore=isSuper()?((State.vio&&State.vio.recStore)||'ALL'):null;
+  const type=(State.vio&&State.vio.type)||'all';
   return scopedRecords('violation').slice()
     .filter(v=>recStore&&recStore!=='ALL'?v.store===recStore:true)   // per-page store filter (Super)
+    .filter(v=>type==='all'?true:vioTypeOf(v)===type)                // type filter (clock-in / clock-out late / other)
     .filter(v=>{ const d=String(v.created||'').slice(0,10); if(from&&(!d||d<from))return false; if(to&&(!d||d>to))return false; return true; })
     .sort((a,b)=>String(b.created||'').localeCompare(String(a.created||'')));
 }
-function vioExport(fmt){ const cols=[{label:'Ref',get:v=>v.id},{label:'Date',get:v=>(v.created||'').slice(0,16)},{label:'Staff',get:v=>v.staffName},{label:'Store',get:v=>v.store},{label:'Category',get:v=>v.category},{label:'Severity',get:v=>v.severity},{label:'Step',get:v=>v.step},{label:'Status',get:v=>v.status},{label:'Description',get:v=>v.description}]; expRecords('Violation Records',cols,vioFilteredRecs(),fmt); }
+function vioExport(fmt){ const TYPE={clockin:'Clock-in late',clockout:'Clock-out late',manual:'Violation'};
+  const cols=[{label:'Ref',get:v=>v.id},{label:'Date',get:v=>(v.created||'').slice(0,16)},{label:'Staff',get:v=>v.staffName},{label:'Store',get:v=>v.store},
+    {label:'Type',get:v=>TYPE[vioTypeOf(v)]||'Violation'},{label:'Category',get:v=>v.category},
+    {label:'Severity',get:v=>vioIsInfo(v)?'—':v.severity},{label:'Step',get:v=>vioIsInfo(v)?'—':v.step},{label:'Status',get:v=>v.status},
+    {label:'Description',get:v=>v.description},{label:'Reason / Note',get:v=>v.reasonNote||v.removeReason||''}];
+  const T=(State.vio&&State.vio.type)||'all';
+  expRecords(T==='all'?'Violation & Lateness Records':(TYPE[T]+' Records'),cols,vioFilteredRecs(),fmt); }
 function vioRecords(){
   setCrumb('⚠️','Violation Rules','All records');
   const from=State.vio&&State.vio.from||'', to=State.vio&&State.vio.to||'';
   const recs=vioFilteredRecs();
-  const list=recs.map(v=>`
-    <div class="card vcard" style="--rc:${sevColor(v.severity)}" onclick='openDetail("violation","${esc(v.id)}","${ckJS(v.store||'')}")'>
-      <div class="vcard-h"><i class="fas fa-triangle-exclamation" style="color:${sevColor(v.severity)}"></i><b>${esc(v.category)}</b>
-        <span class="badge ${toneOf(v.severity)}">${esc(v.severity)}</span><span class="badge ${toneOf(v.step)}">${esc(v.step||'')}</span><span class="badge ${toneOf(v.status)}">${esc(v.status)}</span>
+  const list=recs.map(v=>{ const info=vioIsInfo(v), col=info?'#0891b2':sevColor(v.severity);
+    return `<div class="card vcard${info?' vcard-info':''}" style="--rc:${col}" ${info?'':`onclick='openDetail("violation","${esc(v.id)}","${ckJS(v.store||'')}")'`}>
+      <div class="vcard-h"><i class="fas ${info?'fa-door-open':'fa-triangle-exclamation'}" style="color:${col}"></i><b>${esc(v.category)}</b>
+        ${info?`<span class="badge" style="background:#e0f2fe;color:#0369a1">ℹ️ Not a violation</span>`:`<span class="badge ${toneOf(v.severity)}">${esc(v.severity)}</span><span class="badge ${toneOf(v.step)}">${esc(v.step||'')}</span><span class="badge ${toneOf(v.status)}">${esc(v.status)}</span>`}
         <span class="vcard-meta">👤 ${esc(v.staffName)} · 🏪 ${esc(v.store||'')} · ${esc((v.created||'').slice(0,16))}</span></div>
-      <div class="vcard-b">${esc(v.description||'')}</div></div>`).join('');
+      <div class="vcard-b">${esc(v.description||'')}${info&&v.reasonNote?`<div style="margin-top:6px;color:#0369a1">📝 Reason: ${esc(v.reasonNote)}</div>`:''}</div>
+      ${info&&vioCanManage()?`<div style="padding:0 14px 12px"><button class="btn xs" onclick="vioNotePrompt('${ckJS(v.id)}','${ckJS(v.store||'')}','${ckJS(v.staffName||'')}')"><i class="fas fa-pen"></i>&nbsp; ${v.reasonNote?'Edit reason':'Note reason'}</button></div>`:''}
+    </div>`; }).join('');
   const vRecStore=isSuper()?((State.vio&&State.vio.recStore)||'ALL'):State.branch;
   const storeFilter=isSuper()?`<div class="filter"><label>Store</label><select onchange="vioDate('recStore',this.value)">${['ALL'].concat(DB.stores||[]).map(s=>`<option value="${esc(s)}" ${vRecStore===s?'selected':''}>${s==='ALL'?'All stores':esc(s)}</option>`).join('')}</select></div>`:'';
   $('#content').innerHTML=`${vioHead('records')}
+    <div style="margin-bottom:12px">${vioTypeSeg()}</div>
     <div class="toolbar"><span class="count-chip">📋 ${recs.length} record${recs.length!==1?'s':''}</span>
       ${storeFilter}
       <div class="filter f-daterange"><label>Date</label><input type="date" value="${esc(from)}" onchange="vioDate('from',this.value)"><span>→</span><input type="date" value="${esc(to)}" onchange="vioDate('to',this.value)"></div>
@@ -209,15 +228,17 @@ function vioPerson(name){
          <div class="vio-standing-txt"><b>${esc(name)}</b><small>${st.count} active${st.total>st.count?` · ${st.total-st.count} removed`:''} · ${st.total} total</small></div></div>${vioLadderHTML(st.idx)}</div>`
     : `<div class="vio-standing good"><div class="vio-standing-h"><span class="vio-standing-badge ok">✓ Good standing</span><div class="vio-standing-txt"><b>${esc(name)}</b><small>No active violations</small></div></div></div>`;
   const rows=recs.length?recs.map(r=>{
-    const act=vioIsActive(r);
-    return `<div class="vp-row ${act?'':'off'}">
-      <span class="badge ${toneOf(r.severity)}">${esc(r.severity||'')}</span>
-      <div class="vp-main"><b>${esc(r.category||'Violation')}</b><small>${esc((r.created||'').slice(0,16))} · logged as ${esc(r.step||'—')}${act?'':` · <i>${esc(r.status)}</i>`}${!act&&r.removeReason?` · <span style="color:#64748b">reason: ${esc(r.removeReason)}</span>`:''}</small>
+    const act=vioIsActive(r), info=vioIsInfo(r);
+    return `<div class="vp-row ${act&&!info?'':'off'}">
+      <span class="badge ${info?'':toneOf(r.severity)}"${info?' style="background:#e0f2fe;color:#0369a1"':''}>${info?'info':esc(r.severity||'')}</span>
+      <div class="vp-main"><b>${esc(r.category||'Violation')}</b><small>${esc((r.created||'').slice(0,16))}${info?' · not a violation':` · logged as ${esc(r.step||'—')}${act?'':` · <i>${esc(r.status)}</i>`}`}${!info&&!act&&r.removeReason?` · <span style="color:#64748b">reason: ${esc(r.removeReason)}</span>`:''}${info&&r.reasonNote?` · <span style="color:#0369a1">note: ${esc(r.reasonNote)}</span>`:''}</small>
         ${r.description?`<div class="vp-desc">${esc(r.description)}</div>`:''}</div>
-      ${vioCanManage()?(act
-        ? `<button class="btn xs" style="color:var(--bad);border-color:#f3c9c9" onclick="vioRemovePrompt('${ckJS(r.id)}','${ckJS(r.store||'')}','${ckJS(name)}')">Remove</button>`
-        : `<button class="btn xs" onclick="vioSetStatus('${ckJS(r.id)}','${ckJS(r.store||'')}','restore','${ckJS(name)}')">Restore</button>`):''}
-    </div>`; }).join(''):'<div class="empty">No violations on record.</div>';
+      ${vioCanManage()?(info
+        ? `<button class="btn xs" onclick="vioNotePrompt('${ckJS(r.id)}','${ckJS(r.store||'')}','${ckJS(name)}')">${r.reasonNote?'Edit reason':'📝 Note reason'}</button>`
+        : (act
+          ? `<button class="btn xs" style="color:var(--bad);border-color:#f3c9c9" onclick="vioRemovePrompt('${ckJS(r.id)}','${ckJS(r.store||'')}','${ckJS(name)}')">Remove</button>`
+          : `<button class="btn xs" onclick="vioSetStatus('${ckJS(r.id)}','${ckJS(r.store||'')}','restore','${ckJS(name)}')">Restore</button>`)):''}
+    </div>`; }).join(''):'<div class="empty">No records.</div>';
   mcqModal(`⚖️ ${esc(name)} — violation record`, `${head}
     <div class="vp-note fhint" style="margin:10px 0">Standing is based on <b>active</b> violations. Removing one (reason accepted) lowers the level automatically.</div>
     <div class="vp-list">${rows}</div>`, {wide:true});
@@ -264,6 +285,54 @@ function vioSetStatus(id,store,status,name,reason){
 function vioLookup(){ const el=document.getElementById('vio-lookup'); const n=el&&el.value.trim(); if(n&&!n.startsWith('—')) vioPerson(n); else toast('Pick a staff member first'); }
 window.vioPerson=vioPerson; window.vioSetStatus=vioSetStatus; window.vioLookup=vioLookup;
 window.vioRemovePrompt=vioRemovePrompt; window.vioConfirmRemove=vioConfirmRemove;
+
+/* ---- type filter (Clock-in late / Clock-out late / Other violations) ---- */
+function vioSetType(t){ State.vio=State.vio||{}; State.vio.type=t; renderViolation(); }              // stay on current tab
+function vioTypeGo(t){ State.vio=State.vio||{}; State.vio.type=t; State.vio.tab='records'; renderViolation(); }   // jump to Records filtered
+function vioTypeSeg(){
+  const t=(State.vio&&State.vio.type)||'all';
+  const b=(k,lb)=>`<button class="seg-btn ${t===k?'active':''}" onclick="vioSetType('${k}')">${lb}</button>`;
+  return `<div class="seg seg-light">${b('all','📋 All')}${b('clockin','🕐 Clock-in late')}${b('clockout','🚪 Clock-out late')}${b('manual','⚠️ Other')}</div>`;
+}
+function vioTypeTile(type,ic,color,lbl,sub,n){
+  return `<button class="vio-typetile" onclick="vioTypeGo('${type}')" style="text-align:left;background:var(--card,#fff);border:1.5px solid var(--line);border-left:5px solid ${color};border-radius:12px;padding:12px 14px;cursor:pointer;display:flex;flex-direction:column;gap:2px;box-shadow:var(--shadow)">
+    <div style="display:flex;align-items:center;gap:8px"><span style="font-size:18px">${ic}</span><b style="font-size:22px;color:${color}">${n}</b></div>
+    <div style="font-weight:800;font-size:12.5px">${esc(lbl)}</div><div style="font-size:11px;color:var(--muted)">${esc(sub)}</div></button>`;
+}
+window.vioSetType=vioSetType; window.vioTypeGo=vioTypeGo;
+
+/* ---- Clock-out late is NOT a violation: no Remove, only a required "reason note" (kept for the report) ---- */
+function vioNotePrompt(id,store,name){
+  const recs=(((DB.modules||{}).violation||{}).records||[]);
+  const r=recs.find(x=>x.id===id&&(!store||x.store===store)); if(!r) return;
+  mcqModal('📝 Note reason — Late clock-out', `
+    <div class="rail-tip" style="margin-bottom:12px">Clocking out late is <b>not a violation</b> and this record stays on file. Add <b>${esc(name)}</b>'s reason (why they clocked out late) — it is kept for the report.</div>
+    <div class="vp-desc" style="margin:0 0 12px;background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:10px">
+      <b>${esc(r.category||'Late clock-out')}</b> · ${esc((r.created||'').slice(0,16))}${r.description?`<div style="margin-top:4px;color:#64748b">${esc(r.description)}</div>`:''}</div>
+    <label class="field"><span style="font-weight:800">Employee's reason <span class="req">*</span></span>
+      <textarea id="vio-note-reason" rows="3" placeholder="e.g. Served a late customer · helped close · manager asked to stay back" oninput="var b=document.getElementById('vio-note-go'); if(b){ b.disabled=!this.value.trim(); b.style.opacity=this.value.trim()?'1':'.5'; }" style="width:100%;margin-top:5px">${esc(r.reasonNote||'')}</textarea></label>
+    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+      <button class="btn" onclick="mcqModalClose()">Cancel</button>
+      <button class="btn primary" id="vio-note-go" ${r.reasonNote?'':'disabled'} style="background:#0891b2;border-color:#0891b2;color:#fff${r.reasonNote?'':';opacity:.5'}" onclick="vioConfirmNote('${ckJS(id)}','${ckJS(store||'')}','${ckJS(name)}')"><i class="fas fa-pen"></i>&nbsp; Save reason</button>
+    </div>`, {});
+  setTimeout(()=>{ var t=document.getElementById('vio-note-reason'); if(t) t.focus(); }, 60);
+}
+function vioConfirmNote(id,store,name){
+  var el=document.getElementById('vio-note-reason'); var reason=(el&&el.value||'').trim();
+  if(!reason){ toast('Please enter the reason'); if(el) el.focus(); return; }
+  const recs=(((DB.modules||{}).violation||{}).records||[]);
+  const r=recs.find(x=>x.id===id&&(!store||x.store===store)); if(!r) return;
+  const before=JSON.parse(JSON.stringify(r));
+  r.reasonNote=reason;
+  r.notedBy=(State.account&&(State.account.name||State.account.staffName))||'Manager';
+  r.notedAt=(typeof perthDT==='function')?perthDT():'';
+  auditLog('update','violation',r.id,r.store,before,r,'clock-out reason noted: '+reason);
+  if(window.persist) window.persist();
+  toast('📝 Reason saved');
+  if(name) vioPerson(name);
+  if(State.route&&State.route.mod==='violation') renderViolation();
+}
+window.vioNotePrompt=vioNotePrompt; window.vioConfirmNote=vioConfirmNote;
 
 /* ============================================================ TRAINING ASSESSMENT */
 const TRN_RATINGS=[['Excellent','#2E7D32','#E8F5E9'],['Good','#1565C0','#E3F2FD'],['Satisfactory','#F57C00','#FFF3E0'],['Needs work','#C62828','#FDECEA']];
