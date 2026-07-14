@@ -107,6 +107,9 @@ def login():
                        % (res['wrong_tab'], res['wrong_tab'])), 401
     if isinstance(res, dict) and res.get('need_id'):
         return jsonify(ok=False, error='Managers & Department Leads now sign in with their personal ID + password. Enter your 4-digit ID. No account yet? Ask Head Office to set up your access.'), 401
+    if isinstance(res, dict) and res.get('archived'):
+        db.login_note_fail(ip, lid); time.sleep(0.4)
+        return jsonify(ok=False, error='This account has been archived — please contact your manager or Head Office to restore access.'), 403
     if not res:
         db.login_note_fail(ip, lid); time.sleep(0.4)   # slow down scripted guessing
         return jsonify(ok=False, error='Invalid credentials'), 401

@@ -345,6 +345,27 @@ def login_note_ok(ip, login_id):
     finally:
         conn.close()
 
+def _staff_archived(conn, store, staff_id):
+    """True if the linked staff profile has been archived / made inactive in Staff Management —
+    an archived person is BLOCKED from logging in (archive = access revoked)."""
+    if not staff_id or not store: return False
+    row = conn.execute('SELECT data_json FROM staff WHERE store_id=? AND id=?', (store, str(staff_id))).fetchone()
+    if not row: return False
+    try: d = json.loads(row['data_json'] or '{}')
+    except Exception: return False
+    return bool(d.get('archived') or d.get('active') == 0)
+
+def _revoke_person_tokens(conn, store, staff_id):
+    """Log an archived person out everywhere — their staff-numeric session AND any linked account
+    session — so archiving takes effect immediately, not just on their next login attempt."""
+    sid = str(staff_id)
+    try:
+        conn.execute('DELETE FROM tokens WHERE store_id=? AND staff_id=?', (store, sid))
+        for a in conn.execute('SELECT id FROM accounts WHERE store_id=? AND staff_id=?', (store, sid)).fetchall():
+            conn.execute('DELETE FROM tokens WHERE account_id=?', (a['id'],))
+    except Exception:
+        pass
+
 def verify_login(mode, store, pw, login_id=None):
     """Returns (role, store_id[, meta]) on success or None. store_id is 'ALL' for super.
     The login form has NO role tabs any more — credentials are self-identifying:
@@ -363,6 +384,7 @@ def verify_login(mode, store, pw, login_id=None):
             # password IS the identity — try staff numeric first (most common), then masters
             row = conn.execute('SELECT store_id, staff_id, staff_name FROM staff_accounts WHERE password=?', (p,)).fetchone()
             if row and row['store_id'] in STORES:
+                if _staff_archived(conn, row['store_id'], row['staff_id']): return {'archived': True}
                 return ('employee', row['store_id'], {'staff_id': row['staff_id'], 'staff_name': row['staff_name']})
             row = conn.execute("SELECT password_hash FROM users WHERE role='super'").fetchone()
             if row and row['password_hash'] == hash_pw(p): return ('super', 'ALL')
@@ -379,6 +401,7 @@ def verify_login(mode, store, pw, login_id=None):
         if mode == 'employee':
             row = conn.execute('SELECT store_id, staff_id, staff_name FROM staff_accounts WHERE password=?', (p,)).fetchone()
             if not row or row['store_id'] not in STORES: return None
+            if _staff_archived(conn, row['store_id'], row['staff_id']): return {'archived': True}
             return ('employee', row['store_id'], {'staff_id': row['staff_id'], 'staff_name': row['staff_name']})
         if mode in ('admin', 'staff'):
             return {'need_id': True}
@@ -744,6 +767,8 @@ def apply_store_config(store_id, cfg, user=None):
                         sid = own[0]; s = dict(s); s['id'] = sid; s['archived'] = 0; s['active'] = 1
                     email_owner[e] = (sid, bool(s.get('archived') or s.get('active') == 0))
                 conn.execute('INSERT INTO staff(id,store_id,data_json) VALUES(?,?,?) ON CONFLICT (store_id,id) DO UPDATE SET data_json=excluded.data_json', (sid, store_id, json.dumps(s)))
+                if bool(s.get('archived') or s.get('active') == 0):
+                    _revoke_person_tokens(conn, store_id, sid)   # Super archiving via Store Config also blocks/logs out
                 n += 1
             _sync_accounts_from_staff(conn, store_id)
             out['staff'] = n
@@ -1190,6 +1215,7 @@ def account_login(login_id, pw, mode=None):
             return ('super', 'ALL', meta)
         store = a['store_id']
         if not store or store not in STORES: return None
+        if _staff_archived(conn, store, a['staff_id']): return {'archived': True}   # archived person → access revoked
         return (a['role'], store, meta)
     finally:
         conn.close()
@@ -2289,6 +2315,8 @@ def save_state(store_id, state, user, client=None):
                     arch = bool(isinstance(s, dict) and (s.get('archived') or s.get('active') == 0))
                     email_owner[e] = (sid, arch)
                 conn.execute('INSERT INTO staff(id,store_id,data_json) VALUES(?,?,?) ON CONFLICT (store_id,id) DO UPDATE SET data_json=excluded.data_json', (sid, store_id, json.dumps(s)))
+                if bool(isinstance(s, dict) and (s.get('archived') or s.get('active') == 0)):
+                    _revoke_person_tokens(conn, store_id, sid)   # archive = log them out + block re-login
             _sync_accounts_from_staff(conn, store_id)   # staff edits flow back to Account Management
         # checklist submissions (merge/upsert)
         subs = _parse(state.get('checklistSubs'))
