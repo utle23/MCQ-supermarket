@@ -1488,10 +1488,70 @@ def can_download_file(au, file_id):
     finally:
         conn.close()
 
+def _submission_photo_ids(data_json):
+    """Every DURABLE photo id a checklist submission references (item photos, verify photos,
+    per-task manager photos). data-URIs / blobs are ignored — they aren't Cloudinary assets."""
+    ids = set()
+    try: d = json.loads(data_json or '{}')
+    except Exception: return ids
+    if not isinstance(d, dict): return ids
+    def _collect(arr):
+        for p in (arr or []):
+            if isinstance(p, str) and p and not p.startswith('data:') and not p.startswith('blob:'):
+                ids.add(p)
+    for it in (d.get('items') or []):
+        if isinstance(it, dict):
+            _collect(it.get('photos'))
+    _collect(d.get('verifyPhotos'))
+    tp = d.get('taskPhotos')
+    if isinstance(tp, dict):
+        for arr in tp.values(): _collect(arr)
+    return ids
+
+def _photo_row_delete(conn, store, pid):
+    """Delete ONE photo everywhere: its Cloudinary asset + local file + the photos row.
+    Returns True if a photos row existed for that pid."""
+    row = conn.execute('SELECT filename, cloud FROM photos WHERE id=? AND store_id=?', (pid, store)).fetchone()
+    if not row: return False
+    cloud = row['cloud'] if 'cloud' in row.keys() else None
+    if cloud:
+        try:
+            import cloudstore
+            if cloudstore.ENABLED: cloudstore.delete_photo(cloud)   # frees the Cloudinary asset (storage/credits)
+        except Exception: pass
+    try:
+        folder = ''.join(c if c.isalnum() else '-' for c in str(store).lower())
+        os.remove(os.path.join(UPLOADS, folder, row['filename']))
+    except Exception: pass
+    conn.execute('DELETE FROM photos WHERE id=? AND store_id=?', (pid, store))
+    return True
+
+def gc_submission_photos(store, candidate_pids):
+    """After some submissions are deleted, free each of their photos (Cloudinary + file + row)
+    that is NO LONGER referenced by any REMAINING submission in the store — so deleting a
+    submission frees its Cloudinary photos (storage/credits) without breaking a photo still used
+    elsewhere. Call AFTER the submission rows have been deleted (& committed)."""
+    cand = {p for p in (candidate_pids or []) if p}
+    if not cand: return 0
+    conn = connect()
+    try:
+        referenced = set()
+        for r in conn.execute('SELECT data_json FROM checklist_submissions WHERE store_id=?', (store,)).fetchall():
+            dj = r['data_json'] or ''
+            for pid in cand:
+                if pid not in referenced and pid in dj: referenced.add(pid)
+        n = 0
+        for pid in (cand - referenced):
+            if _photo_row_delete(conn, store, pid): n += 1
+        conn.commit()
+        return n
+    finally:
+        conn.close()
+
 def cleanup_old(store, before, kinds):
     """Delete NON-critical data older than `before` (YYYY-MM-DD): photos (incl. files on disk),
-    checklist submissions, cleaning/maintenance history, bin records. Important data
-    (records, staff, audit logs, messages) is never touched."""
+    checklist submissions (+ their Cloudinary photos), cleaning/maintenance history, bin records.
+    Important data (records, staff, audit logs, messages) is never touched."""
     counts = {}
     conn = connect()
     try:
@@ -1514,16 +1574,29 @@ def cleanup_old(store, before, kinds):
             # bumped to the verify time when a checklist is verified, so an old checklist verified
             # recently would otherwise survive an "older than" cleanup (the bug users hit).
             before10 = str(before)[:10]
-            del_ids = []
+            del_ids = []; del_pids = set()
             for r in conn.execute('SELECT id, data_json, created_at FROM checklist_submissions WHERE store_id=?', (store,)).fetchall():
                 try: eff = str((json.loads(r['data_json'] or '{}') or {}).get('date') or '')[:10]
                 except Exception: eff = ''
                 if not eff: eff = str(r['created_at'] or '')[:10]
-                if eff and eff < before10: del_ids.append(r['id'])
+                if eff and eff < before10:
+                    del_ids.append(r['id']); del_pids |= _submission_photo_ids(r['data_json'])
             for i in range(0, len(del_ids), 400):
                 chunk = del_ids[i:i+400]
                 conn.execute('DELETE FROM checklist_submissions WHERE store_id=? AND id IN (%s)' % ','.join('?' * len(chunk)), [store] + chunk)
             counts['checklistSubs'] = len(del_ids)
+            # free the deleted submissions' Cloudinary photos (only those no longer referenced by a
+            # REMAINING submission). Reads on this same connection already see the deletes above.
+            if del_pids:
+                referenced = set()
+                for r in conn.execute('SELECT data_json FROM checklist_submissions WHERE store_id=?', (store,)).fetchall():
+                    dj = r['data_json'] or ''
+                    for pid in del_pids:
+                        if pid not in referenced and pid in dj: referenced.add(pid)
+                freed = 0
+                for pid in (del_pids - referenced):
+                    if _photo_row_delete(conn, store, pid): freed += 1
+                if freed: counts['photos'] = counts.get('photos', 0) + freed
         if 'scheduleHistory' in kinds:
             n = conn.execute('SELECT COUNT(*) c FROM schedule_history WHERE store_id=? AND created_at<?', (store, cut)).fetchone()['c']
             conn.execute('DELETE FROM schedule_history WHERE store_id=? AND created_at<?', (store, cut))

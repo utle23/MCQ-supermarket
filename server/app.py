@@ -1146,7 +1146,8 @@ def delete_records():
     scope = '' if all_stores else ' store_id=?'
     base = [] if all_stores else [store]
     conn = db.connect()
-    tomb = []   # (store_id, id) pairs to tombstone so a stale device can't re-add them
+    tomb = []          # (store_id, id) pairs to tombstone so a stale device can't re-add them
+    sub_photos = {}    # store -> {photo pids} of the submissions being deleted → free their Cloudinary assets
     try:
         # collect the (store_id, id) of the rows being deleted FIRST — so a stale device that
         # still holds them in its blob can't resurrect them on its next save (records + staff)
@@ -1161,6 +1162,19 @@ def delete_records():
                     cond = (scope + ' AND' if scope else '') + ' id IN (' + ','.join('?'*len(chunk)) + ')'
                     sel += conn.execute('SELECT store_id,id FROM ' + table + ' WHERE' + cond, base + chunk).fetchall()
             tomb = [(r['store_id'], r['id']) for r in sel]
+        # collect the photos of the submissions being deleted (to free them on Cloudinary after)
+        if table == 'checklist_submissions':
+            if d.get('all'):
+                psel = conn.execute('SELECT store_id,data_json FROM checklist_submissions' + (' WHERE' + scope if scope else ''), base).fetchall()
+            else:
+                ids0 = [str(x) for x in (d.get('ids') or []) if x is not None]
+                psel = []
+                for chunk in [ids0[i:i+400] for i in range(0, len(ids0), 400)]:
+                    if not chunk: continue
+                    cond = (scope + ' AND' if scope else '') + ' id IN (' + ','.join('?'*len(chunk)) + ')'
+                    psel += conn.execute('SELECT store_id,data_json FROM checklist_submissions WHERE' + cond, base + chunk).fetchall()
+            for r in psel:
+                sub_photos.setdefault(r['store_id'], set()).update(db._submission_photo_ids(r['data_json']))
         if d.get('all'):
             conn.execute('DELETE FROM ' + table + (' WHERE' + scope if scope else ''), base)
         else:
@@ -1174,6 +1188,9 @@ def delete_records():
         conn.close()
     if tomb:
         try: db.tombstone_records(tomb)   # make record deletions final across all devices
+        except Exception: pass
+    for _st, _pids in sub_photos.items():
+        try: db.gc_submission_photos(_st, _pids)   # free the deleted submissions' Cloudinary photos
         except Exception: pass
     db.write_audit(uid(au), store, 'delete', table, 'ALL' if d.get('all') else ','.join((d.get('ids') or [])[:5]), None, None)
     return jsonify(ok=True)
