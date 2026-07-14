@@ -626,8 +626,9 @@ def _next_staff_id(conn):
 def _ensure_staff_for_account(conn, acct):
     """Account Management is a source of truth for PEOPLE: every non-super account must have a
     live staff profile in ITS store — Staff Management, pickers and birthdays all read staff.
-    Finds the profile (linked staff_id, else email match in the store), refreshes its
-    name/email/department from the account and un-archives it; creates it when missing.
+    Finds the profile (linked staff_id, else email match in the store) and refreshes its
+    name/email; department, job title and archived/active stay owned by Staff Management (only
+    filled when empty, never overwritten). Creates the profile when missing.
     Caller commits. Returns the staff id, or None when the account has no valid store."""
     a = dict(acct) if not isinstance(acct, dict) else acct
     role = a.get('role') or 'employee'
@@ -649,13 +650,15 @@ def _ensure_staff_for_account(conn, acct):
         except Exception: d = {}
         if name: d['name'] = name
         if email: d['email'] = email
-        if dept: d['dept'] = dept
-        # keep a real roster job title; only fill from the access level when empty, or when
-        # the account is leadership (Manager / Dept Lead) — that SHOULD show in Staff Management
-        if role in ('admin', 'staff') or not str(d.get('role') or '').strip():
+        # department, job title and archived/active are OWNED by Staff Management (the manager
+        # edits them there). Only FILL them when empty — NEVER overwrite an existing value, and
+        # never auto-un-archive — otherwise a manager's role/department edit or archive would be
+        # silently reverted the next time this account logs in / is touched (the reported bug).
+        if dept and not str(d.get('dept') or '').strip(): d['dept'] = dept
+        if not str(d.get('role') or '').strip():
             d['role'] = STAFF_TITLE.get(role, 'Team Member')
             if not str(d.get('classification') or '').strip(): d['classification'] = d['role']
-        d['active'] = 1; d['archived'] = 0; d['store'] = store; d['id'] = row['id']
+        d['store'] = store; d['id'] = row['id']
         conn.execute('UPDATE staff SET data_json=? WHERE store_id=? AND id=?',
                      (json.dumps(d), store, row['id']))
         if str(a.get('staff_id') or '') != str(row['id']) and a.get('id'):
