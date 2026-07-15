@@ -109,12 +109,12 @@ function vioRecords(){
   setCrumb('⚠️','Violation Rules','All records');
   const from=State.vio&&State.vio.from||'', to=State.vio&&State.vio.to||'';
   const recs=vioFilteredRecs();
-  const list=recs.map(v=>{ const info=vioIsInfo(v), col=info?'#0891b2':sevColor(v.severity);
-    return `<div class="card vcard${info?' vcard-info':''}" style="--rc:${col}" ${info?'':`onclick='openDetail("violation","${esc(v.id)}","${ckJS(v.store||'')}")'`}>
-      <div class="vcard-h"><i class="fas ${info?'fa-door-open':'fa-triangle-exclamation'}" style="color:${col}"></i><b>${esc(v.category)}</b>
-        ${info?`<span class="badge" style="background:#e0f2fe;color:#0369a1">ℹ️ Not a violation</span>`:`<span class="badge ${toneOf(v.severity)}">${esc(v.severity)}</span><span class="badge ${toneOf(v.step)}">${esc(v.step||'')}</span><span class="badge ${toneOf(v.status)}">${esc(v.status)}</span>`}
+  const list=recs.map(v=>{ const info=vioIsInfo(v), removed=!info&&!vioIsActive(v), col=info?'#0891b2':(removed?'#94a3b8':sevColor(v.severity));
+    return `<div class="card vcard${info?' vcard-info':''}${removed?' vcard-removed':''}" style="--rc:${col}${removed?';opacity:.72':''}" ${info?'':`onclick='openDetail("violation","${esc(v.id)}","${ckJS(v.store||'')}")'`}>
+      <div class="vcard-h"><i class="fas ${info?'fa-door-open':(removed?'fa-ban':'fa-triangle-exclamation')}" style="color:${col}"></i><b style="${removed?'text-decoration:line-through;text-decoration-color:#cbd5e1':''}">${esc(v.category)}</b>
+        ${info?`<span class="badge" style="background:#e0f2fe;color:#0369a1">ℹ️ Not a violation</span>`:(removed?`<span class="badge" style="background:#e2e8f0;color:#475569;font-weight:800">🚫 ${esc(String(v.status||'Removed'))}</span>`:`<span class="badge ${toneOf(v.severity)}">${esc(v.severity)}</span><span class="badge ${toneOf(v.step)}">${esc(v.step||'')}</span><span class="badge ${toneOf(v.status)}">${esc(v.status)}</span>`)}
         <span class="vcard-meta">👤 ${esc(v.staffName)} · 🏪 ${esc(v.store||'')} · ${esc((v.created||'').slice(0,16))}</span></div>
-      <div class="vcard-b">${esc(v.description||'')}${info&&v.reasonNote?`<div style="margin-top:6px;color:#0369a1">📝 Reason: ${esc(v.reasonNote)}</div>`:''}</div>
+      <div class="vcard-b">${esc(v.description||'')}${info&&v.reasonNote?`<div style="margin-top:6px;color:#0369a1">📝 Reason: ${esc(v.reasonNote)}</div>`:''}${removed&&v.removeReason?`<div style="margin-top:6px;color:#64748b">🚫 Removed reason: ${esc(v.removeReason)}${v.removedBy?' · by '+esc(v.removedBy):''}</div>`:''}</div>
       ${info&&vioCanManage()?`<div style="padding:0 14px 12px"><button class="btn xs" onclick="vioNotePrompt('${ckJS(v.id)}','${ckJS(v.store||'')}','${ckJS(v.staffName||'')}')"><i class="fas fa-pen"></i>&nbsp; ${v.reasonNote?'Edit reason':'Note reason'}</button></div>`:''}
     </div>`; }).join('');
   const vRecStore=isSuper()?((State.vio&&State.vio.recStore)||'ALL'):State.branch;

@@ -2587,7 +2587,14 @@ function staffSave(ed){
   if(window.persist) window.persist();
   State.staffEdit=null; toast('✓ Staff saved'); renderStaff();
 }
-function staffDelete(id){ if(!confirm('Delete this staff member permanently?\n\nTip: use 🗄 Archive instead if they might come back — everything is kept and one click restores them.')) return; const i=DB.staff.findIndex(x=>x.id===id); if(i>=0 && !recordInScope(DB.staff[i])){ toast('This staff member belongs to another store'); return; } if(i>=0){ const before=JSON.parse(JSON.stringify(DB.staff[i])); auditLog('delete','staff',before.id,before.store,before,null); DB.staff.splice(i,1); if(window.mcqDeleteRecords) mcqDeleteRecords('staff',[before.id],isSuper()?{store:before.store}:null); } if(window.persist) window.persist(); State.staffEdit=null; toast('🗑 Staff deleted'); renderStaff(); }
+function staffDelete(id){ if(!confirm('Delete this staff member permanently?\n\nTheir violations are deleted too.\n\nTip: use 🗄 Archive instead if they might come back — everything is kept and one click restores them.')) return; const i=DB.staff.findIndex(x=>x.id===id); if(i>=0 && !recordInScope(DB.staff[i])){ toast('This staff member belongs to another store'); return; } if(i>=0){ const before=JSON.parse(JSON.stringify(DB.staff[i])); auditLog('delete','staff',before.id,before.store,before,null); DB.staff.splice(i,1); if(window.mcqDeleteRecords) mcqDeleteRecords('staff',[before.id],isSuper()?{store:before.store}:null);
+    // cascade: this person's violations disappear with them (matched by name within their store)
+    try{ const vm=DB.modules&&DB.modules.violation; if(vm&&Array.isArray(vm.records)){
+      const nm=String(before.name||'').trim().toLowerCase();
+      const vids=vm.records.filter(r=>String(r.staffName||'').trim().toLowerCase()===nm && r.store===before.store).map(r=>r.id).filter(Boolean);
+      if(vids.length){ vm.records=vm.records.filter(r=>!vids.includes(r.id)); if(window.mcqDeleteRecords) mcqDeleteRecords('records',vids,{store:before.store}); auditLog('delete','violation',vids.join(','),before.store,{count:vids.length,staff:before.name},null); }
+    } }catch(e){}
+  } if(window.persist) window.persist(); State.staffEdit=null; toast('🗑 Staff deleted'); renderStaff(); }
 // archive = hide the person everywhere but KEEP the record — restore brings them straight back
 function staffArchive(id){
   const s=DB.staff.find(x=>x.id===id); if(!s) return;
