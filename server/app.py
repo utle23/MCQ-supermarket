@@ -400,6 +400,38 @@ def cron_deputy_late():
     except Exception as e:
         return jsonify(ok=False, error=str(e)[:300]), 500
 
+@api.route('/api/deputy/raw', methods=['GET'])
+def deputy_raw():
+    """Super-only debug: dump the RAW Deputy timesheet fields for a date so we can see whether the
+    true (un-capped) clock-out punch is available in some field, or whether Deputy rounds the finish
+    to the roster. ?date=YYYY-MM-DD (default today) & ?limit=N (default 6)."""
+    au = require_auth()
+    if au['role'] != 'super': abort(403)
+    host, token = db.deputy_cfg()
+    if not host or not token: return jsonify(ok=False, error='Deputy not configured')
+    date = request.args.get('date') or db.now()[:10]
+    limit = min(int(request.args.get('limit') or 6), 20)
+    q = {'search': {'d': {'field': 'Date', 'type': 'eq', 'data': date}}, 'join': ['OperationalUnitObject'], 'max': 500}
+    req = urllib.request.Request(host + '/api/v1/resource/Timesheet/QUERY', data=json.dumps(q).encode(),
+        headers={'Authorization': 'OAuth ' + token, 'Content-Type': 'application/json', 'Accept': 'application/json'}, method='POST')
+    rows = json.loads(urllib.request.urlopen(req, timeout=25, context=_TLS).read().decode())
+    if not isinstance(rows, list): return jsonify(ok=False, error='unexpected Deputy response')
+    out = []
+    for t in rows[:limit]:
+        if not isinstance(t, dict): continue
+        # every scalar field + a Roster fetch so we can compare finish vs roster end
+        flat = {k: v for k, v in t.items() if not isinstance(v, (dict, list))}
+        ro = {}
+        if t.get('Roster'):
+            try:
+                rr = urllib.request.Request(host + '/api/v1/resource/Roster/' + str(t['Roster']),
+                    headers={'Authorization': 'OAuth ' + token, 'Accept': 'application/json'})
+                rj = json.loads(urllib.request.urlopen(rr, timeout=15, context=_TLS).read().decode())
+                ro = {k: rj.get(k) for k in ('StartTime', 'EndTime', 'StartTimeLocalized', 'EndTimeLocalized')}
+            except Exception: pass
+        out.append({'timesheet_fields': flat, 'roster': ro})
+    return jsonify(ok=True, date=date, count=len(rows), samples=out)
+
 @api.route('/api/deputy/status', methods=['GET'])
 def deputy_status():
     """Deputy attendance monitor health + today's numbers. Super sees every store (plus a
