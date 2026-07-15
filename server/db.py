@@ -1850,6 +1850,27 @@ def record_attendance(ev):
     finally:
         conn.close()
 
+def attendance_clockout(ts_id):
+    """The recorded clock-out row for a Deputy timesheet (or None). Lets the poll notice when
+    Deputy replaces the rostered-placeholder finish with the real punch, and re-evaluate lateness."""
+    if not ts_id: return None
+    conn = connect()
+    try:
+        r = conn.execute("SELECT scheduled_end, actual_end, over_min FROM attendance WHERE ts_id=? AND event='clockout' ORDER BY id DESC LIMIT 1", (str(ts_id),)).fetchone()
+        return dict(r) if r else None
+    finally:
+        conn.close()
+
+def update_clockout(ts_id, scheduled_end, actual_end, over_min):
+    """Update a recorded clock-out to Deputy's latest finish (real punch) + recomputed over_min."""
+    conn = connect()
+    try:
+        conn.execute("UPDATE attendance SET scheduled_end=?, actual_end=?, over_min=? WHERE ts_id=? AND event='clockout'",
+                     (scheduled_end, actual_end, int(over_min or 0), str(ts_id)))
+        conn.commit()
+    finally:
+        conn.close()
+
 def attendance_stats(store, staff_id):
     conn = connect()
     try:

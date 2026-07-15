@@ -349,8 +349,14 @@ def _deputy_poll():
         actual_end = db._to_epoch(t.get('EndTime'))
         if not ts_id or not actual_start: continue
         need_in = not db.attendance_seen(ts_id, 'clockin')
-        need_out = bool(actual_end) and not db.attendance_seen(ts_id, 'clockout')
-        if not need_in and not need_out: seen += 1; continue
+        co_rec = db.attendance_clockout(ts_id) if actual_end else None
+        need_out = bool(actual_end) and co_rec is None
+        # Deputy pre-fills EndTime with the ROSTERED end while a shift is still open, then swaps in
+        # the REAL punch once the person clocks out. So a clock-out first seen at the rostered time
+        # (over_min 0) must be RE-EVALUATED when Deputy's EndTime later changes — otherwise a genuine
+        # late clock-out is recorded as on-time and never corrected (the bug: no Late clock-out data).
+        co_changed = bool(actual_end) and co_rec is not None and int(co_rec.get('actual_end') or 0) != int(actual_end)
+        if not need_in and not need_out and not co_changed: seen += 1; continue
         email, dep_name = _deputy_employee_email(host, token, t.get('Employee'))
         ou = t.get('OperationalUnitObject') if isinstance(t.get('OperationalUnitObject'), dict) else {}
         dept_name = str(ou.get('OperationalUnitName') or '')
@@ -375,17 +381,24 @@ def _deputy_poll():
                 late_n += 1
                 try: _deputy_late_effects(m, ev, res, dept_name=dept_name, loc_name=loc_name)
                 except Exception: pass
-        if need_out:
+        if need_out or co_changed:
             over = max(0, round((actual_end - sched_end) / 60)) if sched_end else 0
             ev = {'ts_id': ts_id, 'event': 'clockout', 'store_id': m['store'], 'staff_id': m['id'],
                   'staff_name': m['name'], 'deputy_employee': str(t.get('Employee') or ''),
                   'scheduled_start': sched_start, 'actual_start': actual_start,
                   'scheduled_end': sched_end, 'actual_end': actual_end, 'late_min': 0, 'over_min': over}
-            db.record_attendance(ev)
+            if need_out:
+                db.record_attendance(ev)
+            else:                                   # Deputy updated the finish → correct the record
+                db.update_clockout(ts_id, sched_end, actual_end, over)
             processed += 1
-            if over > db.LATE_GRACE_MIN:   # late clock-out → silent NON-violation record (management-only), no employee notice
+            # late clock-out → silent NON-violation record, ONCE per timesheet (dedup marker) so a
+            # re-evaluation doesn't create duplicates
+            if over > db.LATE_GRACE_MIN and not db.get_setting('lateout:' + ts_id):
                 over_n += 1
-                try: _deputy_late_clockout(m, ev, dept_name=dept_name, loc_name=loc_name)
+                try:
+                    _deputy_late_clockout(m, ev, dept_name=dept_name, loc_name=loc_name)
+                    db.set_setting('lateout:' + ts_id, 1)
                 except Exception: pass
     return {'processed': processed, 'late': late_n, 'overtime_reminders': over_n,
             'already_seen': seen, 'skipped_unmatched': skipped, 'timesheets': len(rows), 'date': today}
