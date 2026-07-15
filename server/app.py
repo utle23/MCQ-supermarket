@@ -275,11 +275,12 @@ def _deputy_late_effects(m, ev, res, dept_name='', loc_name=''):
         except Exception: pass
     return rec['id']
 
-def _deputy_late_clockout(m, ev, dept_name='', loc_name=''):
+def _deputy_late_clockout(m, ev, dept_name='', loc_name='', created=None):
     """Clocked out PAST the rostered finish (> LATE_GRACE_MIN) → recorded in the store's
     Violation module as a NON-violation 'Late clock-out' entry so Super/Manager can see it.
     Deliberately SILENT: no employee notification, no email, and it never counts as a strike
-    (Khoi's rule — clocking out late is not a violation, just tracked)."""
+    (Khoi's rule — clocking out late is not a violation, just tracked). `created` overrides the
+    timestamp (used by the backfill so a historical entry is dated when it actually happened)."""
     over = ev.get('over_min') or 0
     out_hm = _fmt_hm(ev.get('actual_end')) if ev.get('actual_end') else ''
     end_hm = _fmt_hm(ev.get('scheduled_end')) if ev.get('scheduled_end') else ''
@@ -287,7 +288,7 @@ def _deputy_late_clockout(m, ev, dept_name='', loc_name=''):
             % (over, (' at ' + out_hm) if out_hm else '', (' (rostered ' + end_hm + ')') if end_hm else '',
                (' · Location: ' + loc_name) if loc_name else '',
                (' · Deputy department: ' + dept_name) if dept_name else ''))
-    rec = {'id': 'ATT-OUT-' + secrets.token_hex(4).upper(), 'created': db.now()[:16],
+    rec = {'id': 'ATT-OUT-' + secrets.token_hex(4).upper(), 'created': created or db.now()[:16],
            'staffName': m.get('name') or '', 'store': m['store'], 'category': 'Late clock-out',
            'severity': 'Info', 'step': '', 'status': 'Logged', 'description': desc,
            'actionTaken': 'Automatic attendance monitor (Deputy)', 'followUpDate': '',
@@ -444,6 +445,69 @@ def deputy_raw():
             except Exception: pass
         out.append({'timesheet_fields': flat, 'roster': ro})
     return jsonify(ok=True, date=date, count=len(rows), samples=out)
+
+def _deputy_backfill(days):
+    """Re-scan the last `days` days of Deputy timesheets and, using the REAL (now-final) EndTime,
+    correct each clock-out's over_min and create any missing 'Late clock-out' record (dated when it
+    happened). Recovers late clock-outs that were first recorded at the rostered placeholder time.
+    Idempotent: dedups the Late record per timesheet via a 'lateout:<ts_id>' marker."""
+    host, token = db.deputy_cfg()
+    if not host or not token: return
+    base = time.time() + 8 * 3600
+    scanned = updated = made = 0
+    for dback in range(int(days)):
+        date = time.strftime('%Y-%m-%d', time.gmtime(base - dback * 86400))
+        try:
+            q = {'search': {'d': {'field': 'Date', 'type': 'eq', 'data': date}}, 'join': ['OperationalUnitObject'], 'max': 500}
+            req = urllib.request.Request(host + '/api/v1/resource/Timesheet/QUERY', data=json.dumps(q).encode(),
+                headers={'Authorization': 'OAuth ' + token, 'Content-Type': 'application/json', 'Accept': 'application/json'}, method='POST')
+            rows = json.loads(urllib.request.urlopen(req, timeout=25, context=_TLS).read().decode())
+        except Exception:
+            continue
+        if not isinstance(rows, list): continue
+        for t in rows:
+            if not isinstance(t, dict): continue
+            ts_id = str(t.get('Id') or '')
+            actual_end = db._to_epoch(t.get('EndTime'))
+            actual_start = db._to_epoch(t.get('StartTime'))
+            if not ts_id or not actual_end: continue
+            email, dep_name = _deputy_employee_email(host, token, t.get('Employee'))
+            m = db._match_staff_for_deputy(email, dep_name, t.get('Employee'))
+            if not m or not m.get('id'): continue
+            ou = t.get('OperationalUnitObject') if isinstance(t.get('OperationalUnitObject'), dict) else {}
+            dept_name = str(ou.get('OperationalUnitName') or ''); loc_name = str(ou.get('CompanyName') or '')
+            sched_end = None
+            if t.get('Roster'):
+                try:
+                    ro = _deputy_get(host, token, '/api/v1/resource/Roster/' + str(t['Roster']))
+                    sched_end = db._to_epoch(ro.get('EndTime'))
+                except Exception: pass
+            over = max(0, round((actual_end - sched_end) / 60)) if sched_end else 0
+            scanned += 1
+            ev = {'ts_id': ts_id, 'event': 'clockout', 'store_id': m['store'], 'staff_id': m['id'], 'staff_name': m['name'],
+                  'deputy_employee': str(t.get('Employee') or ''), 'scheduled_start': None, 'actual_start': actual_start,
+                  'scheduled_end': sched_end, 'actual_end': actual_end, 'late_min': 0, 'over_min': over}
+            co_rec = db.attendance_clockout(ts_id)
+            if co_rec is None:
+                db.record_attendance(ev); updated += 1
+            elif int(co_rec.get('actual_end') or 0) != int(actual_end) or int(co_rec.get('over_min') or 0) != over:
+                db.update_clockout(ts_id, sched_end, actual_end, over); updated += 1
+            if over > db.LATE_GRACE_MIN and not db.get_setting('lateout:' + ts_id):
+                try:
+                    _deputy_late_clockout(m, ev, dept_name=dept_name, loc_name=loc_name, created=date + ' 00:00')
+                    db.set_setting('lateout:' + ts_id, 1); made += 1
+                except Exception: pass
+    db.set_setting('deputy_backfill_result', {'scanned': scanned, 'updated': updated, 'late_records_made': made, 'days': days, 'at': db.now()[:16]})
+
+@api.route('/api/deputy/backfill', methods=['POST', 'GET'])
+def deputy_backfill():
+    """Super-only: recover historical Late clock-outs from the last N days (default 7, max 30)."""
+    au = require_auth()
+    if au['role'] != 'super': abort(403)
+    days = min(max(int(request.args.get('days') or 7), 1), 30)
+    import threading
+    threading.Thread(target=lambda: _deputy_backfill(days), daemon=True).start()
+    return jsonify(ok=True, started=True, days=days, note='Backfill running in the background — check /api/deputy/status or the Violation module in ~1-2 min.')
 
 @api.route('/api/deputy/status', methods=['GET'])
 def deputy_status():
