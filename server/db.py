@@ -1784,6 +1784,7 @@ def add_violation_record(store, rec):
     reads) — used by the automatic late-clock-in ladder."""
     conn = connect()
     try:
+        rec = dict(rec); rec.setdefault('updatedAt', int(time.time() * 1000))   # version marker for the concurrency guard
         conn.execute('INSERT INTO records(id,store_id,module,data_json,created_at) VALUES(?,?,?,?,?) ON CONFLICT (store_id,module,id) DO UPDATE SET data_json=excluded.data_json',
                      (rec['id'], store, 'violation', json.dumps(rec), now()))
         conn.commit()
@@ -2302,6 +2303,14 @@ def save_state(store_id, state, user, client=None):
         # still had the old record cached would re-upload it and "un-delete" it (records that
         # came back the next day). The tombstone makes a deletion final across all devices.
         tomb = {row['id'] for row in conn.execute('SELECT id FROM deleted_records WHERE store_id=?', (store_id,)).fetchall()}
+        # OPTIMISTIC CONCURRENCY: the version marker (updatedAt) each stored record currently has, so
+        # a STALE device can't overwrite a NEWER edit (the "status update reverts" bug). If we reject
+        # any incoming record as stale, the save is `superseded` → the saver is told to re-sync too.
+        stored_uat = {}
+        for row in conn.execute('SELECT module,id,data_json FROM records WHERE store_id=?', (store_id,)).fetchall():
+            try: stored_uat[(row['module'], str(row['id']))] = int((json.loads(row['data_json'] or '{}') or {}).get('updatedAt') or 0)
+            except Exception: pass
+        superseded = False
         modules = state.get('modules') or {}
         if isinstance(modules, dict):
             for m, arr in modules.items():
@@ -2309,6 +2318,9 @@ def save_state(store_id, state, user, client=None):
                 for i, r in enumerate(arr):
                     rid = str((isinstance(r, dict) and r.get('id')) or (str(m) + '#' + str(i)))
                     if rid in tomb: continue   # deleted → never re-add from a stale device
+                    inc_uat = int((isinstance(r, dict) and r.get('updatedAt')) or 0)
+                    if inc_uat < stored_uat.get((str(m), rid), 0):
+                        superseded = True; continue   # stale version → keep the newer stored record (no revert)
                     conn.execute('INSERT INTO records(id,store_id,module,data_json,created_at) VALUES(?,?,?,?,?) ON CONFLICT (store_id,module,id) DO UPDATE SET data_json=excluded.data_json, created_at=excluded.created_at',
                                  (rid, store_id, str(m), json.dumps(r), now()))
         # staff (merge/upsert) — ONE profile per gmail per store: a second row with an email
@@ -2441,7 +2453,10 @@ def save_state(store_id, state, user, client=None):
                             (SELECT id FROM store_state_snapshots WHERE store_id=? ORDER BY id DESC LIMIT 20)""",
                          (store_id, store_id))
         conn.commit()
-        try: emit_event('state', store_id, client)   # every OTHER device at this store re-syncs
+        # every OTHER device at this store re-syncs. When this save was SUPERSEDED (a stale record
+        # was rejected), drop the client echo so the SAVER re-syncs too — otherwise its screen keeps
+        # showing the stale value it thought it saved.
+        try: emit_event('state', store_id, None if superseded else client)
         except Exception: pass
         return len(blob)
     finally:

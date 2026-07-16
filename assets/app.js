@@ -53,6 +53,10 @@ function auditLog(action,entity,entityId,store,before,after,note){
   DB.auditLogs=DB.auditLogs||[];
   DB.auditLogs.unshift({id:makeRecordId('AUD',st),created:perthISO(),store:st,user:u.name,role:u.role,action,entity,entityId,note:note||'',changes:auditDiff(before,after)});
   if(DB.auditLogs.length>800) DB.auditLogs.length=800;
+  // OPTIMISTIC CONCURRENCY: stamp a fresh version marker on any create/edit of a record so the
+  // server can REJECT a stale device from later overwriting it (status/edit "reverts"). Stamped
+  // AFTER the diff so it never shows up as a logged change. Harmless on non-record entities.
+  try{ if(after && typeof after==='object' && !Array.isArray(after) && action!=='delete') after.updatedAt=Date.now(); }catch(e){}
 }
 function syncScopeLabel(account){
   const a=account||State.account||{};
@@ -1231,7 +1235,7 @@ function findScopedRecord(modId,id,store){
 function openDetail(modId,id,store){
   const m=DB.modules[modId]; const r=findScopedRecord(modId,id,store); if(!r) return;
   if(!recordInScope(r)){ toast('This record belongs to another store'); return; }
-  const skip=new Set(['id','created','age','photo']);
+  const skip=new Set(['id','created','age','photo','updatedAt']);
   const rows=Object.entries(r).filter(([k,v])=>!skip.has(k)&&v!==''&&v!=null).map(([k,v])=>{
     const isB=m.severities.includes(v)||m.statuses.includes(v)||TONES[v];
     return `<dt>${esc(prettyKey(k))}</dt><dd>${isB?badge(v):esc(v)}</dd>`;}).join('');
@@ -1273,7 +1277,7 @@ function reviewSave(modId,id,store){
 }
 /* admin full-edit: render an editable control for every field of the record */
 function editFields(r,m){
-  const skip=new Set(['id','created','age','icon','short','mod','photo']);
+  const skip=new Set(['id','created','age','icon','short','mod','photo','updatedAt']);
   return Object.keys(r).filter(k=>!skip.has(k)).map(k=>{
     const v=r[k]; let f={key:k,label:prettyKey(k)};
     if((m.statuses||[]).includes(v)) f.type='select',f.options=m.statuses;
