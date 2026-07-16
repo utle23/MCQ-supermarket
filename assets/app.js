@@ -538,9 +538,16 @@ function enterApp(){
   startLiveRefresh();   // Super Admin + Chú Ba see records/checklists live
   startUnreadPoll();    // inbox unread badge for every role (light GET, guarded)
   // load the GLOBAL all-stores notification recipients (every role needs it so this store's
-  // alerts also reach the head-office people who opted into "all stores")
-  try{ if(window.mcqNotifyConfig) mcqNotifyConfig().then(r=>{ if(r&&r.ok&&r.config&&Array.isArray(r.config.recipients)){ DB.notifyAll={recipients:r.config.recipients}; } }).catch(()=>{}); }catch(e){}
+  // alerts also reach the head-office people who opted into "all stores"), and keep it FRESH so a
+  // recipient added centrally (e.g. an admin email for all issue reports) reaches even long-open
+  // devices without waiting for a reload.
+  refreshNotifyConfig();
+  if(!window._notifyRefreshInit){ window._notifyRefreshInit=true;
+    setInterval(refreshNotifyConfig, 300000);   // every 5 min
+    try{ document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') refreshNotifyConfig(); }); }catch(e){}
+  }
 }
+function refreshNotifyConfig(){ try{ if(window.mcqNotifyConfig) mcqNotifyConfig().then(r=>{ if(r&&r.ok&&r.config&&Array.isArray(r.config.recipients)){ DB.notifyAll={recipients:r.config.recipients}; } }).catch(()=>{}); }catch(e){} }
 let _unreadTimer=null;
 function startUnreadPoll(){
   if(!window.mcqRefreshUnread) return;
