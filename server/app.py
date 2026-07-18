@@ -1691,6 +1691,45 @@ def _start_deputy_self_poll():
     _dep_poll_started = True
     import threading as _th
     _th.Thread(target=_deputy_self_poll_loop, daemon=True, name='deputy-self-poll').start()
+    _th.Thread(target=_auto_clean_loop, daemon=True, name='checklist-auto-clean').start()
+
+# ---------- nightly checklist auto-clean (Khoi, 2026-07-19): keep a rolling 30 days ----------
+# Deletes ONLY checklist submissions (History / Photo Review / Data read these) whose OWN date
+# is older than 30 days, plus their now-unreferenced ImageKit photos. Today is never touched —
+# the cutoff is 30 days back, and deletion is strictly `date < cutoff`. Records, staff, bin,
+# schedule history, messages, audit logs are NOT part of this job.
+CK_AUTO_KEEP_DAYS = 30
+
+def _auto_clean_once():
+    today = db.now()[:10]
+    if db.get_setting('ckclean_last') == today: return None
+    db.set_setting('ckclean_last', today)          # claim the day up-front (job is idempotent)
+    cutoff = db._days_ago_str(CK_AUTO_KEEP_DAYS)
+    total = {}
+    for s in db.STORES:
+        try:
+            for k, n in db.cleanup_old(s, cutoff, ['checklistSubs']).items():
+                total[k] = total.get(k, 0) + n
+        except Exception: pass
+    db.set_setting('ckclean_result', {'date': today, 'cutoff': cutoff, 'deleted': total, 'at': db.now()[:16]})
+    try: db.write_audit('auto-clean', 'ALL', 'cleanup', 'checklist-auto', cutoff, None, total)
+    except Exception: pass
+    return total
+
+def _auto_clean_loop():
+    import time as _time
+    _time.sleep(90)   # let the app finish booting first
+    while True:
+        try:
+            now = db.now()                      # Perth wall-clock
+            # quiet hours (from 03:00 Perth); if a deploy skips the window the next hourly
+            # check catches up the same day. try_claim_poll_slot lets ONE worker through.
+            if int(now[11:13]) >= 3 and db.get_setting('ckclean_last') != now[:10] \
+               and db.try_claim_poll_slot('ckclean_slot', 3300):
+                _auto_clean_once()
+        except Exception:
+            pass
+        _time.sleep(3600)
 
 if __name__ == '__main__':
     create_app().run(host='0.0.0.0', port=8001, debug=True)

@@ -5141,6 +5141,9 @@ function renderData(){
     <div class="card" style="margin-bottom:14px;border:1.5px solid #fecaca">
       <div class="card-head"><h3>🧹 Clean up old data</h3><span class="ch-sub">Deletes ONLY non-critical data — records, staff, audit logs & messages are never touched</span></div>
       <div class="card-pad">
+        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:8px 12px;margin-bottom:12px;font-size:12.5px;color:#166534">
+          ⚙️ <b>Automatic:</b> checklist submissions older than <b>30 days</b> are cleaned nightly (~3 AM Perth), including their cloud photos. Today's data is never touched. This tool is only needed for extra manual cleanups.
+        </div>
         <div style="display:flex;gap:14px;flex-wrap:wrap;align-items:flex-end">
           <div class="field" style="min-width:170px"><label>Delete data OLDER than</label><input type="date" id="cl-before"></div>
           ${isSuper()?`<div class="field" style="min-width:160px"><label>Store</label><select id="cl-store"><option value="ALL">🏬 All stores</option>${DB.stores.map(s=>`<option>${esc(s)}</option>`).join('')}</select></div>`:''}
