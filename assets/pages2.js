@@ -32,8 +32,10 @@ function vioHead(a){ return `<div class="page-head"><div class="ph-ic" style="ba
 function vioStats(){
   setCrumb('⚠️','Violation Rules','Stats & escalation');
   const allRecs=scopedRecords('violation');
-  const recs=allRecs.filter(r=>!vioIsInfo(r));   // strike / KPIs / charts = REAL violations only
-  const infos=allRecs.filter(vioIsInfo);         // Late clock-out — tracked, never a violation
+  const recsAll=allRecs.filter(r=>!vioIsInfo(r));      // every real violation, incl. removed
+  const removedRecs=recsAll.filter(vioIsRemoved);      // removed/cancelled/waived — own bucket ONLY
+  const recs=recsAll.filter(r=>!vioIsRemoved(r));      // strike / KPIs / charts exclude removed
+  const infos=allRecs.filter(vioIsInfo);               // Late clock-out — tracked, never a violation
   const active=recs.filter(r=>!['Resolved','Cancelled'].includes(r.status));
   const byStaff={}; active.forEach(r=>{(byStaff[r.staffName]=byStaff[r.staffName]||[]).push(r);});
   const TH=3, watch=Object.entries(byStaff).filter(([n,v])=>v.length>=2).sort((a,b)=>b[1].length-a[1].length);
@@ -55,10 +57,11 @@ function vioStats(){
   const superCmp = isSuper()?`<div class="card"><div class="card-head"><h3>Store comparison</h3><span class="ch-sub">stacked by step</span></div><div class="card-pad"><div class="chart-box"><canvas id="vio-bystore"></canvas></div></div></div>`:'';
   $('#content').innerHTML=`${vioHead('stats')}
     <div class="section-title" style="margin-top:0">Filter by type — click to see records</div>
-    <div class="vio-typebar" style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px;margin-bottom:16px">
+    <div class="vio-typebar" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-bottom:16px">
       ${vioTypeTile('clockin','🕐','#c62828','Clock-in late','counts as a strike',recs.filter(r=>vioTypeOf(r)==='clockin').length)}
       ${vioTypeTile('clockout','🚪','#0891b2','Clock-out late','tracked · not a violation',infos.length)}
       ${vioTypeTile('manual','⚠️','#b45309','Other violations','manual cases',recs.filter(r=>vioTypeOf(r)==='manual').length)}
+      ${vioTypeTile('removed','🚫','#64748b','Removed','removed with a reason',removedRecs.length)}
     </div>
     <div class="card" style="margin-bottom:14px"><div class="card-pad vio-lookup-bar">
       <span class="vio-lookup-lbl">🔎 Look up a staff member — see all their violations &amp; current standing:</span>
@@ -94,11 +97,11 @@ function vioFilteredRecs(){
   const type=(State.vio&&State.vio.type)||'all';
   return scopedRecords('violation').slice()
     .filter(v=>recStore&&recStore!=='ALL'?v.store===recStore:true)   // per-page store filter (Super)
-    .filter(v=>type==='all'?true:vioTypeOf(v)===type)                // type filter (clock-in / clock-out late / other)
+    .filter(v=>type==='all'?true:(type==='removed'?vioIsRemoved(v):(vioTypeOf(v)===type&&!vioIsRemoved(v))))   // removed lives ONLY in its own bucket
     .filter(v=>{ const d=String(v.created||'').slice(0,10); if(from&&(!d||d<from))return false; if(to&&(!d||d>to))return false; return true; })
     .sort((a,b)=>String(b.created||'').localeCompare(String(a.created||'')));
 }
-function vioExport(fmt){ const TYPE={clockin:'Clock-in late',clockout:'Clock-out late',manual:'Violation'};
+function vioExport(fmt){ const TYPE={clockin:'Clock-in late',clockout:'Clock-out late',manual:'Violation',removed:'Removed violation'};
   const cols=[{label:'Ref',get:v=>v.id},{label:'Date',get:v=>(v.created||'').slice(0,16)},{label:'Staff',get:v=>v.staffName},{label:'Store',get:v=>v.store},
     {label:'Type',get:v=>TYPE[vioTypeOf(v)]||'Violation'},{label:'Category',get:v=>v.category},
     {label:'Severity',get:v=>vioIsInfo(v)?'—':v.severity},{label:'Step',get:v=>vioIsInfo(v)?'—':v.step},{label:'Status',get:v=>v.status},
@@ -109,7 +112,7 @@ function vioRecords(){
   setCrumb('⚠️','Violation Rules','All records');
   const from=State.vio&&State.vio.from||'', to=State.vio&&State.vio.to||'';
   const recs=vioFilteredRecs();
-  const list=recs.map(v=>{ const info=vioIsInfo(v), removed=!info&&!vioIsActive(v), col=info?'#0891b2':(removed?'#94a3b8':sevColor(v.severity));
+  const list=recs.map(v=>{ const info=vioIsInfo(v), removed=vioIsRemoved(v), col=info?'#0891b2':(removed?'#94a3b8':sevColor(v.severity));
     return `<div class="card vcard${info?' vcard-info':''}${removed?' vcard-removed':''}" style="--rc:${col}${removed?';opacity:.72':''}" ${info?'':`onclick='openDetail("violation","${esc(v.id)}","${ckJS(v.store||'')}")'`}>
       <div class="vcard-h"><i class="fas ${info?'fa-door-open':(removed?'fa-ban':'fa-triangle-exclamation')}" style="color:${col}"></i><b style="${removed?'text-decoration:line-through;text-decoration-color:#cbd5e1':''}">${esc(v.category)}</b>
         ${info?`<span class="badge" style="background:#e0f2fe;color:#0369a1">ℹ️ Not a violation</span>`:(removed?`<span class="badge" style="background:#e2e8f0;color:#475569;font-weight:800">🚫 ${esc(String(v.status||'Removed'))}</span>`:`<span class="badge ${toneOf(v.severity)}">${esc(v.severity)}</span><span class="badge ${toneOf(v.step)}">${esc(v.step||'')}</span><span class="badge ${toneOf(v.status)}">${esc(v.status)}</span>`)}
@@ -292,7 +295,7 @@ function vioTypeGo(t){ State.vio=State.vio||{}; State.vio.type=t; State.vio.tab=
 function vioTypeSeg(){
   const t=(State.vio&&State.vio.type)||'all';
   const b=(k,lb)=>`<button class="seg-btn ${t===k?'active':''}" onclick="vioSetType('${k}')">${lb}</button>`;
-  return `<div class="seg seg-light">${b('all','📋 All')}${b('clockin','🕐 Clock-in late')}${b('clockout','🚪 Clock-out late')}${b('manual','⚠️ Other')}</div>`;
+  return `<div class="seg seg-light">${b('all','📋 All')}${b('clockin','🕐 Clock-in late')}${b('clockout','🚪 Clock-out late')}${b('manual','⚠️ Other')}${b('removed','🚫 Removed')}</div>`;
 }
 function vioTypeTile(type,ic,color,lbl,sub,n){
   return `<button class="vio-typetile" onclick="vioTypeGo('${type}')" style="text-align:left;background:var(--card,#fff);border:1.5px solid var(--line);border-left:5px solid ${color};border-radius:12px;padding:12px 14px;cursor:pointer;display:flex;flex-direction:column;gap:2px;box-shadow:var(--shadow)">

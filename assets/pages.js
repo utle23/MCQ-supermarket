@@ -614,6 +614,11 @@ const VIO_STEPS=['Verbal Discussion','Written Warning','Final Warning','Terminat
 const VIO_STEP_COL=['#f59e0b','#fb8c00','#d32f2f','#7b1b1b'];
 function vioStepIdxForCount(n){ return n<=0?-1 : n<=3?0 : n===4?1 : n===5?2 : 3; }
 function vioIsActive(r){ return !['Resolved','Cancelled','Removed','Waived'].includes(String((r&&r.status)||'')); }
+/* A REMOVED violation (manager removed/cancelled/waived it with a reason) lives ONLY in the
+   "Removed" bucket — never under Clock-in late / Other violations and never in the ordinary
+   stats. Resolved is NOT removed: a resolved violation is real, completed history. */
+function vioIsRemoved(r){ return !vioIsInfo(r) && ['Removed','Cancelled','Waived'].includes(String((r&&r.status)||'')); }
+window.vioIsRemoved=vioIsRemoved;
 /* An INFO record (attendance "Late clock-out") is tracked in the Violation module but is NOT a
    violation — it never counts toward standing, never emails, and can't be "removed" (only noted). */
 function vioIsInfo(r){ return !!(r && (r.nonViolation || r.category==='Late clock-out')); }
