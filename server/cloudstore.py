@@ -1,23 +1,21 @@
 """
-Cloud storage for MCQ photos + message/announcement files.
-
-Primary backend is ImageKit.io (private files + server-signed delivery URLs). Cloudinary is kept
-as a READ/DELETE fallback for assets uploaded BEFORE the migration (dual-read): any stored cloud
-id that is NOT prefixed 'ik|' is treated as a legacy Cloudinary public_id.
+Cloud storage for MCQ photos + message/announcement files — ImageKit.io.
 
 Config (env only — NEVER hardcode; the repo is public):
-  IMAGEKIT_URL_ENDPOINT, IMAGEKIT_PUBLIC_KEY, IMAGEKIT_PRIVATE_KEY  -> ImageKit (new uploads)
-  CLOUDINARY_URL                                                    -> Cloudinary (legacy reads)
+  IMAGEKIT_URL_ENDPOINT, IMAGEKIT_PUBLIC_KEY, IMAGEKIT_PRIVATE_KEY
 
-Design carried over from the Cloudinary version:
-  * Assets are PRIVATE; the app proxies bytes through its own authed /api endpoints via signed
-    (short-lived) URLs — nothing is publicly reachable.
-  * <=9 MB per stored part: oversize IMAGES are recompressed (Pillow), any other oversize file is
-    SPLIT losslessly into .p0/.p1/… parts and rejoined on download.
-  * The stored cloud id for ImageKit encodes what delete needs (fileId) AND what fetch needs (url):
+Design:
+  * Assets are PRIVATE files; the app proxies bytes through its own authed /api endpoints via
+    short-lived server-signed URLs — nothing is publicly reachable.
+  * Every fetch adds tr=orig-true: without it ImageKit's delivery optimization RE-ENCODES
+    images (smaller but lower quality). We always serve the original bytes.
+  * <=9 MB per stored part: oversize IMAGES are recompressed (Pillow), any other oversize file
+    is SPLIT losslessly into .p0/.p1/… parts and rejoined on download.
+  * The stored cloud id encodes what delete needs (fileId) AND what fetch needs (url):
       photo : 'ik|<fileId>|<deliveryUrl>'
       file  : 'ik|<fileId0>,<fileId1>,…|<url0>,<url1>,…'
-    Legacy Cloudinary ids keep their old shape: 'mcq/photos/<pid>' / 'mcq/files/<fid>'.
+    (Cloudinary-era ids without the 'ik|' prefix no longer exist — that account was
+    emptied and closed on 2026-07-19; a stray legacy id raises a clean error.)
 """
 import io, os, ssl, time, hmac, hashlib, json, uuid, base64, urllib.request
 
@@ -25,9 +23,7 @@ IK_ENDPOINT = (os.environ.get('IMAGEKIT_URL_ENDPOINT') or '').rstrip('/')
 IK_PUBLIC   = os.environ.get('IMAGEKIT_PUBLIC_KEY') or ''
 IK_PRIVATE  = os.environ.get('IMAGEKIT_PRIVATE_KEY') or ''
 IK_ENABLED  = bool(IK_ENDPOINT and IK_PRIVATE)
-
-CLOUDINARY_ENABLED = bool(os.environ.get('CLOUDINARY_URL'))
-ENABLED = IK_ENABLED or CLOUDINARY_ENABLED
+ENABLED     = IK_ENABLED
 MAX_ONE = 9 * 1024 * 1024          # stay safely under provider per-file caps
 
 try:
@@ -36,10 +32,6 @@ try:
 except Exception:
     _CTX = ssl.create_default_context()
 
-if CLOUDINARY_ENABLED:
-    import cloudinary, cloudinary.uploader, cloudinary.utils
-
-# ---------- ImageKit low-level ----------
 _IK_UPLOAD = 'https://upload.imagekit.io/api/v1/files/upload'
 _IK_FILES  = 'https://api.imagekit.io/v1/files/'
 
@@ -79,25 +71,12 @@ def _ik_delete(file_id):
     try: urllib.request.urlopen(req, timeout=30, context=_CTX).read()
     except Exception: pass
 
-# ---------- Cloudinary low-level (legacy read/delete) ----------
-def _cld_signed(public_id, rt):
-    url, _ = cloudinary.utils.cloudinary_url(public_id, resource_type=rt,
-                                             type='authenticated', sign_url=True, secure=True)
-    return url
-
-def _cld_fetch(public_id, rt):
-    if not CLOUDINARY_ENABLED:
-        raise RuntimeError('legacy Cloudinary asset but CLOUDINARY_URL is not set: ' + str(public_id))
-    return urllib.request.urlopen(_cld_signed(public_id, rt), timeout=60, context=_CTX).read()
-
-def _cld_put(data, public_id, rt):
-    cloudinary.uploader.upload(io.BytesIO(data), public_id=public_id, resource_type=rt,
-                               type='authenticated', overwrite=True, invalidate=True)
-
-def _cld_destroy(public_id, rt):
-    if not CLOUDINARY_ENABLED: return          # nothing we can (or need to) delete
-    try: cloudinary.uploader.destroy(public_id, resource_type=rt, type='authenticated', invalidate=True)
-    except Exception: pass
+def _ik_parts(cloud_id):
+    """'ik|fids|urls' -> (list of fileIds, list of urls); raises on a non-ImageKit id."""
+    if not (cloud_id and cloud_id.startswith('ik|')):
+        raise RuntimeError('not an ImageKit cloud id: ' + str(cloud_id))
+    _, fids, urls = cloud_id.split('|', 2)
+    return [f for f in fids.split(',') if f], [u for u in urls.split(',') if u]
 
 def _shrink_image(data):
     """Recompress an oversize image (attachment path) to fit the per-file cap."""
@@ -111,23 +90,17 @@ def _shrink_image(data):
 
 # ---------- photos (already client-compressed; always a single asset) ----------
 def put_photo(pid, data):
-    if IK_ENABLED:
-        fid, url = _ik_upload(data, '/mcq/photos', pid)
-        return 'ik|' + fid + '|' + url
-    _cld_put(data, 'mcq/photos/' + pid, 'image')
-    return 'mcq/photos/' + pid
+    fid, url = _ik_upload(data, '/mcq/photos', pid)
+    return 'ik|' + fid + '|' + url
 
 def get_photo(cloud_id):
-    if cloud_id and cloud_id.startswith('ik|'):
-        _, _fid, url = cloud_id.split('|', 2)
-        return _ik_fetch(url)
-    return _cld_fetch(cloud_id, 'image')
+    _fids, urls = _ik_parts(cloud_id)
+    return _ik_fetch(urls[0])
 
 def delete_photo(cloud_id):
-    if cloud_id and cloud_id.startswith('ik|'):
-        _, fid, _url = cloud_id.split('|', 2)
-        _ik_delete(fid); return
-    _cld_destroy(cloud_id, 'image')
+    try: fids, _urls = _ik_parts(cloud_id)
+    except Exception: return
+    for f in fids: _ik_delete(f)
 
 # ---------- message/announcement files (any type; auto-shrink / auto-split) ----------
 def put_file(fid, data, mime):
@@ -137,31 +110,17 @@ def put_file(fid, data, mime):
         try: data = _shrink_image(data); mime = 'image/jpeg'
         except Exception: pass
     parts = [data] if len(data) <= MAX_ONE else [data[i:i + MAX_ONE] for i in range(0, len(data), MAX_ONE)]
-    if IK_ENABLED:
-        fids, urls = [], []
-        for i, part in enumerate(parts):
-            f, u = _ik_upload(part, '/mcq/files', fid + '.p' + str(i))
-            fids.append(f); urls.append(u)
-        return 'ik|' + ','.join(fids) + '|' + ','.join(urls), len(parts), len(data), mime
-    base = 'mcq/files/' + fid
+    fids, urls = [], []
     for i, part in enumerate(parts):
-        _cld_put(part, base + '.p' + str(i), 'raw')
-    return base, len(parts), len(data), mime
+        f, u = _ik_upload(part, '/mcq/files', fid + '.p' + str(i))
+        fids.append(f); urls.append(u)
+    return 'ik|' + ','.join(fids) + '|' + ','.join(urls), len(parts), len(data), mime
 
 def get_file(base_cloud_id, chunk_count):
-    if base_cloud_id and base_cloud_id.startswith('ik|'):
-        _, _fids, urls = base_cloud_id.split('|', 2)
-        return b''.join(_ik_fetch(u) for u in urls.split(','))
-    out = b''
-    for i in range(max(1, int(chunk_count or 1))):
-        out += _cld_fetch(base_cloud_id + '.p' + str(i), 'raw')
-    return out
+    _fids, urls = _ik_parts(base_cloud_id)
+    return b''.join(_ik_fetch(u) for u in urls)
 
 def delete_file(base_cloud_id, chunk_count):
-    if base_cloud_id and base_cloud_id.startswith('ik|'):
-        _, fids, _urls = base_cloud_id.split('|', 2)
-        for f in fids.split(','):
-            if f: _ik_delete(f)
-        return
-    for i in range(max(1, int(chunk_count or 1))):
-        _cld_destroy(base_cloud_id + '.p' + str(i), 'raw')
+    try: fids, _urls = _ik_parts(base_cloud_id)
+    except Exception: return
+    for f in fids: _ik_delete(f)

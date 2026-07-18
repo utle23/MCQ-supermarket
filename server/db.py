@@ -237,9 +237,9 @@ def init_db():
     except Exception: pass
     try: conn.execute('ALTER TABLE announcements ADD COLUMN department TEXT')   # department-group announcements
     except Exception: pass
-    try: conn.execute('ALTER TABLE photos ADD COLUMN cloud TEXT')                # Cloudinary asset id
+    try: conn.execute('ALTER TABLE photos ADD COLUMN cloud TEXT')                # ImageKit asset id
     except Exception: pass
-    try: conn.execute('ALTER TABLE files ADD COLUMN cloud TEXT')                 # Cloudinary base id
+    try: conn.execute('ALTER TABLE files ADD COLUMN cloud TEXT')                 # ImageKit base id
     except Exception: pass
     try: conn.execute('ALTER TABLE files ADD COLUMN chunks INTEGER DEFAULT 0')   # >10MB files are split
     except Exception: pass
@@ -1519,7 +1519,7 @@ def can_download_file(au, file_id):
 
 def _submission_photo_ids(data_json):
     """Every DURABLE photo id a checklist submission references (item photos, verify photos,
-    per-task manager photos). data-URIs / blobs are ignored — they aren't Cloudinary assets."""
+    per-task manager photos). data-URIs / blobs are ignored — they aren't ImageKit assets."""
     ids = set()
     try: d = json.loads(data_json or '{}')
     except Exception: return ids
@@ -1538,7 +1538,7 @@ def _submission_photo_ids(data_json):
     return ids
 
 def _photo_row_delete(conn, store, pid):
-    """Delete ONE photo everywhere: its Cloudinary asset + local file + the photos row.
+    """Delete ONE photo everywhere: its ImageKit asset + local file + the photos row.
     Returns True if a photos row existed for that pid."""
     row = conn.execute('SELECT filename, cloud FROM photos WHERE id=? AND store_id=?', (pid, store)).fetchone()
     if not row: return False
@@ -1546,7 +1546,7 @@ def _photo_row_delete(conn, store, pid):
     if cloud:
         try:
             import cloudstore
-            if cloudstore.ENABLED: cloudstore.delete_photo(cloud)   # frees the Cloudinary asset (storage/credits)
+            if cloudstore.ENABLED: cloudstore.delete_photo(cloud)   # frees the ImageKit asset (storage/credits)
         except Exception: pass
     try:
         folder = ''.join(c if c.isalnum() else '-' for c in str(store).lower())
@@ -1556,9 +1556,9 @@ def _photo_row_delete(conn, store, pid):
     return True
 
 def gc_submission_photos(store, candidate_pids):
-    """After some submissions are deleted, free each of their photos (Cloudinary + file + row)
+    """After some submissions are deleted, free each of their photos (ImageKit + file + row)
     that is NO LONGER referenced by any REMAINING submission in the store — so deleting a
-    submission frees its Cloudinary photos (storage/credits) without breaking a photo still used
+    submission frees its ImageKit photos (storage/credits) without breaking a photo still used
     elsewhere. Call AFTER the submission rows have been deleted (& committed)."""
     cand = {p for p in (candidate_pids or []) if p}
     if not cand: return 0
@@ -1579,7 +1579,7 @@ def gc_submission_photos(store, candidate_pids):
 
 def cleanup_old(store, before, kinds):
     """Delete NON-critical data older than `before` (YYYY-MM-DD): photos (incl. files on disk),
-    checklist submissions (+ their Cloudinary photos), cleaning/maintenance history, bin records.
+    checklist submissions (+ their ImageKit photos), cleaning/maintenance history, bin records.
     Important data (records, staff, audit logs, messages) is never touched."""
     counts = {}
     conn = connect()
@@ -1614,7 +1614,7 @@ def cleanup_old(store, before, kinds):
                 chunk = del_ids[i:i+400]
                 conn.execute('DELETE FROM checklist_submissions WHERE store_id=? AND id IN (%s)' % ','.join('?' * len(chunk)), [store] + chunk)
             counts['checklistSubs'] = len(del_ids)
-            # free the deleted submissions' Cloudinary photos (only those no longer referenced by a
+            # free the deleted submissions' ImageKit photos (only those no longer referenced by a
             # REMAINING submission). Reads on this same connection already see the deletes above.
             if del_pids:
                 referenced = set()

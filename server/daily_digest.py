@@ -43,7 +43,7 @@ def today_str():
     return time.strftime('%Y-%m-%d', time.gmtime(time.time() + 8 * 3600))
 
 
-_TMP_PHOTOS = []   # temp files created for Cloudinary-hosted photos (cleaned at exit)
+_TMP_PHOTOS = []   # temp files created for ImageKit-hosted photos (cleaned at exit)
 
 def photo_path(conn, pid):
     if not pid:
@@ -54,7 +54,7 @@ def photo_path(conn, pid):
     p = os.path.join(db.UPLOADS, db_safe(row['store_id']), row['filename'])
     if os.path.isfile(p):
         return p
-    # Render has no local disk — photos live on Cloudinary; fetch to a temp file for the PDF
+    # Render has no local disk — photos live on ImageKit; fetch to a temp file for the PDF
     cloud = row['cloud'] if ('cloud' in row.keys() and row['cloud']) else None
     if cloud:
         try:
