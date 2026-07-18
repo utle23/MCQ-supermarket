@@ -1219,6 +1219,20 @@ def get_photo(photo_id):
     resp.headers['Cache-Control'] = 'private, max-age=31536000, immutable'   # photo ids are unique → cache hard so images don't re-download
     return resp
 
+@api.route('/api/photos/<photo_id>', methods=['DELETE'])
+def delete_photo_admin(photo_id):
+    """Super-only: remove ONE photo everywhere — cloud asset, local file, DB row.
+    (Admin remediation for a wrong/inappropriate photo; also test-data cleanup.)"""
+    au = require_auth()
+    if au['role'] != 'super': abort(403)
+    conn = db.connect()
+    row = conn.execute('SELECT store_id FROM photos WHERE id=?', (photo_id,)).fetchone()
+    if not row:
+        conn.close(); abort(404)
+    existed = db._photo_row_delete(conn, row['store_id'], photo_id)
+    conn.commit(); conn.close()
+    return jsonify(ok=True, deleted=photo_id, existed=bool(existed))
+
 @api.route('/api/audit/<store_id>', methods=['GET'])
 def audit_trail(store_id):
     """Audit trail — a store Manager sees THEIR OWN store; Super sees any store or ALL.
