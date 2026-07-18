@@ -53,9 +53,14 @@ def _ik_upload(data, folder, file_name):
         j = json.loads(r.read())
     return j['fileId'], j['url']
 
-def _ik_signed(url, ttl=3600):
-    """ImageKit private-file signature: HMAC-SHA1(private, path_after_endpoint + expiry)."""
-    exp = int(time.time()) + ttl
+def _ik_signed(url):
+    """ImageKit private-file signature: HMAC-SHA1(private, path_after_endpoint + expiry).
+    The expiry is BUCKETED to a weekly boundary so the same asset yields the SAME signed URL
+    for up to a week — a per-second expiry made every fetch a unique URL and the ImageKit CDN
+    could never cache anything (0% hit rate). These URLs never leave the server (bytes are
+    proxied), so the longer validity window adds no exposure."""
+    bucket = 7 * 86400
+    exp = ((int(time.time()) // bucket) + 2) * bucket    # constant within a week; 7-14 days out
     path = url.replace(IK_ENDPOINT + '/', '', 1)
     sig = hmac.new(IK_PRIVATE.encode(), (path + str(exp)).encode(), hashlib.sha1).hexdigest()
     return url + ('&' if '?' in url else '?') + 'ik-t=' + str(exp) + '&ik-s=' + sig
