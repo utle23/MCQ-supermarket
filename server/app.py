@@ -1373,6 +1373,13 @@ def cloud_delete_old():
     if au['role'] != 'super': abort(403)
     if request.method == 'GET':
         return jsonify(ok=True, **(db.get_setting('clouddel') or {}))
+    pid = request.args.get('pid')
+    if pid:   # targeted single-photo delete (test-data cleanup)
+        conn = db.connect()
+        row = conn.execute('SELECT cloud FROM photos WHERE id=?', (pid,)).fetchone()
+        if row and row['cloud']: cloudstore.delete_photo(row['cloud'])
+        conn.execute('DELETE FROM photos WHERE id=?', (pid,)); conn.commit(); conn.close()
+        return jsonify(ok=True, deleted=pid, existed=bool(row))
     before = request.args.get('before') or '2026-07-18 23:00'
     st0 = db.get_setting('clouddel') or {}
     if st0.get('running') and not request.args.get('force'):
