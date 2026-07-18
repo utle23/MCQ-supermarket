@@ -1120,6 +1120,35 @@ def get_file(fid):
     return resp
 
 # ---------- photos: files + metadata row ----------
+# In-RAM LRU of recently-served photo bytes. A store's photos are viewed by SEVERAL devices
+# (iPads + manager phones) within minutes of each other — only the FIRST view pays the cloud
+# round-trip; every other device gets RAM speed. Photos are immutable (unique ids) and the
+# route 404s on a missing DB row BEFORE consulting the cache, so deletes can't leak. Uploads
+# warm the cache so devices syncing seconds later never wait on the cloud at all. Per-worker.
+import collections as _coll, threading as _thr
+_PC = _coll.OrderedDict()          # pid -> (bytes, mime)
+_PC_LOCK = _thr.Lock()
+_PC_MAX = 64 * 1024 * 1024         # per gunicorn worker
+_PC_ONE = 2 * 1024 * 1024          # don't let one oversize image evict dozens of normal ones
+_PC_SIZE = [0]
+
+def _pc_get(pid):
+    with _PC_LOCK:
+        v = _PC.get(pid)
+        if v is not None: _PC.move_to_end(pid)
+        return v
+
+def _pc_put(pid, data, mime):
+    if not data or len(data) > _PC_ONE: return
+    with _PC_LOCK:
+        old = _PC.pop(pid, None)
+        if old: _PC_SIZE[0] -= len(old[0])
+        _PC[pid] = (data, mime)
+        _PC_SIZE[0] += len(data)
+        while _PC_SIZE[0] > _PC_MAX and _PC:
+            _pid, (d, _m) = _PC.popitem(last=False)
+            _PC_SIZE[0] -= len(d)
+
 @api.route('/api/photos', methods=['POST'])
 def post_photo():
     au = require_auth(); require_write(au)
@@ -1147,6 +1176,7 @@ def post_photo():
     else:
         folder = os.path.join(db.UPLOADS, db_safe(store_id)); os.makedirs(folder, exist_ok=True)
         with open(os.path.join(folder, pid + '.' + ext), 'wb') as out: out.write(data)
+    _pc_put(pid, data, mime)   # warm: other devices sync this photo within seconds
     meta = {'area': request.form.get('area', ''), 'equipment': request.form.get('equipment', '')}
     conn = db.connect()
     conn.execute('INSERT INTO photos(id,store_id,filename,mime,meta_json,created_at,cloud) VALUES(?,?,?,?,?,?,?) ON CONFLICT (id) DO UPDATE SET filename=excluded.filename, mime=excluded.mime, meta_json=excluded.meta_json, created_at=excluded.created_at, cloud=excluded.cloud',
@@ -1173,9 +1203,15 @@ def get_photo(photo_id):
     if not allowed: abort(403)
     cloud = row['cloud'] if 'cloud' in row.keys() else None
     if cloud and cloudstore.ENABLED:
-        try: data = cloudstore.get_photo(cloud)
-        except Exception: abort(404)
-        resp = Response(data, mimetype=row['mime'] or 'image/jpeg')
+        hit = _pc_get(photo_id)
+        if hit is not None:
+            data, mime = hit
+        else:
+            try: data = cloudstore.get_photo(cloud)
+            except Exception: abort(404)
+            mime = row['mime'] or 'image/jpeg'
+            _pc_put(photo_id, data, mime)
+        resp = Response(data, mimetype=mime or 'image/jpeg')
     else:
         path = os.path.join(db.UPLOADS, db_safe(row['store_id']), row['filename'])
         if not os.path.isfile(path): abort(404)

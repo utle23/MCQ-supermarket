@@ -69,7 +69,10 @@ def _ik_signed(url, ttl=3600):
     return url + ('&' if '?' in url else '?') + 'ik-t=' + str(exp) + '&ik-s=' + sig
 
 def _ik_fetch(url):
-    return urllib.request.urlopen(_ik_signed(url), timeout=60, context=_CTX).read()
+    # tr=orig-true: bypass ImageKit's default delivery optimization and return the ORIGINAL
+    # bytes — without it images come back re-encoded (smaller AND lower quality).
+    return urllib.request.urlopen(_ik_signed(url + ('&' if '?' in url else '?') + 'tr=orig-true'),
+                                  timeout=60, context=_CTX).read()
 
 def _ik_delete(file_id):
     req = urllib.request.Request(_IK_FILES + file_id, headers={'Authorization': _ik_auth()}, method='DELETE')
