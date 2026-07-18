@@ -1183,6 +1183,98 @@ def get_photo(photo_id):
     resp.headers['Cache-Control'] = 'private, max-age=31536000, immutable'   # photo ids are unique → cache hard so images don't re-download
     return resp
 
+# ---------- ONE-SHOT Cloudinary → ImageKit cutover (super-only; endpoints removed after the migration) ----------
+_cloudmig = {}   # progress of the background migration thread
+
+def _cloud_migrate_run():
+    st = _cloudmig
+    try:
+        conn = db.connect()
+        photos = conn.execute("SELECT id, cloud FROM photos WHERE cloud IS NOT NULL AND cloud != '' AND cloud NOT LIKE 'ik|%'").fetchall()
+        files_ = conn.execute("SELECT id, mime, cloud, chunks FROM files WHERE cloud IS NOT NULL AND cloud != '' AND cloud NOT LIKE 'ik|%'").fetchall()
+        conn.close()
+        st.update(photos_total=len(photos), photos_done=0, photos_failed=0,
+                  files_total=len(files_), files_done=0, files_failed=0, errors=[])
+        for r in photos:
+            pid, old = r['id'], r['cloud']
+            try:
+                data = cloudstore._cld_fetch(old, 'image')
+                new_id = cloudstore.put_photo(pid, data)
+                if len(cloudstore.get_photo(new_id)) != len(data):
+                    raise RuntimeError('size mismatch after upload')
+                c = db.connect(); c.execute('UPDATE photos SET cloud=? WHERE id=?', (new_id, pid)); c.commit(); c.close()
+                st['photos_done'] += 1
+            except Exception as e:
+                st['photos_failed'] += 1
+                if len(st['errors']) < 20: st['errors'].append('photo %s: %s' % (pid, e))
+        for r in files_:
+            fid, old = r['id'], r['cloud']
+            try:
+                chunks = (r['chunks'] if 'chunks' in r.keys() else 1) or 1
+                data = cloudstore.get_file(old, chunks)
+                base, new_chunks, size, mime2 = cloudstore.put_file(fid, data, r['mime'])
+                if len(cloudstore.get_file(base, new_chunks)) != size:
+                    raise RuntimeError('size mismatch after upload')
+                c = db.connect(); c.execute('UPDATE files SET cloud=?, chunks=?, size=?, mime=? WHERE id=?',
+                                            (base, new_chunks, size, mime2, fid)); c.commit(); c.close()
+                st['files_done'] += 1
+            except Exception as e:
+                st['files_failed'] += 1
+                if len(st['errors']) < 20: st['errors'].append('file %s: %s' % (fid, e))
+    except Exception as e:
+        st['errors'] = (st.get('errors') or []) + ['fatal: %s' % e]
+    st['running'] = False
+    st['finished_at'] = db.now()[:16]
+
+@api.route('/api/cloud/migrate', methods=['GET', 'POST'])
+def cloud_migrate():
+    """POST: copy every legacy Cloudinary asset to ImageKit keeping the SAME photo/file ids
+    (only the internal cloud pointer changes — nothing user-visible moves). GET: progress."""
+    au = require_auth()
+    if au['role'] != 'super': abort(403)
+    if request.method == 'GET':
+        return jsonify(ok=True, **_cloudmig)
+    if not (cloudstore.IK_ENABLED and cloudstore.CLOUDINARY_ENABLED):
+        return jsonify(ok=False, error='both IMAGEKIT_* and CLOUDINARY_URL env must be set'), 400
+    if _cloudmig.get('running'):
+        return jsonify(ok=False, error='already running', **_cloudmig), 409
+    _cloudmig.clear(); _cloudmig['running'] = True
+    import threading
+    threading.Thread(target=_cloud_migrate_run, daemon=True).start()
+    return jsonify(ok=True, started=True)
+
+@api.route('/api/cloud/purge', methods=['POST'])
+def cloud_purge():
+    """Delete EVERY mcq/ asset from Cloudinary (incl. orphans). Refuses while any DB row still
+    points at Cloudinary, so photos can never break — run /api/cloud/migrate to 0 failed first."""
+    au = require_auth()
+    if au['role'] != 'super': abort(403)
+    if not cloudstore.CLOUDINARY_ENABLED:
+        return jsonify(ok=False, error='CLOUDINARY_URL not set'), 400
+    if _cloudmig.get('running'):
+        return jsonify(ok=False, error='migration still running'), 409
+    conn = db.connect()
+    np = conn.execute("SELECT COUNT(*) AS n FROM photos WHERE cloud IS NOT NULL AND cloud != '' AND cloud NOT LIKE 'ik|%'").fetchone()['n']
+    nf = conn.execute("SELECT COUNT(*) AS n FROM files WHERE cloud IS NOT NULL AND cloud != '' AND cloud NOT LIKE 'ik|%'").fetchone()['n']
+    conn.close()
+    if np or nf:
+        return jsonify(ok=False, error='DB still references Cloudinary — migrate first', photos_left=int(np), files_left=int(nf)), 400
+    import cloudinary.api
+    deleted, remaining = {}, {}
+    for rt in ('image', 'raw'):
+        n = 0
+        while True:
+            res = cloudinary.api.delete_resources_by_prefix('mcq/', resource_type=rt, type='authenticated')
+            n += sum(1 for v in (res.get('deleted') or {}).values() if v == 'deleted')
+            if not res.get('partial'): break
+        deleted[rt] = n
+        try:
+            left = cloudinary.api.resources(resource_type=rt, type='authenticated', prefix='mcq/', max_results=10)
+            remaining[rt] = len(left.get('resources') or [])
+        except Exception as e:
+            remaining[rt] = 'check failed: %s' % e
+    return jsonify(ok=True, deleted=deleted, remaining=remaining)
+
 @api.route('/api/audit/<store_id>', methods=['GET'])
 def audit_trail(store_id):
     """Audit trail — a store Manager sees THEIR OWN store; Super sees any store or ALL.
