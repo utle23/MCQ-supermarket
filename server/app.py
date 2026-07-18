@@ -1235,7 +1235,10 @@ def _cloud_migrate_run():
         st.update(photos_total=len(photos), photos_done=0, photos_failed=0,
                   files_total=len(files_), files_done=0, files_failed=0, errors=[])
         flush()
-        for r in photos:
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        lk = threading.Lock()
+        def one_photo(r):
             pid, old = r['id'], r['cloud']
             try:
                 data = cloudstore._cld_fetch(old, 'image')
@@ -1243,11 +1246,16 @@ def _cloud_migrate_run():
                 if len(cloudstore.get_photo(new_id)) != len(data):
                     raise RuntimeError('size mismatch after upload')
                 c = db.connect(); c.execute('UPDATE photos SET cloud=? WHERE id=?', (new_id, pid)); c.commit(); c.close()
-                st['photos_done'] += 1
+                with lk:
+                    st['photos_done'] += 1
+                    if st['photos_done'] % 25 == 0: flush()
             except Exception as e:
-                st['photos_failed'] += 1
-                if len(st['errors']) < 20: st['errors'].append('photo %s: %s' % (pid, e))
-            if (st['photos_done'] + st['photos_failed']) % 10 == 0: flush()
+                with lk:
+                    st['photos_failed'] += 1
+                    if len(st['errors']) < 20: st['errors'].append('photo %s: %s' % (pid, e))
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            list(ex.map(one_photo, photos))
+        flush()
         for r in files_:
             fid, old = r['id'], r['cloud']
             try:
