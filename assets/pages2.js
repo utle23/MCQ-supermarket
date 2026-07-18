@@ -501,7 +501,7 @@ function raiPerfHint(){ const name=$('#rai-staff').value, wrap=$('#rai-perf-wrap
   if(!name||name.startsWith('—')){ if(wrap)wrap.style.display='none'; return; }
   const p=perfScore(name); const tone=p.band.tone==='ok'?'info':p.band.tone;
   if(wrap&&hint){ wrap.style.display=''; hint.className='vio-suggest tone-'+tone;
-    hint.innerHTML=`📊 <b>${esc(name)}</b> performance index: <b>${p.total}/150</b> · <b>${esc(p.band.label)}</b> → <b>${esc(p.raise)}</b>. <a href="#/performance" onclick="setTimeout(()=>perfPick('${ckJS(name)}'),50)">Open full scorecard →</a>`; }
+    hint.innerHTML=`📊 <b>${esc(name)}</b> performance score: <b>${p.total} pts</b> (base 100, this period) · <b>${esc(p.band.label)}</b> → <b>${esc(p.raise)}</b>. <a href="#/performance" onclick="setTimeout(()=>perfPick('${ckJS(name)}'),50)">Open full scorecard →</a>`; }
 }
 function raiExport(fmt){ const cols=[{label:'Staff',get:r=>r.staffName},{label:'Store',get:r=>r.store},{label:'Review month',get:r=>r.reviewMonth},{label:'Current ($/h)',get:r=>r.currentRate},{label:'Proposed ($/h)',get:r=>r.proposedRate},{label:'Change',get:r=>((+r.proposedRate)-(+r.currentRate)).toFixed(2)},{label:'Effective',get:r=>r.effectiveDate},{label:'Status',get:r=>r.status}]; expRecords('Raise Salary Reviews',cols,scopedRecords('raise'),fmt); }
 function raiSubmit(){ const staff=$('#rai-staff').value.trim(); if(!staff||staff.startsWith('—')){toast('Select a staff member');return;}
@@ -600,138 +600,190 @@ function bdSubmit(){ const staff=$('#bd-staff').value.trim(); if(!staff||staff.s
   toast('🎁 Gift plan saved'); renderBirthday();
 }
 
-/* ============================================================ PERFORMANCE & SCORING
-   Every staff member starts on the same BASE (100). Points are EARNED for
-   reliability (verified checklists), proactive reporting (responsibility),
-   training and recognition — and LOST for violations and complaints against
-   them. The resulting index drives a fair, transparent pay-review recommendation. */
-const PERF_BASE=100;
-function perfData(name){
-  const st=(DB.staff.find(x=>x.name===name)||{}).store;
-  const subs=mgrSubs().filter(s=>s.by===name && (!st||s.store===st));
-  const verified=subs.filter(s=>s.status==='Verified');
-  const avgProg=subs.length?Math.round(subs.reduce((a,s)=>a+(s.progress||0),0)/subs.length):0;
-  let reports=[]; ['issue','maintenance','incident','complaint'].forEach(id=>(DB.modules[id].records||[]).forEach(r=>{ if(r.reportedBy===name) reports.push({mod:id,...r}); }));
-  const complaintsAgainst=(DB.modules.complaint.records||[]).filter(r=>r.staffComplained===name);
-  const violations=(DB.modules.violation.records||[]).filter(r=>r.staffName===name);
-  const training=(DB.modules.training.records||[]).filter(r=>r.traineeName===name && r.status==='Completed');
-  const rewards=(DB.modules.reward.records||[]).filter(r=>r.staffName===name);
-  return {subs,verified,avgProg,reports,complaintsAgainst,violations,training,rewards};
+/* ============================================================ PERFORMANCE & SCORING (quarterly)
+   Khoi's rules (2026-07-19): every staff member starts each 3-MONTH PERIOD on 100 points and
+   the score is FULLY AUTOMATIC from records inside the current period — no manual override.
+     −5   Clock-in late (from the Deputy attendance monitor)
+     −5/−10/−20/−30  Violation recorded against the staff (Minor/Moderate/Major/Critical; else −8)
+     −10  Customer complaint naming the staff
+     +3   Reporting an issue / maintenance / incident / complaint (responsibility is rewarded)
+     +3   Reporting a violation (the reporter, not the offender)
+     +10  Employee of the Month · +5 other awards
+   Late clock-out is tracked but NEVER scores (it is not a violation). REMOVED violations never
+   score. Floor 0. Period epoch 2026-07-19; scores reset every 3 months on the period boundary. */
+const PERF_BASE=100, PERF_EPOCH='2026-07-19';
+function perfPeriod(){
+  const fmt=d=>d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  let s=new Date(PERF_EPOCH+'T00:00:00'); const t=new Date(todayISO()+'T00:00:00');
+  for(;;){ const n=new Date(s.getTime()); n.setMonth(n.getMonth()+3);
+    if(n>t) return {start:fmt(s),next:fmt(n),daysLeft:Math.max(0,Math.round((n-t)/86400000))};
+    s=n; }
+}
+function perfEvents(name){
+  const P=perfPeriod();
+  const inP=r=>{ const d=String(r.created||r.date||'').slice(0,10); return !!d && d>=P.start; };
+  const ev=[];
+  (DB.modules.violation.records||[]).forEach(r=>{
+    if(!inP(r)) return;
+    if(r.staffName===name && !vioIsInfo(r) && !vioIsRemoved(r)){
+      if(vioTypeOf(r)==='clockin') ev.push({icon:'🕐',what:'Clock-in late (Deputy)',pts:-5,ref:r.id,date:r.created,detail:r.description||''});
+      else { const pts={Minor:-5,Moderate:-10,Major:-20,Critical:-30}[r.severity]||-8;
+        ev.push({icon:'⚠️',what:'Violation — '+(r.category||'')+' ('+(r.severity||'')+')',pts,ref:r.id,date:r.created,detail:r.description||''}); }
+    }
+    if(r.reportedBy===name && r.staffName!==name && !r.auto && !vioIsInfo(r))
+      ev.push({icon:'🚨',what:'Reported a violation',pts:3,ref:r.id,date:r.created,detail:'Against '+(r.staffName||'')});
+  });
+  (DB.modules.complaint.records||[]).forEach(r=>{
+    if(inP(r) && r.staffComplained===name)
+      ev.push({icon:'😞',what:'Customer complaint (named)',pts:-10,ref:r.id,date:r.created,detail:r.shortDescription||''});
+  });
+  ['issue','maintenance','incident','complaint'].forEach(id=>{
+    const m=DB.modules[id]; (m.records||[]).forEach(r=>{
+      if(inP(r) && r.reportedBy===name)
+        ev.push({icon:'📣',what:'Reported — '+(m.short||id),pts:3,ref:r.id,date:r.created,detail:r.title||r.equipment||r.summary||r.shortDescription||r.category||''});
+    });
+  });
+  (DB.modules.reward.records||[]).forEach(r=>{
+    if(inP(r) && r.staffName===name){ const eotm=r.awardType==='Employee of the Month';
+      ev.push({icon:'🏆',what:eotm?'Employee of the Month':'Award — '+(r.awardType||'recognition'),pts:eotm?10:5,ref:r.id,date:r.created,detail:''}); }
+  });
+  ev.sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+  return {ev,P};
 }
 function perfScore(name){
-  const d=perfData(name);
-  const C={};
-  C.base=PERF_BASE;
-  // reliability is COMPLETION-quality driven (not sheer count) so it doesn't max out for everyone
-  C.reliability=Math.min(20, Math.round((d.avgProg/100)*16) + (d.verified.length>=10?4:d.verified.length>=3?2:0));
-  C.reporting=Math.min(24,d.reports.length*3);                                  // proactive = responsibility → strongly rewarded
-  C.training=Math.min(18,d.training.length*4 + d.training.filter(t=>t.overallRating==='Excellent').length*2);
-  C.rewards=Math.min(20,d.rewards.reduce((s,r)=>s+(r.awardType==='Employee of the Month'?10:5),0));
-  const vSev={Minor:-5,Moderate:-12,Major:-25,Critical:-40}, vStep={'Verbal Discussion':-5,'Written Warning':-12,'Final Warning':-25,'Termination':-40};
-  C.violations=d.violations.reduce((s,v)=>s+(vSev[v.severity]||vStep[v.step]||-8),0);
-  C.complaints=d.complaintsAgainst.reduce((s,r)=>s+(r.severity==='Major'?-15:r.severity==='Moderate'?-8:-4),0);
-  let total=C.base+C.reliability+C.reporting+C.training+C.rewards+C.violations+C.complaints;
-  total=Math.max(0,Math.min(150,Math.round(total)));
-  // admin manual override (0–150) stored on the staff record
-  const sm=(DB.staff||[]).find(x=>x.name===name); let override=false;
-  if(sm && sm.perfManual!=null && sm.perfManual!=='' && Number.isFinite(Number(sm.perfManual))){ total=Math.max(0,Math.min(150,Math.round(Number(sm.perfManual)))); override=true; }
-  const band=total>=130?{label:'Outstanding',tone:'ok'}:total>=110?{label:'Strong',tone:'ok'}:total>=95?{label:'Good',tone:'info'}:total>=80?{label:'Needs improvement',tone:'warn'}:{label:'At risk',tone:'bad'};
-  const raise=total>=130?'Recommend raise · +5–8%':total>=115?'Eligible for review · +3–5%':total>=100?'Maintain — on track':total>=80?'Coaching plan — hold raise':'Performance management';
-  return {name,d,C,total,band,raise,override};
+  const {ev,P}=perfEvents(name);
+  const plus=ev.filter(e=>e.pts>0).reduce((s,e)=>s+e.pts,0), minus=ev.filter(e=>e.pts<0).reduce((s,e)=>s+e.pts,0);
+  const total=Math.max(0,Math.round(PERF_BASE+plus+minus));
+  const band=total>=110?{label:'Outstanding',tone:'ok'}:total>=100?{label:'Strong',tone:'ok'}:total>=85?{label:'Good',tone:'info'}:total>=70?{label:'Needs improvement',tone:'warn'}:{label:'At risk',tone:'bad'};
+  const raise=total>=110?'Recommend raise · +5–8%':total>=100?'Eligible for review · +3–5%':total>=85?'Maintain — on track':total>=70?'Coaching plan — hold raise':'Performance management';
+  const lates=ev.filter(e=>e.what.startsWith('Clock-in late')).length, reports=ev.filter(e=>e.pts===3).length;
+  return {name,ev,P,plus,minus,total,band,raise,lates,reports};
 }
-function perfBands(){ return [['Outstanding','≥130','#0a8a5f'],['Strong','110–129','#0e9f6e'],['Good','95–109','#1565c0'],['Needs improvement','80–94','#f59e0b'],['At risk','<80','#ef4444']]; }
+function perfBands(){ return [['Outstanding','≥110','#0a8a5f'],['Strong','100–109','#0e9f6e'],['Good','85–99','#1565c0'],['Needs improvement','70–84','#f59e0b'],['At risk','<70','#ef4444']]; }
+function perfColor(t){ return t>=110?'#0a8a5f':t>=100?'#0e9f6e':t>=85?'#1565c0':t>=70?'#f59e0b':'#ef4444'; }
+function perfStaff(){
+  let st=DB.staff.filter(x=>!x.archived && (isSuper()?true:x.store===State.branch));
+  const sf=isSuper()&&State.perf&&State.perf.store; if(sf&&sf!=='ALL') st=st.filter(x=>x.store===sf);
+  const q=((State.perf&&State.perf.q)||'').trim().toLowerCase(); if(q) st=st.filter(x=>String(x.name||'').toLowerCase().includes(q));
+  return st;
+}
 function perfPick(v){ State.perf=State.perf||{}; State.perf.sel=v; renderPerformance(); }
+function perfView(v){ State.perf=State.perf||{}; State.perf.view=v; State.perf.sel=''; renderPerformance(); }
+function perfSetStore(v){ State.perf=State.perf||{}; State.perf.store=v; renderPerformance(); }
+function perfSearch(v){ State.perf=State.perf||{}; State.perf.q=v; const t=document.getElementById('perf-zone'); if(t){ t.outerHTML=perfZone(); } }
 function perfExportLeaders(fmt){
-  const staff=DB.staff.filter(x=>isSuper()||x.store===State.branch);
-  const scored=staff.map(s=>({s,p:perfScore(s.name)})).sort((a,b)=>b.p.total-a.p.total);
-  const cols=[{label:'Rank',get:(r,i)=>r._rank},{label:'Staff',get:r=>r.s.name},{label:'Role',get:r=>r.s.role},{label:'Store',get:r=>r.s.store},{label:'Score',get:r=>r.p.total},{label:'Band',get:r=>r.p.band.label},{label:'Recommendation',get:r=>r.p.raise}];
+  const scored=perfStaff().map(s=>({s,p:perfScore(s.name)})).sort((a,b)=>b.p.total-a.p.total);
   scored.forEach((r,i)=>r._rank=i+1);
-  expRecords('Staff Performance Leaderboard',cols,scored,fmt);
+  const cols=[{label:'Rank',get:r=>r._rank},{label:'Staff',get:r=>r.s.name},{label:'Role',get:r=>r.s.role},{label:'Store',get:r=>r.s.store},{label:'Score',get:r=>r.p.total},{label:'Band',get:r=>r.p.band.label},{label:'Late (clock-in)',get:r=>r.p.lates},{label:'Reports filed',get:r=>r.p.reports},{label:'Recommendation',get:r=>r.p.raise}];
+  expRecords('Staff Performance — period from '+perfPeriod().start,cols,scored,fmt);
 }
 function perfExportOne(fmt){
   const name=State.perf&&State.perf.sel; if(!name) return; const p=perfScore(name);
-  const cols=[{label:'Component',get:r=>r[0]},{label:'Points',get:r=>r[1]}];
-  const rows=[['Base score',p.C.base],['Checklist reliability',(p.C.reliability>=0?'+':'')+p.C.reliability],['Proactive reporting',(p.C.reporting>=0?'+':'')+p.C.reporting],['Training',(p.C.training>=0?'+':'')+p.C.training],['Rewards & recognition',(p.C.rewards>=0?'+':'')+p.C.rewards],['Violations',p.C.violations],['Complaints against',p.C.complaints],['TOTAL SCORE',p.total],['Band',p.band.label],['Pay-review recommendation',p.raise],['Checklists submitted',p.d.subs.length+' ('+p.d.verified.length+' verified, '+p.d.avgProg+'% avg)'],['Reports filed',p.d.reports.length],['Violations',p.d.violations.length],['Complaints against',p.d.complaintsAgainst.length],['Training completed',p.d.training.length],['Awards',p.d.rewards.length]];
-  expRecords('Performance — '+name,cols,rows,fmt);
+  const cols=[{label:'Date',get:r=>String(r.date||'').slice(0,16)},{label:'Event',get:r=>r.what},{label:'Ref',get:r=>r.ref},{label:'Points',get:r=>(r.pts>0?'+':'')+r.pts},{label:'Detail',get:r=>r.detail}];
+  const rows=p.ev.slice(); rows.push({date:'',what:'STARTING BASE',ref:'',pts:PERF_BASE,detail:'Period '+p.P.start+' → '+p.P.next},{date:'',what:'CURRENT SCORE',ref:'',pts:p.total,detail:p.band.label+' · '+p.raise});
+  expRecords('Performance — '+name+' (period '+p.P.start+')',cols,rows,fmt);
+}
+function perfRulesCard(){
+  const P=perfPeriod();
+  const row=(ic,lbl,pts,note)=>`<tr><td style="font-size:16px">${ic}</td><td><b>${esc(lbl)}</b><br><small style="color:var(--muted)">${esc(note||'')}</small></td><td style="text-align:right"><b style="color:${pts>0?'#0a8a5f':'#c62828'};font-size:15px">${pts>0?'+':''}${pts}</b></td></tr>`;
+  return `<div class="card" style="border-top:4px solid #7c3aed"><div class="card-head"><h3>📜 Scoring rules</h3><span class="ch-sub">fully automatic — computed from records, no manual edits</span></div>
+    <div class="card-pad">
+      <div style="background:#f3e8fb;border-radius:10px;padding:12px 14px;margin-bottom:12px">
+        🎯 Everyone starts each period on <b>${PERF_BASE} points</b>. Scores <b>reset every 3 months</b> — current period <b>${esc(P.start)} → ${esc(P.next)}</b> (resets in <b>${P.daysLeft} days</b>). Score floor is 0.
+      </div>
+      <div class="table-wrap"><table class="grid"><thead><tr><th></th><th>Event</th><th style="text-align:right">Points</th></tr></thead><tbody>
+        ${row('🕐','Clock-in late',-5,'Automatic from Deputy attendance — every late clock-in')}
+        ${row('⚠️','Violation — Minor',-5,'Recorded against the staff member')}
+        ${row('⚠️','Violation — Moderate',-10,'')}
+        ${row('⚠️','Violation — Major',-20,'')}
+        ${row('⚠️','Violation — Critical',-30,'')}
+        ${row('😞','Customer complaint naming the staff',-10,'')}
+        ${row('📣','Reporting an issue / maintenance / incident / complaint',3,'Responsibility is rewarded — the reporter earns points')}
+        ${row('🚨','Reporting a violation',3,'The reporter earns points (not for reporting yourself)')}
+        ${row('🏆','Employee of the Month',10,'Other awards +5')}
+      </tbody></table></div>
+      <div style="margin-top:12px;font-size:12.5px;color:var(--muted)">
+        ℹ️ <b>Late clock-out</b> is tracked but never scores (it is not a violation). <b>Removed</b> violations never score. Automatic attendance records earn no reporter points.
+      </div>
+    </div></div>`;
+}
+function perfZone(){
+  const view=(State.perf&&State.perf.view)||'scores';
+  const staff=perfStaff();
+  const scored=staff.map(s=>({s,p:perfScore(s.name)})).sort((a,b)=>b.p.total-a.p.total || String(a.s.name).localeCompare(String(b.s.name)));
+  if(view==='rules') return `<div id="perf-zone">${perfRulesCard()}</div>`;
+  if(view==='board'){
+    const avg=scored.length?Math.round(scored.reduce((a,r)=>a+r.p.total,0)/scored.length):0;
+    const atRisk=scored.filter(r=>r.p.total<70).length, top=scored.length?scored[0]:null;
+    return `<div id="perf-zone">
+      <div class="kpi-grid">
+        <div class="kpi tone-info"><div class="k-top"><div class="k-ic">👥</div></div><div class="k-val">${scored.length}</div><div class="k-lbl">Staff scored</div></div>
+        <div class="kpi tone-ok"><div class="k-top"><div class="k-ic">📈</div></div><div class="k-val">${avg}</div><div class="k-lbl">Average score</div></div>
+        <div class="kpi tone-ok"><div class="k-top"><div class="k-ic">🥇</div></div><div class="k-val" style="font-size:18px">${top?esc(top.s.name):'—'}</div><div class="k-lbl">Top — ${top?top.p.total:''} pts</div></div>
+        <div class="kpi tone-bad"><div class="k-top"><div class="k-ic">🚨</div></div><div class="k-val">${atRisk}</div><div class="k-lbl">At risk (&lt;70)</div></div></div>
+      <div class="perf-legend">${perfBands().map(b=>`<span class="perf-leg"><i style="background:${b[2]}"></i>${b[0]} <small>${b[1]}</small></span>`).join('')}</div>
+      <div class="card"><div class="card-head"><h3>Leaderboard</h3><span class="ch-sub">Click a row for the full point history</span></div>
+      <div class="table-wrap"><table class="grid" id="perf-table"><thead><tr><th>#</th><th>Staff</th><th>Role</th><th>Store</th><th>Score</th><th>Band</th><th>🕐 Late</th><th>📣 Reports</th><th>Recommendation</th></tr></thead><tbody>
+      ${scored.map((r,i)=>`<tr onclick="perfPick('${ckJS(r.s.name)}')"><td class="num"><b>${i+1}</b></td><td><b>${esc(r.s.name)}</b></td><td>${esc(r.s.role||'')}</td><td>${esc(r.s.store||'')}</td><td><span class="perf-pill" style="--pc:${perfColor(r.p.total)}">${r.p.total}</span></td><td><span class="badge ${r.p.band.tone}">${esc(r.p.band.label)}</span></td><td class="num">${r.p.lates||''}</td><td class="num">${r.p.reports||''}</td><td>${esc(r.p.raise)}</td></tr>`).join('')||'<tr><td colspan="9"><div class="empty">No staff to score.</div></td></tr>'}
+      </tbody></table></div></div></div>`;
+  }
+  // 'scores' — Khoi's clean view: ONLY each staff member's current score
+  return `<div id="perf-zone">
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:12px">
+    ${scored.map(r=>`<button onclick="perfPick('${ckJS(r.s.name)}')" style="cursor:pointer;text-align:center;background:var(--card,#fff);border:1.5px solid var(--line);border-top:5px solid ${perfColor(r.p.total)};border-radius:14px;padding:16px 10px;box-shadow:var(--shadow)">
+      <div style="font-size:34px;font-weight:900;color:${perfColor(r.p.total)};font-variant-numeric:tabular-nums">${r.p.total}</div>
+      <div style="font-weight:800;font-size:13px;margin-top:4px">${esc(r.s.name)}</div>
+      <div style="font-size:11px;color:var(--muted)">${esc(r.s.store||'')}</div>
+    </button>`).join('')||'<div class="empty">No staff found.</div>'}
+    </div></div>`;
 }
 function renderPerformance(){
-  setAccent('#7c3aed'); setCrumb('📊','Performance & Scoring','Fair, transparent staff performance index');
-  if(!State.perf) State.perf={sel:''};
-  const staff=DB.staff.filter(x=>isSuper()||x.store===State.branch);
-  const sel=State.perf.sel && staff.find(x=>x.name===State.perf.sel) ? State.perf.sel : '';
-  const selector=`<select class="login-input" style="width:auto;min-width:220px" onchange="perfPick(this.value)"><option value="">— Whole team (leaderboard) —</option>${staff.map(x=>`<option ${x.name===sel?'selected':''}>${esc(x.name)}</option>`).join('')}</select>`;
-  if(sel) return perfDetail(sel,selector);
-  // ---- leaderboard ----
-  const scored=staff.map(s=>({s,p:perfScore(s.name)})).sort((a,b)=>b.p.total-a.p.total);
-  const avg=scored.length?Math.round(scored.reduce((a,r)=>a+r.p.total,0)/scored.length):0;
-  const atRisk=scored.filter(r=>r.p.total<70).length, top=scored.filter(r=>r.p.total>=120).length;
-  const bandsLegend=perfBands().map(b=>`<span class="perf-leg"><i style="background:${b[2]}"></i>${b[0]} <small>${b[1]}</small></span>`).join('');
+  setAccent('#7c3aed'); setCrumb('📊','Performance & Scoring','Quarterly staff score — starts at 100');
+  if(!State.perf) State.perf={view:'scores',sel:'',q:'',store:'ALL'};
+  const staffAll=DB.staff.filter(x=>!x.archived && (isSuper()?true:x.store===State.branch));
+  const sel=State.perf.sel && staffAll.find(x=>x.name===State.perf.sel) ? State.perf.sel : '';
+  if(sel) return perfDetail(sel);
+  const P=perfPeriod(), view=State.perf.view||'scores';
+  const seg=(k,lb)=>`<button class="seg-btn ${view===k?'active':''}" onclick="perfView('${k}')">${lb}</button>`;
+  const storeSel=isSuper()?`<select class="login-input" style="width:auto" onchange="perfSetStore(this.value)"><option value="ALL" ${(State.perf.store||'ALL')==='ALL'?'selected':''}>🏬 All stores</option>${DB.stores.map(s=>`<option ${State.perf.store===s?'selected':''}>${esc(s)}</option>`).join('')}</select>`:'';
   $('#content').innerHTML=`
-    <div class="page-head"><div class="ph-ic" style="background:#f3e8fb">📊</div><div><h2>Performance &amp; Scoring</h2><p>Everyone starts on a level base of ${PERF_BASE}. Points are earned for reliability, proactive reporting, training &amp; recognition — and lost for violations &amp; complaints.</p></div>
-      <div class="ph-actions">${selector} ${exportBtns('perf-table','Staff Performance Leaderboard')}</div></div>
-    <div class="kpi-grid">
-      <div class="kpi tone-info"><div class="k-top"><div class="k-ic">👥</div></div><div class="k-val">${scored.length}</div><div class="k-lbl">Staff scored</div></div>
-      <div class="kpi tone-ok"><div class="k-top"><div class="k-ic">📈</div></div><div class="k-val">${avg}</div><div class="k-lbl">Average score</div></div>
-      <div class="kpi tone-ok"><div class="k-top"><div class="k-ic">⭐</div></div><div class="k-val">${top}</div><div class="k-lbl">Raise-ready (≥120)</div></div>
-      <div class="kpi tone-bad"><div class="k-top"><div class="k-ic">⚠️</div></div><div class="k-val">${atRisk}</div><div class="k-lbl">At risk (&lt;70)</div></div></div>
-    <div class="perf-legend">${bandsLegend}</div>
-    <div class="card"><div class="card-head"><h3>Leaderboard${isSuper()?' · all stores':' · '+esc(State.branch)}</h3><span class="ch-sub">Click a row to open the full scorecard</span></div>
-      <div class="table-wrap"><table class="grid" id="perf-table"><thead><tr><th>#</th><th>Staff</th><th>Role</th><th>Store</th><th>Score</th><th>Band</th><th>Pay-review recommendation</th></tr></thead><tbody>
-      ${scored.map((r,i)=>`<tr onclick="perfPick('${ckJS(r.s.name)}')"><td class="num"><b>${i+1}</b></td><td><b>${esc(r.s.name)}</b></td><td>${esc(r.s.role||'')}</td><td>${esc(r.s.store||'')}</td><td><span class="perf-pill" style="--pc:${perfColor(r.p.total)}">${r.p.total}</span></td><td><span class="badge ${r.p.band.tone}">${esc(r.p.band.label)}</span></td><td>${esc(r.p.raise)}</td></tr>`).join('')||'<tr><td colspan="7"><div class="empty">No staff to score.</div></td></tr>'}
-      </tbody></table></div></div>`;
+    <div class="page-head"><div class="ph-ic" style="background:#f3e8fb">📊</div><div><h2>Performance &amp; Scoring</h2>
+      <p>Every staff member starts the period on <b>${PERF_BASE}</b>. Fully automatic from Deputy lateness, violations, complaints, reports &amp; awards.</p></div>
+      <div class="ph-actions">${expMenu('perfExportLeaders')}</div></div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+      <div class="seg seg-light">${seg('scores','🎯 Current scores')}${seg('board','🏆 Leaderboard')}${seg('rules','📜 Rules')}</div>
+      ${storeSel}
+      <input class="login-input" style="width:auto;min-width:170px" placeholder="🔎 Search staff…" value="${esc(State.perf.q||'')}" oninput="perfSearch(this.value)">
+      <span class="badge info" style="margin-left:auto">📅 Period ${esc(P.start)} → ${esc(P.next)} · resets in ${P.daysLeft}d</span>
+    </div>
+    ${perfZone()}`;
 }
-function perfColor(t){ return t>=130?'#0a8a5f':t>=110?'#0e9f6e':t>=95?'#1565c0':t>=80?'#f59e0b':'#ef4444'; }
-function perfSetManual(name){ if(!isAdmin()) return; const s=DB.staff.find(x=>x.name===name); if(!s) return;
-  const v=Number(($('#perf-manual')&&$('#perf-manual').value)||''); if(!Number.isFinite(v)||v<0||v>150){ toast('Enter a score between 0 and 150'); return; }
-  const before=JSON.parse(JSON.stringify(s)); s.perfManual=Math.round(v); auditLog&&auditLog('update','staff',s.id,s.store,before,s,'performance score set');
-  if(window.persist) window.persist(); toast('✓ Performance score set to '+s.perfManual); renderPerformance(); }
-function perfClearManual(name){ if(!isAdmin()) return; const s=DB.staff.find(x=>x.name===name); if(!s) return;
-  const before=JSON.parse(JSON.stringify(s)); delete s.perfManual; auditLog&&auditLog('update','staff',s.id,s.store,before,s,'performance score reset to automatic');
-  if(window.persist) window.persist(); toast('Score reset to automatic'); renderPerformance(); }
-function perfDetail(name,selector){
-  const p=perfScore(name), d=p.d, s=DB.staff.find(x=>x.name===name)||{};
-  const comp=[['Checklist reliability',p.C.reliability,'Verified submissions & completion','fa-clipboard-check'],
-    ['Proactive reporting',p.C.reporting,'Issues/maintenance/incidents they raised','fa-bullhorn'],
-    ['Training',p.C.training,'Completed sessions & ratings','fa-graduation-cap'],
-    ['Rewards & recognition',p.C.rewards,'Awards received','fa-trophy'],
-    ['Violations',p.C.violations,'Rule breaches logged against them','fa-triangle-exclamation'],
-    ['Complaints against',p.C.complaints,'Customer complaints naming them','fa-comment-dots']];
-  const maxAbs=Math.max(30,...comp.map(c=>Math.abs(c[1])));
-  const bar=c=>{const pos=c[1]>=0; const w=Math.round(Math.abs(c[1])/maxAbs*100);
-    return `<div class="perf-bd"><div class="perf-bd-h"><i class="fas ${c[3]}"></i> <b>${esc(c[0])}</b><small>${esc(c[2])}</small><span class="perf-bd-v ${pos?'pos':'neg'}">${pos?'+':''}${c[1]}</span></div><div class="perf-bd-track"><i class="${pos?'pos':'neg'}" style="width:${w}%"></i></div></div>`;};
-  const reportList=d.reports.slice(0,6).map(r=>`<div class="feed-row"><div class="feed-ic" style="background:#ede9fe;color:#7c3aed">${(DB.modules[r.mod]||{}).icon||'🚩'}</div><div class="feed-main"><div class="fm-t">${esc(r.id)} · ${esc((DB.modules[r.mod]||{}).short||r.mod)}</div><div class="fm-s">${esc(r.title||r.equipment||r.summary||r.shortDescription||r.category||'')}</div></div><div class="feed-time">${esc((r.created||r.date||'').slice(0,10))}</div></div>`).join('')||'<div class="empty">No reports filed.</div>';
-  const vioList=d.violations.slice(0,6).map(v=>`<div class="feed-row"><div class="feed-ic" style="background:#fdecea;color:#c62828">⚠️</div><div class="feed-main"><div class="fm-t">${esc(v.category)} · <span class="badge ${toneOf(v.severity)}">${esc(v.severity)}</span></div><div class="fm-s">${esc(v.step||'')} · ${esc((v.description||'').slice(0,60))}</div></div><div class="feed-time">${esc((v.created||'').slice(0,10))}</div></div>`).join('')||'<div class="empty">No violations — clean record. 🟢</div>';
+function perfDetail(name){
+  const p=perfScore(name), s=DB.staff.find(x=>x.name===name)||{};
+  const feed=p.ev.map(e=>`<div class="feed-row"><div class="feed-ic" style="background:${e.pts>0?'#e7f6ee':'#fdecea'}">${e.icon}</div>
+      <div class="feed-main"><div class="fm-t">${esc(e.what)} <small style="color:var(--muted)">${esc(e.ref||'')}</small></div><div class="fm-s">${esc(e.detail||'')}</div></div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px"><b style="color:${e.pts>0?'#0a8a5f':'#c62828'}">${e.pts>0?'+':''}${e.pts}</b><span class="feed-time">${esc(String(e.date||'').slice(0,10))}</span></div></div>`).join('')
+    ||'<div class="empty">No point events this period — full 100 baseline. 🟢</div>';
   $('#content').innerHTML=`
-    <div class="page-head"><div class="ph-ic" style="background:#f3e8fb">📊</div><div><h2>${esc(name)}</h2><p>${esc(s.role||'')}${s.store?' · '+esc(s.store):''} — performance scorecard</p></div>
-      <div class="ph-actions"><button class="btn sm" onclick="perfPick('')"><i class="fas fa-arrow-left"></i>&nbsp; Leaderboard</button>${selector} ${expMenu('perfExportOne')}</div></div>
+    <div class="page-head"><div class="ph-ic" style="background:#f3e8fb">📊</div><div><h2>${esc(name)}</h2><p>${esc(s.role||'')}${s.store?' · '+esc(s.store):''} — period ${esc(p.P.start)} → ${esc(p.P.next)}</p></div>
+      <div class="ph-actions"><button class="btn sm" onclick="perfPick('')"><i class="fas fa-arrow-left"></i>&nbsp; Back</button> ${expMenu('perfExportOne')}</div></div>
     <div class="perf-top">
       <div class="card perf-scorecard" style="--pc:${perfColor(p.total)}">
-        <div class="perf-score">${p.total}</div><div class="perf-of">/ 150</div>
+        <div class="perf-score">${p.total}</div><div class="perf-of">base ${PERF_BASE}</div>
         <div class="badge ${p.band.tone}" style="font-size:13px;padding:5px 14px">${esc(p.band.label)}</div>
         <div class="perf-raise">💡 ${esc(p.raise)}</div>
-        ${p.override?'<div class="perf-override-tag">✎ Manually set by admin</div>':''}
       </div>
-      ${isAdmin()?`<div class="card perf-adjust"><div class="card-head"><h3>Admin · adjust score</h3></div><div class="card-pad">
-        <p class="fhint" style="margin:0 0 8px">Set a manual score (0–150) to override the calculated one, or clear it to use the automatic score.</p>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <input id="perf-manual" class="login-input" style="max-width:120px" type="number" min="0" max="150" value="${esc(s.perfManual!=null?s.perfManual:'')}" placeholder="0–150">
-          <button class="btn sm primary" onclick="perfSetManual('${ckJS(name)}')">Save score</button>
-          <button class="btn sm" onclick="perfClearManual('${ckJS(name)}')">Use automatic</button>
-        </div></div></div>`:''}
-      <div class="card perf-breakdown"><div class="card-head"><h3>Score breakdown</h3><span class="ch-sub">Base ${PERF_BASE} ± activity</span></div>
-        <div class="card-pad"><div class="perf-base">Base score <b>${PERF_BASE}</b></div>${comp.map(bar).join('')}<div class="perf-total">Total performance index <b style="color:${perfColor(p.total)}">${p.total}</b></div></div></div>
+      <div class="card perf-breakdown"><div class="card-head"><h3>This period</h3><span class="ch-sub">${p.ev.length} point event${p.ev.length===1?'':'s'}</span></div>
+        <div class="card-pad">
+          <div style="display:flex;gap:18px;flex-wrap:wrap">
+            <div><div style="font-size:24px;font-weight:900;color:#0a8a5f">+${p.plus}</div><div style="font-size:11.5px;color:var(--muted)">earned</div></div>
+            <div><div style="font-size:24px;font-weight:900;color:#c62828">${p.minus}</div><div style="font-size:11.5px;color:var(--muted)">deducted</div></div>
+            <div><div style="font-size:24px;font-weight:900">🕐 ${p.lates}</div><div style="font-size:11.5px;color:var(--muted)">clock-in late</div></div>
+            <div><div style="font-size:24px;font-weight:900">📣 ${p.reports}</div><div style="font-size:11.5px;color:var(--muted)">reports filed</div></div>
+          </div></div></div>
     </div>
-    <div class="kpi-grid">
-      <div class="kpi tone-info"><div class="k-top"><div class="k-ic">✅</div></div><div class="k-val">${d.subs.length}</div><div class="k-lbl">Checklists submitted</div></div>
-      <div class="kpi tone-ok"><div class="k-top"><div class="k-ic">🛡️</div></div><div class="k-val">${d.verified.length}</div><div class="k-lbl">Verified · ${d.avgProg}% avg</div></div>
-      <div class="kpi tone-info"><div class="k-top"><div class="k-ic">📣</div></div><div class="k-val">${d.reports.length}</div><div class="k-lbl">Reports filed</div></div>
-      <div class="kpi tone-ok"><div class="k-top"><div class="k-ic">🎓</div></div><div class="k-val">${d.training.length}</div><div class="k-lbl">Training done</div></div>
-      <div class="kpi tone-warn"><div class="k-top"><div class="k-ic">🏆</div></div><div class="k-val">${d.rewards.length}</div><div class="k-lbl">Awards</div></div>
-      <div class="kpi tone-bad"><div class="k-top"><div class="k-ic">⚠️</div></div><div class="k-val">${d.violations.length}</div><div class="k-lbl">Violations</div></div></div>
-    <div class="split-2">
-      <div class="card"><div class="card-head"><h3>📣 Proactive reports (responsibility)</h3><span class="ch-sub">Raising issues earns points</span></div><div class="feed">${reportList}</div></div>
-      <div class="card"><div class="card-head"><h3>⚠️ Violations &amp; complaints</h3></div><div class="feed">${vioList}</div></div>
-    </div>`;
+    <div class="card"><div class="card-head"><h3>Point history — this period</h3><span class="ch-sub">every +/− with its record reference</span></div><div class="feed">${feed}</div></div>
+    ${perfRulesCard()}`;
 }
 
 /* ============================================================ STAFF STRUCTURE (restaurant-style) */
