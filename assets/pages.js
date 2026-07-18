@@ -2979,10 +2979,15 @@ function ckImgData(url,max,quality){ max=max||1400; quality=quality||0.9; return
    imgSrc() returned, which for a not-yet-downloaded photo was the grey "loading…"
    placeholder, so shared PDFs showed loading boxes instead of pictures. */
 async function ckPhotoMap(urls,max){
-  const uniq=[...new Set(urls)].filter(Boolean);
+  // Reports must embed REAL photos or nothing: an svg placeholder ("loading…" / "photo
+  // syncing") must never be drawn into a PDF, and a transient fetch hiccup gets ONE retry
+  // so a cold cloud fetch doesn't silently drop the photo from the report.
+  const uniq=[...new Set(urls)].filter(u=>u && !/^data:image\/svg/i.test(u));
   const pmap={}; let missing=0;
   await Promise.all(uniq.map(async u=>{
-    const src=window.photoSrcAsync?await photoSrcAsync(u):imgSrc(u);
+    let src=window.photoSrcAsync?await photoSrcAsync(u):imgSrc(u);
+    if(!src && window.photoSrcAsync){ await new Promise(r=>setTimeout(r,1200)); src=await photoSrcAsync(u); }
+    if(src && /^data:image\/svg/i.test(src)) src=null;   // placeholder is not a photo
     const d=src?await ckImgData(src,max||1200):null;
     if(d) pmap[u]=d; else missing++;
   }));
