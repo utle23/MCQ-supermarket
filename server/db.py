@@ -637,6 +637,28 @@ def _sync_accounts_from_staff(conn, store_id):
             conn.execute('INSERT INTO audit_logs(user_id,store_id,action,entity_type,entity_id,before_json,after_json,created_at) VALUES(?,?,?,?,?,?,?,?)',
                          ('system (store-move sync)', store_id, 'update', 'staffMove', str(d.get('name') or e)[:80],
                           json.dumps({'from': old}), json.dumps({'to': store_id, 'account': a['id']}), now()))
+    # pass 3 — NEW STAFF → Account Management: a LIVE profile with an email that has NO account
+    # anywhere gets a NOT-ACTIVATED account auto-created, so Account Management always shows the
+    # person and whether they have activated yet. Login role is conservative: a dept-lead-style
+    # job title gets 'staff', everyone else 'employee' — NEVER auto-'admin' (a typo in a job
+    # title must not mint a manager login; the account admin upgrades people manually).
+    for e, pair in idx_email.items():
+        sid, d = pair
+        if d.get('archived') or d.get('active') == 0: continue
+        if conn.execute('SELECT 1 FROM accounts WHERE lower(email)=?', (e,)).fetchone(): continue
+        title = str(d.get('role') or '').lower()
+        role = 'staff' if 'lead' in title else 'employee'
+        try:
+            aid = _gen_account_id(conn, store_id)
+            conn.execute('''INSERT INTO accounts(id,password,role,store_id,staff_id,name,email,department,activated,created_at,updated_at)
+                            VALUES(?,?,?,?,?,?,?,?,0,?,?)''',
+                         (aid, '', role, store_id, sid, str(d.get('name') or '').strip(),
+                          str(d.get('email') or '').strip(), str(d.get('dept') or '').strip(), now(), now()))
+            conn.execute('INSERT INTO audit_logs(user_id,store_id,action,entity_type,entity_id,before_json,after_json,created_at) VALUES(?,?,?,?,?,?,?,?)',
+                         ('system (staff→account sync)', store_id, 'create', 'account', aid, None,
+                          json.dumps({'email': e, 'role': role, 'from_staff': sid, 'activated': 0}), now()))
+        except Exception:
+            pass   # id space exhausted or race — the next staff save retries
 
 def _next_staff_id(conn):
     """Next E#### staff id — continues the same global series bulk_import_staff uses."""
@@ -2329,12 +2351,15 @@ def save_state(store_id, state, user, client=None):
         staff = state.get('staff') or []
         if isinstance(staff, list):
             email_owner = {}
+            staff_uat = {}   # per-profile version marker — same optimistic concurrency as records
             for r0 in conn.execute('SELECT id,data_json FROM staff WHERE store_id=?', (store_id,)).fetchall():
                 try: d0 = json.loads(r0['data_json'] or '{}')
                 except Exception: d0 = {}
                 e0 = str(d0.get('email') or '').strip().lower()
                 if e0 and e0 not in email_owner:
                     email_owner[e0] = (str(r0['id']), bool(d0.get('archived') or d0.get('active') == 0))
+                try: staff_uat[str(r0['id'])] = int(d0.get('updatedAt') or 0)
+                except Exception: pass
             for i, s in enumerate(staff):
                 sid = str((isinstance(s, dict) and (s.get('id') or s.get('code'))) or ('s#' + str(i)))
                 if sid in tomb: continue   # deleted staff → never re-add from a stale device's blob
@@ -2347,6 +2372,10 @@ def save_state(store_id, state, user, client=None):
                         s = dict(s); s['id'] = sid; s['archived'] = 0; s['active'] = 1
                     arch = bool(isinstance(s, dict) and (s.get('archived') or s.get('active') == 0))
                     email_owner[e] = (sid, arch)
+                # a STALE device must not roll back a newer role/department/archive edit made on
+                # another device — same updatedAt guard the records merge has (280f0af)
+                if int((isinstance(s, dict) and s.get('updatedAt')) or 0) < staff_uat.get(sid, 0):
+                    superseded = True; continue
                 conn.execute('INSERT INTO staff(id,store_id,data_json) VALUES(?,?,?) ON CONFLICT (store_id,id) DO UPDATE SET data_json=excluded.data_json', (sid, store_id, json.dumps(s)))
                 if bool(isinstance(s, dict) and (s.get('archived') or s.get('active') == 0)):
                     _revoke_person_tokens(conn, store_id, sid)   # archive = log them out + block re-login
