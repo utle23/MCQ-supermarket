@@ -1184,17 +1184,21 @@ def get_photo(photo_id):
     return resp
 
 # ---------- ONE-SHOT Cloudinary → ImageKit cutover (super-only; endpoints removed after the migration) ----------
-_cloudmig = {}   # progress of the background migration thread
+# NOTE: no literal % in any SQL (the ?→%s Postgres translation forbids it) → substr() instead of LIKE.
+# Progress lives in the settings table because gunicorn runs several workers — a module dict is per-process.
+_LEGACY_WHERE = "cloud IS NOT NULL AND cloud != '' AND substr(cloud,1,3) != 'ik|'"
 
 def _cloud_migrate_run():
-    st = _cloudmig
+    st = {'running': True, 'started_at': db.now()[:16]}
+    def flush(): db.set_setting('cloudmig', st)
     try:
         conn = db.connect()
-        photos = conn.execute("SELECT id, cloud FROM photos WHERE cloud IS NOT NULL AND cloud != '' AND cloud NOT LIKE 'ik|%'").fetchall()
-        files_ = conn.execute("SELECT id, mime, cloud, chunks FROM files WHERE cloud IS NOT NULL AND cloud != '' AND cloud NOT LIKE 'ik|%'").fetchall()
+        photos = conn.execute("SELECT id, cloud FROM photos WHERE " + _LEGACY_WHERE).fetchall()
+        files_ = conn.execute("SELECT id, mime, cloud, chunks FROM files WHERE " + _LEGACY_WHERE).fetchall()
         conn.close()
         st.update(photos_total=len(photos), photos_done=0, photos_failed=0,
                   files_total=len(files_), files_done=0, files_failed=0, errors=[])
+        flush()
         for r in photos:
             pid, old = r['id'], r['cloud']
             try:
@@ -1207,6 +1211,7 @@ def _cloud_migrate_run():
             except Exception as e:
                 st['photos_failed'] += 1
                 if len(st['errors']) < 20: st['errors'].append('photo %s: %s' % (pid, e))
+            if (st['photos_done'] + st['photos_failed']) % 10 == 0: flush()
         for r in files_:
             fid, old = r['id'], r['cloud']
             try:
@@ -1225,6 +1230,7 @@ def _cloud_migrate_run():
         st['errors'] = (st.get('errors') or []) + ['fatal: %s' % e]
     st['running'] = False
     st['finished_at'] = db.now()[:16]
+    flush()
 
 @api.route('/api/cloud/migrate', methods=['GET', 'POST'])
 def cloud_migrate():
@@ -1232,13 +1238,14 @@ def cloud_migrate():
     (only the internal cloud pointer changes — nothing user-visible moves). GET: progress."""
     au = require_auth()
     if au['role'] != 'super': abort(403)
+    st = db.get_setting('cloudmig') or {}
     if request.method == 'GET':
-        return jsonify(ok=True, **_cloudmig)
+        return jsonify(ok=True, **st)
     if not (cloudstore.IK_ENABLED and cloudstore.CLOUDINARY_ENABLED):
         return jsonify(ok=False, error='both IMAGEKIT_* and CLOUDINARY_URL env must be set'), 400
-    if _cloudmig.get('running'):
-        return jsonify(ok=False, error='already running', **_cloudmig), 409
-    _cloudmig.clear(); _cloudmig['running'] = True
+    if st.get('running') and not request.args.get('force'):
+        return jsonify(ok=False, error='already running (POST ?force=1 to override a stale run)', **st), 409
+    db.set_setting('cloudmig', {'running': True, 'started_at': db.now()[:16]})
     import threading
     threading.Thread(target=_cloud_migrate_run, daemon=True).start()
     return jsonify(ok=True, started=True)
@@ -1251,11 +1258,11 @@ def cloud_purge():
     if au['role'] != 'super': abort(403)
     if not cloudstore.CLOUDINARY_ENABLED:
         return jsonify(ok=False, error='CLOUDINARY_URL not set'), 400
-    if _cloudmig.get('running'):
+    if (db.get_setting('cloudmig') or {}).get('running'):
         return jsonify(ok=False, error='migration still running'), 409
     conn = db.connect()
-    np = conn.execute("SELECT COUNT(*) AS n FROM photos WHERE cloud IS NOT NULL AND cloud != '' AND cloud NOT LIKE 'ik|%'").fetchone()['n']
-    nf = conn.execute("SELECT COUNT(*) AS n FROM files WHERE cloud IS NOT NULL AND cloud != '' AND cloud NOT LIKE 'ik|%'").fetchone()['n']
+    np = conn.execute("SELECT COUNT(*) AS n FROM photos WHERE " + _LEGACY_WHERE).fetchone()['n']
+    nf = conn.execute("SELECT COUNT(*) AS n FROM files WHERE " + _LEGACY_WHERE).fetchone()['n']
     conn.close()
     if np or nf:
         return jsonify(ok=False, error='DB still references Cloudinary — migrate first', photos_left=int(np), files_left=int(nf)), 400
