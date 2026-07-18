@@ -1305,6 +1305,12 @@ def cloud_purge():
     if (db.get_setting('cloudmig') or {}).get('running'):
         return jsonify(ok=False, error='migration still running'), 409
     conn = db.connect()
+    # a legacy row whose Cloudinary asset is ALREADY GONE (404) is dead weight — its download
+    # fails today regardless; drop the row instead of letting it block the purge forever
+    for r in conn.execute("SELECT id, cloud, chunks FROM files WHERE " + _LEGACY_WHERE).fetchall():
+        try: cloudstore.get_file(r['cloud'], (r['chunks'] if 'chunks' in r.keys() else 1) or 1)
+        except Exception: conn.execute('DELETE FROM files WHERE id=?', (r['id'],))
+    conn.commit()
     np = conn.execute("SELECT COUNT(*) AS n FROM photos WHERE " + _LEGACY_WHERE).fetchone()['n']
     nf = conn.execute("SELECT COUNT(*) AS n FROM files WHERE " + _LEGACY_WHERE).fetchone()['n']
     conn.close()
@@ -1325,6 +1331,56 @@ def cloud_purge():
         except Exception as e:
             remaining[rt] = 'check failed: %s' % e
     return jsonify(ok=True, deleted=deleted, remaining=remaining)
+
+def _cloud_delete_old_run(before):
+    st = {'running': True, 'before': before, 'started_at': db.now()[:16]}
+    def flush(): db.set_setting('clouddel', st)
+    try:
+        conn = db.connect()
+        rows = conn.execute('SELECT id, cloud FROM photos WHERE created_at < ?', (before,)).fetchall()
+        conn.close()
+        st.update(total=len(rows), done=0, failed=0, errors=[])
+        flush()
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+        lk = threading.Lock()
+        def one(r):
+            pid, cloud = r['id'], r['cloud']
+            try:
+                if cloud: cloudstore.delete_photo(cloud)     # frees the ImageKit (or legacy Cloudinary) asset
+                c = db.connect(); c.execute('DELETE FROM photos WHERE id=?', (pid,)); c.commit(); c.close()
+                with lk:
+                    st['done'] += 1
+                    if st['done'] % 25 == 0: flush()
+            except Exception as e:
+                with lk:
+                    st['failed'] += 1
+                    if len(st['errors']) < 20: st['errors'].append('%s: %s' % (pid, e))
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            list(ex.map(one, rows))
+    except Exception as e:
+        st['errors'] = (st.get('errors') or []) + ['fatal: %s' % e]
+    st['running'] = False
+    st['finished_at'] = db.now()[:16]
+    flush()
+
+@api.route('/api/cloud/delete-old', methods=['GET', 'POST'])
+def cloud_delete_old():
+    """Khoi's fresh start: DELETE every photo taken before the ImageKit cutover — the cloud
+    asset AND its photos row. Old references then 404 and the client renders a clean
+    'photo removed' tile (new-era 404s keep the photo-syncing retry). GET: progress."""
+    au = require_auth()
+    if au['role'] != 'super': abort(403)
+    if request.method == 'GET':
+        return jsonify(ok=True, **(db.get_setting('clouddel') or {}))
+    before = request.args.get('before') or '2026-07-18 23:00'
+    st0 = db.get_setting('clouddel') or {}
+    if st0.get('running') and not request.args.get('force'):
+        return jsonify(ok=False, error='already running', **st0), 409
+    db.set_setting('clouddel', {'running': True, 'before': before, 'started_at': db.now()[:16]})
+    import threading
+    threading.Thread(target=lambda: _cloud_delete_old_run(before), daemon=True).start()
+    return jsonify(ok=True, started=True, before=before)
 
 @api.route('/api/audit/<store_id>', methods=['GET'])
 def audit_trail(store_id):
