@@ -58,8 +58,10 @@ def db_safe(s):
 @api.route('/api/health')
 def health():
     size = os.path.getsize(db.DB_PATH) if os.path.exists(db.DB_PATH) else 0
+    # cloud: which photo backend is live (no secrets) — lets the ImageKit migration be confirmed
+    cloud = 'imagekit' if cloudstore.IK_ENABLED else ('cloudinary' if cloudstore.CLOUDINARY_ENABLED else 'local')
     # rev: which commit is live (Render sets RENDER_GIT_COMMIT) — lets deploys be confirmed
-    return jsonify(ok=True, time=db.now(), db_bytes=size, stores=len(db.STORES),
+    return jsonify(ok=True, time=db.now(), db_bytes=size, stores=len(db.STORES), cloud=cloud,
                    rev=(os.environ.get('RENDER_GIT_COMMIT') or '')[:8] or None)
 
 # ---------- 9:30 PM daily digest, triggerable by an external cron (cron-job.org) ----------
