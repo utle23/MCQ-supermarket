@@ -1435,7 +1435,32 @@ async function boot(){
     hydrateAccountData();
     enterApp();
     startAccountSync();
-  } else showLogin();
+    return;
+  }
+  // Android kills the browser tab while the CAMERA app is open (low memory), wiping
+  // sessionStorage — but the sliding 7-day token survives in localStorage. Rebuild the
+  // session from the server instead of bouncing a signed-in person to the login page
+  // mid-task. Only a real 401/403 (revoked/expired token) shows login.
+  const tok=(window.localStorage&&localStorage.getItem('mcq_token'))||'';
+  if(tok){
+    setBootMessage('Restoring your session…','Signing you back in securely');
+    for(let attempt=0;attempt<2;attempt++){
+      try{
+        const r=await fetch('/api/me',{headers:{Authorization:'Bearer '+tok}});
+        if(r.status===401||r.status===403){ try{ localStorage.removeItem('mcq_token'); }catch(e){} break; }
+        if(!r.ok) throw new Error('http '+r.status);
+        const res=await r.json();
+        if(res&&res.ok){
+          loginAs(res.role,(res.role==='super'||res.role==='ba')?'All stores':res.store,
+            {staffId:res.staff_id, name:res.staff_name, accountId:res.account_id,
+             needsProfile:res.needs_profile, acctAdmin:res.acct_admin, homeStore:res.home_store});
+          return;
+        }
+        break;
+      }catch(e){ await new Promise(w=>setTimeout(w,1500)); }   // network blip → one retry
+    }
+  }
+  showLogin();
 }
 // Safety net: a deleted/missing EVIDENCE photo must never show a broken-image icon or disturb
 // the page — hide it quietly. (Photo Gallery tiles use CSS backgrounds and already fail silently.)

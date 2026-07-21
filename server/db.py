@@ -2385,6 +2385,7 @@ def save_state(store_id, state, user, client=None):
         if isinstance(subs, list):
             for i, s in enumerate(subs):
                 cid = str((isinstance(s, dict) and s.get('id')) or ('c#' + str(i)))
+                if cid in tomb: continue   # deleted submission → a stale device can't resurrect it
                 row = conn.execute('SELECT data_json FROM checklist_submissions WHERE store_id=? AND id=?',
                                    (store_id, cid)).fetchone()
                 payload = _merge_checklist_submission(row['data_json'] if row else None, s if isinstance(s, dict) else {})
@@ -2403,6 +2404,7 @@ def save_state(store_id, state, user, client=None):
         if isinstance(bin_recs, list):
             for i, r in enumerate(bin_recs):
                 bid = str((isinstance(r, dict) and r.get('id')) or ('b#' + str(i)))
+                if bid in tomb: continue   # deleted bin record → a stale device can't resurrect it
                 conn.execute('INSERT INTO bin_records(id,store_id,data_json,created_at) VALUES(?,?,?,?) ON CONFLICT (store_id,id) DO UPDATE SET data_json=excluded.data_json, created_at=excluded.created_at',
                              (bid, store_id, json.dumps(r), now()))
         # lean blob: identical shape, heavy arrays emptied (rebuilt on load)

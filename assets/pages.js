@@ -3399,17 +3399,45 @@ function renderSchedules(){
 function binCfg(){ DB.binAdmin=DB.binAdmin||{activeDays:['Tue','Thu','Fri'],checklist:[],records:[]}; return DB.binAdmin; }
 function binState(){
   const b=binCfg(), active=(b.activeDays&&b.activeDays[0])||'Tue';
+  const fresh=!State.bin;
   State.bin=State.bin||{week:0,day:active,edit:false,store:isSuper()?DB.stores[0]:State.branch,checks:{},name:'',qty:'',photo:null};
   if(!State.bin.day) State.bin.day=active;
   if(isSuper()&&!State.bin.store) State.bin.store=DB.stores[0];
+  if(fresh) binDraftRestore(State.bin);   // Android killed the tab mid-form (camera) → bring it back
   return State.bin;
 }
+/* ---- bin draft: the form + photo survive Android killing the tab while the camera is open ---- */
+const BIN_DRAFT_KEY='mcq_bin_draft';
+function binDraftSave(){ try{
+  const s=State.bin||{};
+  if(!String(s.name||'').trim() && !String(s.qty||'').trim() && !s.photo && !Object.keys(s.checks||{}).length){ localStorage.removeItem(BIN_DRAFT_KEY); return; }
+  const pd=(window.PhotoStore && s.photo && /^data:image\//.test(PhotoStore[s.photo]||''))?PhotoStore[s.photo]:null;
+  localStorage.setItem(BIN_DRAFT_KEY, JSON.stringify({store:binStore(),day:s.day,week:s.week||0,name:s.name||'',qty:s.qty||'',checks:s.checks||{},photo:s.photo||null,photoData:pd,ts:Date.now()}));
+}catch(e){} }
+function binDraftClear(){ try{ localStorage.removeItem(BIN_DRAFT_KEY); }catch(e){} }
+function binDraftRestore(s){ try{
+  const d=JSON.parse(localStorage.getItem(BIN_DRAFT_KEY)||'null'); if(!d) return;
+  if(Date.now()-(d.ts||0)>3*3600*1000){ binDraftClear(); return; }        // older than 3h → discard
+  if(d.store && d.store!==binStore()) return;                              // another store's draft
+  s.day=d.day||s.day; s.week=d.week||0; s.name=d.name||''; s.qty=d.qty||''; s.checks=d.checks||{}; s.photo=d.photo||null;
+  if(d.photo && d.photoData && window.PhotoStore){
+    PhotoStore[d.photo]=PhotoStore[d.photo]||d.photoData;                  // photo shows instantly again
+    binPhotoReupload(d.photo,d.photoData,d.store);                         // and re-sends in case the upload died with the tab
+  }
+}catch(e){} }
+function binPhotoReupload(id,dataUrl,store){ try{
+  const parts=String(dataUrl).split(','), mime=((parts[0]||'').match(/:(.*?);/)||[])[1]||'image/jpeg';
+  const bin=atob(parts[1]||''); const arr=new Uint8Array(bin.length); for(let i=0;i<bin.length;i++) arr[i]=bin.charCodeAt(i);
+  const fd=new FormData(); fd.append('id',id); fd.append('store_id',store||binStore());
+  fd.append('image', new Blob([arr],{type:mime}), id+'.jpg');              // file part — form fields are capped at 500KB
+  fetch('/api/photos',{method:'POST',headers:{Authorization:'Bearer '+((window.localStorage&&localStorage.getItem('mcq_token'))||'')},body:fd}).catch(()=>{});
+}catch(e){} }
 function binStore(){ const s=binState(); return isSuper()?(s.store||DB.stores[0]):State.branch; }
 function binWeek(delta){ const s=binState(); s.week=(s.week||0)+delta; renderBinAdmin(); }
-function binSelect(day){ const b=binCfg(); if(!(b.activeDays||[]).includes(day)){ toast('No bin checklist scheduled for '+day); return; } const s=binState(); if(s.day===day) return; /* re-tap must NOT wipe a half-filled form */ s.day=day; s.checks={}; s.name=''; s.qty=''; s.photo=null; renderBinAdmin(); }
-function binSetStore(store){ const s=binState(); if(s.store===store) return; s.store=store; s.checks={}; s.name=''; s.qty=''; s.photo=null; renderBinAdmin(); }
-function binSet(field,value){ const s=binState(); s[field]=value; }
-function binToggleTask(id,on){ const s=binState(); s.checks=s.checks||{}; s.checks[id]=!!on; }
+function binSelect(day){ const b=binCfg(); if(!(b.activeDays||[]).includes(day)){ toast('No bin checklist scheduled for '+day); return; } const s=binState(); if(s.day===day) return; /* re-tap must NOT wipe a half-filled form */ s.day=day; s.checks={}; s.name=''; s.qty=''; s.photo=null; binDraftClear(); renderBinAdmin(); }
+function binSetStore(store){ const s=binState(); if(s.store===store) return; s.store=store; s.checks={}; s.name=''; s.qty=''; s.photo=null; binDraftClear(); renderBinAdmin(); }
+function binSet(field,value){ const s=binState(); s[field]=value; binDraftSave(); }
+function binToggleTask(id,on){ const s=binState(); s.checks=s.checks||{}; s.checks[id]=!!on; binDraftSave(); }
 function binDayDate(day,off){ const start=schedWeekStart(off||0), idx=SCHED_DAYS.indexOf(day), d=new Date(start); d.setDate(start.getDate()+Math.max(0,idx)); return d; }
 function binDayKey(day,off){ return dISO(binDayDate(day,off)); }
 function binRecordsForWeek(){
@@ -3420,7 +3448,7 @@ async function binPhoto(input){
   const f=input.files&&input.files[0]; if(!f) return;
   const s=binState();
   let ref; try{ const d=await compressImage(f,1600,.82); ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d,{module:'binAdmin',store:binStore(),day:s.day,date:binDayKey(s.day,s.week||0)}):d; }catch(e){ ref=URL.createObjectURL(f); }
-  s.photo=ref; renderBinAdmin(); toast('Photo evidence attached');
+  s.photo=ref; binDraftSave(); renderBinAdmin(); toast('Photo evidence attached');
 }
 function binSubmit(){
   try{
@@ -3436,7 +3464,7 @@ function binSubmit(){
       checklist:tasks.map(t=>({id:t.id,task:t.task,done:true})),created:dISO()+' '+perthTimeHM(),createdBy:(State.account&&State.account.name)||name};
     cfg.records=cfg.records||[]; cfg.records.unshift(rec);
     auditLog('create','binAdmin',rec.id,store,null,rec);
-    s.checks={}; s.name=''; s.qty=''; s.photo=null;
+    s.checks={}; s.name=''; s.qty=''; s.photo=null; binDraftClear();
     if(window.persist) window.persist();
     renderBinAdmin();
     // honest feedback: confirm the SERVER actually accepted it (offline keeps the record
@@ -3470,7 +3498,7 @@ function binSetActive(day,on){ const cfg=binCfg(); cfg.activeDays=cfg.activeDays
 function binTaskSet(id,value){ const t=(binCfg().checklist||[]).find(x=>x.id===id); if(!t) return; t.task=String(value||'').trim(); if(window.persist) window.persist(); }
 function binTaskAdd(){ const cfg=binCfg(); cfg.checklist=cfg.checklist||[]; cfg.checklist.push({id:'bin-'+Date.now(),task:'NEW BIN CHECKLIST ITEM'}); if(window.persist) window.persist(); renderBinAdmin(); }
 function binTaskDel(id){ const cfg=binCfg(); if(!confirm('Delete this bin checklist item?')) return; cfg.checklist=(cfg.checklist||[]).filter(t=>t.id!==id); if(window.persist) window.persist(); renderBinAdmin(); }
-function binDeleteRecord(id){ const cfg=binCfg(); const rec=(cfg.records||[]).find(r=>r.id===id); if(!rec||!confirm('Delete this bin record?')) return; auditLog('delete','binAdmin',id,rec.store,rec,null); cfg.records=(cfg.records||[]).filter(r=>r.id!==id); if(window.persist) window.persist(); renderBinAdmin(); }
+function binDeleteRecord(id){ const cfg=binCfg(); const rec=(cfg.records||[]).find(r=>r.id===id); if(!rec||!confirm('Delete this bin record?')) return; auditLog('delete','binAdmin',id,rec.store,rec,null); cfg.records=(cfg.records||[]).filter(r=>r.id!==id); if(window.mcqDeleteRecords) mcqDeleteRecords('bin_records',[id],{store:rec.store}); if(window.persist) window.persist(); renderBinAdmin(); }
 function renderBinAdmin(){
   const cfg=binCfg(), s=binState(), store=binStore(), active=cfg.activeDays||[], tasks=cfg.checklist||[], edit=isAdmin()&&s.edit;
   setAccent('#64748b'); setCrumb('🗑️','Bin Admin',`${store} · weekly bin collection checklist`);

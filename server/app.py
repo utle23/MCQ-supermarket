@@ -600,6 +600,30 @@ def device_login():
                    acct_admin=db.is_account_admin({'account_id': meta.get('account_id')}) if meta.get('account_id') else False,
                    stores=db.STORES if role in ('super', 'ba') else [store])
 
+@api.route('/api/me')
+def me():
+    """Session restore: Android kills the browser tab while the camera app is open, wiping
+    sessionStorage — but the sliding 7-day token survives in localStorage. The client boots,
+    calls this with the token, and rebuilds the signed-in session instead of bouncing the
+    person to the login page. Returns the same shape as /api/login (minus the token)."""
+    au = require_auth()
+    role, store = au['role'], au.get('store_id') or ''
+    needs_profile, acct_admin, home_store = False, False, None
+    aid = au.get('account_id')
+    if aid:
+        conn = db.connect()
+        arow = conn.execute('SELECT store_id, needs_profile FROM accounts WHERE id=?', (str(aid),)).fetchone()
+        conn.close()
+        if arow:
+            needs_profile = bool(arow['needs_profile'] if 'needs_profile' in arow.keys() else 0)
+            if role == 'super' and (arow['store_id'] or '') in db.STORES: home_store = arow['store_id']
+        try: acct_admin = bool(db.is_account_admin({'account_id': aid}))
+        except Exception: acct_admin = False
+    return jsonify(ok=True, role=role, store=store, home_store=home_store,
+                   staff_id=au.get('staff_id'), staff_name=au.get('staff_name'),
+                   account_id=aid, needs_profile=needs_profile, acct_admin=acct_admin,
+                   stores=db.STORES if role in ('super', 'ba') else [store])
+
 @api.route('/api/device/revoke', methods=['POST'])
 def device_revoke():
     au = require_auth()
@@ -1314,8 +1338,8 @@ def delete_records():
     sub_photos = {}    # store -> {photo pids} of the submissions being deleted → free their ImageKit assets
     try:
         # collect the (store_id, id) of the rows being deleted FIRST — so a stale device that
-        # still holds them in its blob can't resurrect them on its next save (records + staff)
-        if table in ('records', 'staff'):
+        # still holds them in its blob can't resurrect them on its next save
+        if table in ('records', 'staff', 'bin_records', 'checklist_submissions'):
             if d.get('all'):
                 sel = conn.execute('SELECT store_id,id FROM ' + table + (' WHERE' + scope if scope else ''), base).fetchall()
             else:
