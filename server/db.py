@@ -904,11 +904,17 @@ def check_overdue_and_alert():
                 try: items = json.loads(items)
                 except Exception: items = []
             if not isinstance(items, list): items = []
-            # expected departments per session, from the template
+            # expected departments per session, from the template's WHEN code (it[3]:
+            # 'O' Opening · 'M' Mid-afternoon · 'C' Closing · 'A' Opening+Closing). The old
+            # check used it[1] (the AREA name) and only worked when areas happened to be
+            # named after sessions — templates with real area names were never counted.
+            _wsess = {'O': ['Opening'], 'M': ['Mid-afternoon'], 'C': ['Closing'], 'A': ['Opening', 'Closing']}
             expected = {s: set() for s in CK_SESSIONS}
             for it in items:
-                if isinstance(it, list) and len(it) >= 2 and it[1] in expected and it[0]:
-                    expected[it[1]].add(it[0])
+                if not (isinstance(it, list) and len(it) >= 4 and it[0]): continue
+                for s in _wsess.get(str(it[3]), []):
+                    if s in expected: expected[s].add(it[0])
+                if len(it) >= 2 and it[1] in expected: expected[it[1]].add(it[0])   # legacy area-named rows
             # today's submitted (dept,session) for this store
             submitted = {s: set() for s in CK_SESSIONS}
             for r in conn.execute('SELECT data_json FROM checklist_submissions WHERE store_id=?', (store,)).fetchall():
@@ -919,9 +925,13 @@ def check_overdue_and_alert():
             for sess in CK_SESSIONS:
                 exp = expected.get(sess) or set()
                 if not exp: continue
-                dl = _deadline_minutes(deadlines.get(sess))
-                if dl is None or now_min <= dl: continue      # deadline not passed yet
-                missing = sorted(d for d in exp if d not in submitted.get(sess, set()))
+                # per-checklist deadlines: a flat '<Session>|<DEPT>' key overrides the store's
+                # session default for THAT department (Sundays already replaced the whole dict)
+                def _dept_dl(d):
+                    return _deadline_minutes(deadlines.get(sess + '|' + d) or deadlines.get(sess))
+                missing = sorted(d for d in exp
+                                 if d not in submitted.get(sess, set())
+                                 and _dept_dl(d) is not None and now_min > _dept_dl(d))
                 if not missing: continue
                 marker = 'overdue_sent:%s:%s:%s' % (store, today, sess)
                 if get_setting(marker): continue               # already alerted for this session today

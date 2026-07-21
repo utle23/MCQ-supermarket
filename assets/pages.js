@@ -303,11 +303,14 @@ function ckInSession(r,session){
   if(session==='Mid-afternoon') return r.when==='M';
   return false;
 }
-function ckDeadline(session){
+function ckDeadline(session, dept){
   // Sundays have their own full schedule (stores open later): 12:30 PM / 3:30 PM / 6:30 PM
   const ds=(State.chk&&State.chk.date)||ckTodayStr(); const d=new Date(ds+'T00:00');
   if(d.getDay()===0 && CK_SUNDAY[session]) return CK_SUNDAY[session];
-  return ((DB.checklist&&DB.checklist.deadlines)||{})[session] || CK_DEADLINE[session] || '';
+  const dl=(DB.checklist&&DB.checklist.deadlines)||{};
+  // per-checklist deadline: a FLAT '<Session>|<DEPT>' key overrides the store's session default
+  // (flat keys survive every blob merge untouched; a nested object would be clobbered)
+  return (dept&&dept!=='ALL'&&dl[session+'|'+dept]) || dl[session] || CK_DEADLINE[session] || '';
 }
 function ckVerifyDeadline(session,dateStr){
   const ds=dateStr||ckTodayStr(); const d=new Date(ds+'T00:00');
@@ -323,8 +326,44 @@ function ckPastTime(txt,dateStr){   // Perth "now" is past e.g. "10:30 AM" on da
     const n=perthNow(); return (n.getHours()*60+n.getMinutes())>(h*60+(+m[2]));
   }catch(e){ return false; }
 }
-function ckEditDeadline(session){ const v=prompt('Deadline for '+session+' (e.g. 10:30 AM):', ckDeadline(session)); if(v==null) return;
-  DB.checklist.deadlines=DB.checklist.deadlines||{}; DB.checklist.deadlines[session]=v.trim(); ckPersistTemplate(); renderChecklist(); toast('✓ Deadline updated'); }
+function ckEditDeadline(session){
+  // Per-checklist deadlines: the store default + an optional override for EVERY department.
+  const dl=(DB.checklist&&DB.checklist.deadlines)||{};
+  const depts=((DB.checklist&&DB.checklist.depts)||[]).slice();
+  const dm=(DB.checklist&&DB.checklist.deptMeta)||{};
+  const row=(label,inputId,val,ph,color,icon)=>`
+    <div style="display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:1px solid var(--line)">
+      <span style="width:12px;height:12px;border-radius:4px;background:${color||'#94a3b8'};flex:none"></span>
+      <b style="flex:1;font-size:13px">${icon?`<i class="fas ${icon}" style="color:${color};width:18px"></i> `:''}${esc(label)}</b>
+      <input id="${inputId}" class="login-input" style="max-width:120px;text-align:center" placeholder="${esc(ph)}" value="${esc(val||'')}">
+    </div>`;
+  const inner=`
+    <p class="fhint" style="margin:0 0 10px">Format <b>9:30 AM</b> / <b>7:30 PM</b>. A department left <b>empty</b> follows the store default. Sundays keep the store-wide Sunday schedule.</p>
+    ${row('Store default — every checklist','ckdl-default', dl[session]||'', CK_DEADLINE[session]||'10:30 AM', '#0f766e','fa-store')}
+    <div style="margin:10px 0 4px;font-weight:800;font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.4px">Per-checklist overrides</div>
+    ${depts.map(d=>row(d,'ckdl-'+encodeURIComponent(d), dl[session+'|'+d]||'', dl[session]||CK_DEADLINE[session]||'', (dm[d]||{}).color, (dm[d]||{}).icon)).join('')}
+    <div style="display:flex;gap:8px;margin-top:14px;justify-content:flex-end">
+      <button class="btn" onclick="mcqModalClose()">Cancel</button>
+      <button class="btn primary" onclick="ckSaveDeadlines('${ckJS(session)}')">✓ Save deadlines</button>
+    </div>`;
+  mcqModal('⏰ '+esc(session)+' deadlines', inner);
+}
+function ckSaveDeadlines(session){
+  const ok=v=>!v||/^\d{1,2}:\d{2}\s*(AM|PM)$/i.test(v);
+  const g=id=>{ const el=document.getElementById(id); return el?String(el.value||'').trim():''; };
+  const def=g('ckdl-default');
+  const depts=((DB.checklist&&DB.checklist.depts)||[]).slice();
+  const vals={}; let bad=null;
+  if(!ok(def)) bad='Store default';
+  depts.forEach(d=>{ const v=g('ckdl-'+encodeURIComponent(d)); if(!ok(v)) bad=bad||d; vals[d]=v; });
+  if(bad){ toast('⚠ '+bad+': use the format 9:30 AM / 7:30 PM'); return; }
+  DB.checklist.deadlines=DB.checklist.deadlines||{};
+  if(def) DB.checklist.deadlines[session]=def;
+  depts.forEach(d=>{ const k=session+'|'+d;
+    if(vals[d]) DB.checklist.deadlines[k]=vals[d]; else delete DB.checklist.deadlines[k]; });
+  mcqModalClose(); ckPersistTemplate(); renderChecklist(); toast('✓ Deadlines updated');
+}
+window.ckSaveDeadlines=ckSaveDeadlines;
 /* ---- in-progress checklist DRAFT (survives accidental close / lock / app-switch) ----
    Saved to localStorage per store + day. Only small data (done flags, notes, temp
    objects, photo IDs) — no image blobs — so it stays tiny. Restored on reopen. */
@@ -472,8 +511,8 @@ function renderChecklist(){
        <button class="seg-btn ${s.session==='Mid-afternoon'?'active':''}" onclick="ckSession('Mid-afternoon')">🌤️ Mid-afternoon</button>
        <button class="seg-btn ${s.session==='Closing'?'active':''}" onclick="ckSession('Closing')">🌙 Closing</button>
      </div>
-     <span class="ck-deadline ${s.session==='Opening'?'am':'pm'}">⏰ Deadline <b>${esc(ckDeadline(s.session))}</b>${State.account&&State.account.role==='admin'?` <button class="ck-dl-edit" onclick="ckEditDeadline('${ckJS(s.session)}')" title="Edit deadline">✎</button>`:''}</span>
-     ${!viewing && ckDeadlinePassed(s.session) && !ckSubmittedFor(s.dept,s.session,today)?'<span class="ck-overdue">⏰ OVERDUE</span>':''}
+     <span class="ck-deadline ${s.session==='Opening'?'am':'pm'}" title="${s.dept!=='ALL'&&((DB.checklist&&DB.checklist.deadlines)||{})[s.session+'|'+s.dept]?esc(s.dept)+' has its own deadline':''}">⏰ Deadline <b>${esc(ckDeadline(s.session,s.dept))}</b>${s.dept!=='ALL'&&((DB.checklist&&DB.checklist.deadlines)||{})[s.session+'|'+s.dept]?`<small style="opacity:.75"> · ${esc(s.dept)}</small>`:''}${(window.ckCanBuild&&ckCanBuild())?` <button class="ck-dl-edit" onclick="ckEditDeadline('${ckJS(s.session)}')" title="Edit deadlines (store + per checklist)">✎</button>`:''}</span>
+     ${!viewing && ckDeadlinePassed(s.session,s.dept) && !ckSubmittedFor(s.dept,s.session,today)?'<span class="ck-overdue">⏰ OVERDUE</span>':''}
      <div class="tb-spacer"></div>
      <div class="filter"><label>Date</label><input type="date" max="${today}" value="${esc(s.date)}" onchange="ckSetDate(this.value)">${viewing?`<button class="btn sm" onclick="ckSetDate('${today}')">Today</button>`:''}</div>
    </div>
@@ -1603,7 +1642,20 @@ function ckProgress(){
 function ckTaskIssue(r,st){
   st=st||{};
   if(st.done){
-    // photos and temperature are OPTIONAL everywhere — AI photo reading is just a helper
+    // meta.strict tasks (Subiaco's rebuilt template): the photo minimum / temperature entry is
+    // MANDATORY to complete the task. Everywhere else photos & temps stay optional helpers.
+    if(r.meta&&r.meta.strict){
+      if(r.meta.temp){
+        const tOk=st.defrosting || (st.temp && st.temp.value!=null && st.temp.value!=='');
+        if(!tOk) return 'enter the temperature — type °C or take a photo to auto-read';
+        // multi-unit temp checks (e.g. "fridges 1–4 · 4 photos"): every unit photographed
+        const needT=(r.photo&&r.photo.req&&(r.photo.min||1)>=2)?r.photo.min:0, haveT=(st.photos||[]).length;
+        if(!st.defrosting && needT>haveT) return 'attach '+(needT-haveT)+' more photo'+((needT-haveT)>1?'s':'')+' ('+haveT+'/'+needT+')';
+      }else if(r.photo&&r.photo.req){
+        const need=r.photo.min||1, have=(st.photos||[]).length;
+        if(have<need) return 'attach '+(need-have)+' more photo'+((need-have)>1?'s':'')+' ('+have+'/'+need+')';
+      }
+    }
     return null;   // satisfied
   }
   if(String(st.note||'').trim()) return null;   // not done but a reason was written → OK
@@ -3874,8 +3926,8 @@ function mgrSubs(){
 }
 /* ---------- daily operations pulse + "needs attention" (real data only) ---------- */
 function ckTodayStr(){ return todayISO(); }   // PERTH date — never the device timezone
-function ckDeadlinePassed(session){
-  const t=ckDeadline(session); if(!t) return false;
+function ckDeadlinePassed(session, dept){
+  const t=ckDeadline(session, dept); if(!t) return false;
   const m=/(\d{1,2}):(\d{2})\s*(AM|PM)?/i.exec(t); if(!m) return false;
   let h=+m[1]; const mi=+m[2], ap=(m[3]||'').toUpperCase();
   if(ap==='PM'&&h<12)h+=12; if(ap==='AM'&&h===12)h=0;
