@@ -3406,8 +3406,8 @@ function binState(){
 }
 function binStore(){ const s=binState(); return isSuper()?(s.store||DB.stores[0]):State.branch; }
 function binWeek(delta){ const s=binState(); s.week=(s.week||0)+delta; renderBinAdmin(); }
-function binSelect(day){ const b=binCfg(); if(!(b.activeDays||[]).includes(day)){ toast('No bin checklist scheduled for '+day); return; } const s=binState(); s.day=day; s.checks={}; s.name=''; s.qty=''; s.photo=null; renderBinAdmin(); }
-function binSetStore(store){ const s=binState(); s.store=store; s.checks={}; s.name=''; s.qty=''; s.photo=null; renderBinAdmin(); }
+function binSelect(day){ const b=binCfg(); if(!(b.activeDays||[]).includes(day)){ toast('No bin checklist scheduled for '+day); return; } const s=binState(); if(s.day===day) return; /* re-tap must NOT wipe a half-filled form */ s.day=day; s.checks={}; s.name=''; s.qty=''; s.photo=null; renderBinAdmin(); }
+function binSetStore(store){ const s=binState(); if(s.store===store) return; s.store=store; s.checks={}; s.name=''; s.qty=''; s.photo=null; renderBinAdmin(); }
 function binSet(field,value){ const s=binState(); s[field]=value; }
 function binToggleTask(id,on){ const s=binState(); s.checks=s.checks||{}; s.checks[id]=!!on; }
 function binDayDate(day,off){ const start=schedWeekStart(off||0), idx=SCHED_DAYS.indexOf(day), d=new Date(start); d.setDate(start.getDate()+Math.max(0,idx)); return d; }
@@ -3423,22 +3423,30 @@ async function binPhoto(input){
   s.photo=ref; renderBinAdmin(); toast('Photo evidence attached');
 }
 function binSubmit(){
-  const cfg=binCfg(), s=binState(), store=binStore(), active=cfg.activeDays||[], tasks=cfg.checklist||[];
-  if(!active.includes(s.day)){ toast('This day is not scheduled for bin collection'); return; }
-  const name=String(s.name||'').trim(), qty=Number(s.qty);
-  if(!name){ toast('Enter staff name'); return; }
-  if(!Number.isFinite(qty)||qty<=0){ toast('Enter bin quantity'); return; }
-  if(!s.photo){ toast('Photo evidence is required'); return; }
-  const missing=tasks.filter(t=>!s.checks||!s.checks[t.id]);
-  if(missing.length){ toast('Complete every bin checklist item before submit'); return; }
-  const rec={id:makeRecordId('BIN',store,binDayDate(s.day,s.week||0)),store,date:binDayKey(s.day,s.week||0),day:s.day,staffName:name,binQty:qty,photo:s.photo,
-    checklist:tasks.map(t=>({id:t.id,task:t.task,done:true})),created:dISO()+' '+perthTimeHM(),createdBy:(State.account&&State.account.name)||name};
-  cfg.records=cfg.records||[]; cfg.records.unshift(rec);
-  auditLog('create','binAdmin',rec.id,store,null,rec);
-  s.checks={}; s.name=''; s.qty=''; s.photo=null;
-  if(window.persist) window.persist();
-  renderBinAdmin();
-  toast('✓ Bin checklist saved with photo and timestamp');
+  try{
+    const cfg=binCfg(), s=binState(), store=binStore(), active=cfg.activeDays||[], tasks=cfg.checklist||[];
+    if(!active.includes(s.day)){ toast('This day is not scheduled for bin collection'); return; }
+    const name=String(s.name||'').trim(), qty=Number(s.qty);
+    if(!name){ toast('Enter staff name'); return; }
+    if(!Number.isFinite(qty)||qty<=0){ toast('Enter bin quantity'); return; }
+    if(!s.photo){ toast('Photo evidence is required'); return; }
+    const missing=tasks.filter(t=>!s.checks||!s.checks[t.id]);
+    if(missing.length){ toast('Complete every bin checklist item before submit ('+missing.length+' left)'); return; }
+    const rec={id:makeRecordId('BIN',store,binDayDate(s.day,s.week||0)),store,date:binDayKey(s.day,s.week||0),day:s.day,staffName:name,binQty:qty,photo:s.photo,
+      checklist:tasks.map(t=>({id:t.id,task:t.task,done:true})),created:dISO()+' '+perthTimeHM(),createdBy:(State.account&&State.account.name)||name};
+    cfg.records=cfg.records||[]; cfg.records.unshift(rec);
+    auditLog('create','binAdmin',rec.id,store,null,rec);
+    s.checks={}; s.name=''; s.qty=''; s.photo=null;
+    if(window.persist) window.persist();
+    renderBinAdmin();
+    // honest feedback: confirm the SERVER actually accepted it (offline keeps the record
+    // locally + dirty flag, and the auto-retry loop re-sends until the server confirms)
+    if(window.MCQDB&&MCQDB.saveAll){
+      toast('⏳ Submitting bin checklist…');
+      MCQDB.saveAll().then(()=>toast('✓ Bin checklist synced — visible on every device'))
+        .catch(()=>toast('⚠ Saved on this device — will auto-sync when back online'));
+    } else toast('✓ Bin checklist saved with photo and timestamp');
+  }catch(e){ toast('⚠ Submit failed: '+((e&&e.message)||e)+' — tell the office this exact message'); }
 }
 /* Manager report: pick a date range → branded PDF / Excel / Word of every bin record */
 function binExport(fmt){
