@@ -1550,6 +1550,7 @@ function ckDraw(){
               <select id="cke-photo"><option value="0" ${pm.mode==='0'?'selected':''}>No photo</option><option value="O" ${pm.mode==='O'?'selected':''}>📷 Photo optional</option><option value="R" ${pm.mode==='R'?'selected':''}>📷 Photo required</option></select>
               <label class="cke-num">min <input id="cke-pmin" type="number" min="0" max="10" value="${pm.min}"></label>
               <label class="cke-num">max <input id="cke-pmax" type="number" min="1" max="10" value="${pm.max}"></label>
+              <select id="cke-temp" title="Temperature check — photo is AI-read into °C, or type by hand"><option value="0" ${!(r.meta&&r.meta.temp)?'selected':''}>No temperature</option><option value="fridge" ${r.meta&&r.meta.temp&&r.meta.type==='fridge'?'selected':''}>🌡️ Fridge (AI photo read)</option><option value="coolroom" ${r.meta&&r.meta.temp&&r.meta.type==='coolroom'?'selected':''}>🌡️ Coolroom (AI photo read)</option><option value="freezer" ${r.meta&&r.meta.temp&&r.meta.type==='freezer'?'selected':''}>🌡️ Freezer (AI photo read)</option></select>
               <select id="cke-note"><option value="1" ${!(r.meta&&r.meta.noNote)?'selected':''}>⚠️ Note required if unticked</option><option value="0" ${(r.meta&&r.meta.noNote)?'selected':''}>Note optional if unticked</option></select>
               <button class="btn sm primary" onclick="ckSaveTask(${r.i})">💾 Save</button>
               <button class="btn sm" onclick="ckCancelEdit()">Cancel</button>
@@ -1789,6 +1790,18 @@ function ckSaveTask(i){
   else it[4]=0;
   const m=(it[5]&&typeof it[5]==='object')?it[5]:{};
   if((document.getElementById('cke-note')?.value||'1')==='0') m.noNote=true; else delete m.noNote;
+  // 🌡️ temperature option: the task gets the temp box (type °C by hand, or photo → AI read).
+  // In a store whose template already uses strict tasks (Subiaco), new temp/photo-required
+  // tasks are strict too, so the whole store keeps ONE consistent rule.
+  const strictStore=(DB.checklist.items||[]).some(x=>x&&x[5]&&x[5].strict);
+  const tsel=document.getElementById('cke-temp')?.value||'0';
+  if(tsel!=='0'){
+    m.temp=true; m.type=tsel;
+    if(!m.equipment) m.equipment=(it[2]||'').replace(/\s*TEMPERATURE\s*$/i,'').trim()||it[2];
+    if(!it[4]) it[4]='R1-1';                       // temp tasks show a photo slot (AI read; optional)
+    if(strictStore) m.strict=1;
+  } else if(m.temp){ delete m.temp; delete m.type; delete m.equipment; }
+  if(mode==='R'&&strictStore) m.strict=1;
   it[5]=m;
   State.chk.editing=null; ckPersistTemplate(); renderChecklist(); toast('✓ Task saved');
 }

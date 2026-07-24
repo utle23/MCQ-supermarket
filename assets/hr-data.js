@@ -77,6 +77,7 @@ DB.checklist = {
   },
   tempRanges: {
     fridge: {label:'Fridge', max:5, text:'<= 5 C'},
+    coolroom:{label:'Coolroom', max:5, text:'<= 5 C'},
     freezer:{label:'Freezer', min:-25, max:-15, text:'-25 C to -15 C'},
   },
   tempAlertEmails: ['manager@mcqinternational.com','safety@mcqinternational.com'],
