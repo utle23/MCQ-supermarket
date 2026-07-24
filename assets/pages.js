@@ -22,14 +22,16 @@ function todoFlowHTML(){
   const acct=State.account||{};
   if(!(acct.role==='admin'||acct.role==='staff')) return '';
   const store=State.branch, today=todayISO();
+  // a Dept Lead's home follows THEIR department's own deadline override (when one exists)
+  const leadDept=acct.role==='staff'?((((typeof myStaff==='function'&&myStaff())||{}).dept)||''):'';
   const subsToday=(DB.checklistSubs||[]).filter(x=>x.store===store&&x.date===today);
   const sess=['Opening','Mid-afternoon','Closing'].map(sx=>{
     const done=subsToday.some(x=>x.session===sx);
-    const over=!done&&(typeof ckDeadlinePassed==='function'&&ckDeadlinePassed(sx));
+    const over=!done&&(typeof ckDeadlinePassed==='function'&&ckDeadlinePassed(sx,leadDept));
     return {s:sx,done,over};
   });
   const ckState=sess.every(x=>x.done)?'done':(sess.some(x=>x.over)?'over':'pend');
-  const ckSub=sess.map(x=>`<span class="tf-pill ${x.done?'d':x.over?'o':''}">${HV_SESS[x.s]} ${x.done?'✓':(x.over?'overdue':ckDeadline(x.s))}</span>`).join('');
+  const ckSub=sess.map(x=>`<span class="tf-pill ${x.done?'d':x.over?'o':''}">${HV_SESS[x.s]} ${x.done?'✓':(x.over?'overdue':ckDeadline(x.s,leadDept))}</span>`).join('');
   const wd=perthNow().toLocaleDateString('en-US',{weekday:'short'});
   const binDay=((DB.binAdmin&&DB.binAdmin.activeDays)||[]).includes(wd);
   const binDone=(((DB.binAdmin||{}).records)||[]).some(r=>r.store===store&&String(r.date||'').slice(0,10)===today);
@@ -349,7 +351,7 @@ function ckEditDeadline(session){
   mcqModal('⏰ '+esc(session)+' deadlines', inner);
 }
 function ckSaveDeadlines(session){
-  const ok=v=>!v||/^\d{1,2}:\d{2}\s*(AM|PM)$/i.test(v);
+  const ok=v=>!v||/^(0?[1-9]|1[0-2]):[0-5][0-9]\s*(AM|PM)$/i.test(v);
   const g=id=>{ const el=document.getElementById(id); return el?String(el.value||'').trim():''; };
   const def=g('ckdl-default');
   const depts=((DB.checklist&&DB.checklist.depts)||[]).slice();
@@ -358,10 +360,10 @@ function ckSaveDeadlines(session){
   depts.forEach(d=>{ const v=g('ckdl-'+encodeURIComponent(d)); if(!ok(v)) bad=bad||d; vals[d]=v; });
   if(bad){ toast('⚠ '+bad+': use the format 9:30 AM / 7:30 PM'); return; }
   DB.checklist.deadlines=DB.checklist.deadlines||{};
-  if(def) DB.checklist.deadlines[session]=def;
+  if(def) DB.checklist.deadlines[session]=def; else delete DB.checklist.deadlines[session];   // blank = back to the built-in default
   depts.forEach(d=>{ const k=session+'|'+d;
     if(vals[d]) DB.checklist.deadlines[k]=vals[d]; else delete DB.checklist.deadlines[k]; });
-  mcqModalClose(); ckPersistTemplate(); renderChecklist(); toast('✓ Deadlines updated');
+  mcqModalClose(); ckPersistTemplate({deadlines:true}); renderChecklist(); toast('✓ Deadlines updated');
 }
 window.ckSaveDeadlines=ckSaveDeadlines;
 /* ---- in-progress checklist DRAFT (survives accidental close / lock / app-switch) ----
@@ -457,13 +459,16 @@ function ckRemapLiveState(prevItems){
     if(!State.chk) return;
     const s=ckSess();
     if(!ckBuckets().some(b=>b&&Object.keys(b).length)) return;
-    const key=r=>r[0]+'|'+r[1]+'|'+r[2];
+    // identity INCLUDES the when code (matches ckSig) — the same dept|area|task text exists as
+    // SEPARATE Opening and Closing rows (e.g. the FV temperature checks); a key without `when`
+    // collapsed both rows onto one index and swapped their in-progress state on every remap.
+    const key=r=>r[0]+'|'+r[1]+'|'+r[2]+'|'+r[3];
     const nIdx={}, nIdx2={};
-    ((DB.checklist&&DB.checklist.items)||[]).forEach((r,i)=>{ if(Array.isArray(r)){ nIdx[key(r)]=i; const k2=r[0]+'|'+r[2]; if(!(k2 in nIdx2)) nIdx2[k2]=i; } });
+    ((DB.checklist&&DB.checklist.items)||[]).forEach((r,i)=>{ if(Array.isArray(r)){ nIdx[key(r)]=i; const k2=r[0]+'|'+r[2]+'|'+r[3]; if(!(k2 in nIdx2)) nIdx2[k2]=i; } });
     const remapOne=(old)=>{ const remapped={};
       Object.keys(old||{}).forEach(k=>{
         const r=prevItems[+k]; if(!Array.isArray(r)) return;
-        let ni=nIdx[key(r)]; if(ni==null) ni=nIdx2[r[0]+'|'+r[2]];
+        let ni=nIdx[key(r)]; if(ni==null) ni=nIdx2[r[0]+'|'+r[2]+'|'+r[3]];
         if(ni!=null){ remapped[ni]=old[k]; if(remapped[ni]&&typeof remapped[ni]==='object') remapped[ni]._sig=ckSig(ni); }   // re-tag to the new index's task
       }); return remapped; };
     Object.keys(s).forEach(k=>{ s[k]=remapOne(s[k]); });   // every session bucket follows the same identity remap
@@ -1733,30 +1738,33 @@ function ckRmPhoto(e,i,url){
 function ckSession(v){ckUseSession(v);State.chk.area='ALL';renderChecklist();}
 function ckDept(d){State.chk.dept=d;State.chk.area='ALL';renderChecklist();}
 /* ---- admin checklist CRUD (add / edit / delete task) ---- */
-function ckPersistTemplate(){
+function ckPersistTemplate(opts){
   try{ DB.checklist=DB.checklist||{}; DB.checklist.templateVersion=(+(DB.checklist.templateVersion||0))+1; }catch(e){}
   const hs=ckHomeStore();
-  if(isSuper()&&hs){ ckSaveStoreTemplate(hs); return; }        // Super edits the ONE store they picked
+  if(isSuper()&&hs){ ckSaveStoreTemplate(hs,opts); return; }   // Super edits the ONE store they picked
   // Manager editing their OWN store's checklist → save through the per-store read-modify-write path
   // (the server bumps the version from its CURRENT value). The aggregate blob save's version guard
   // used to SILENTLY REJECT a manager's edit whenever their device's base version had drifted
   // (another device, or a Super Store-Config edit, had advanced it) — so the change "reverted" the
   // next day. Routing template edits here makes them land regardless of drift. Records/staff still
   // save via the normal blob.
-  if(State.account && State.account.role==='admin' && State.branch){ ckSaveStoreTemplate(State.branch); return; }
+  if(State.account && State.account.role==='admin' && State.branch){ ckSaveStoreTemplate(State.branch,opts); return; }
   if(window.persist) window.persist();
 }
 // Save a store's checklist template through the isolated Store-Config path (per-store, version
 // bumped SERVER-SIDE from its current value, audited) — never the aggregate blob. Used by a
 // Manager on their own store AND by Super on a picked store; both are immune to version drift.
-function ckSaveStoreTemplate(store){
+function ckSaveStoreTemplate(store,opts){
   if(!(window.MCQDB&&MCQDB.saveStoreConfig)){ toast('Cannot save right now — reconnect and try again'); return; }
   const cfg={ checklistItems:(DB.checklist&&DB.checklist.items)||[],
     checklistDepts:(DB.checklist&&DB.checklist.depts)||[],
-    checklistDeptMeta:(DB.checklist&&DB.checklist.deptMeta)||{},
-    checklistDeadlines:(DB.checklist&&DB.checklist.deadlines)||{} };
+    checklistDeptMeta:(DB.checklist&&DB.checklist.deptMeta)||{} };
+  // deadlines travel ONLY when a deadline edit actually happened (single-writer channel):
+  // every other builder action used to ship this device's CACHED deadlines dict too, so a
+  // device with a stale cache could silently wipe another manager's fresh override.
+  if(opts&&opts.deadlines) cfg.checklistDeadlines=(DB.checklist&&DB.checklist.deadlines)||{};
   // keep the local cache in step so a background reload re-applies THESE edited items, not stale ones
-  if(State._homeTpl&&State._homeTpl.store===store){ State._homeTpl.items=cfg.checklistItems; State._homeTpl.depts=cfg.checklistDepts; State._homeTpl.deptMeta=cfg.checklistDeptMeta; State._homeTpl.deadlines=cfg.checklistDeadlines; }
+  if(State._homeTpl&&State._homeTpl.store===store){ State._homeTpl.items=cfg.checklistItems; State._homeTpl.depts=cfg.checklistDepts; State._homeTpl.deptMeta=cfg.checklistDeptMeta; if(cfg.checklistDeadlines) State._homeTpl.deadlines=cfg.checklistDeadlines; }
   MCQDB.saveStoreConfig(store,cfg).catch(()=>toast('Could not save — check your connection and try again'));
 }
 // Super-only: pick which store's live checklist to view & edit (blank = read-only overview).
@@ -1793,15 +1801,24 @@ function ckSaveTask(i){
   // 🌡️ temperature option: the task gets the temp box (type °C by hand, or photo → AI read).
   // In a store whose template already uses strict tasks (Subiaco), new temp/photo-required
   // tasks are strict too, so the whole store keeps ONE consistent rule.
-  const strictStore=(DB.checklist.items||[]).some(x=>x&&x[5]&&x[5].strict);
+  const strictStore=(DB.checklist.items||[]).some(x=>x&&Array.isArray(x)&&x[5]&&typeof x[5]==='object'&&x[5].strict);
   const tsel=document.getElementById('cke-temp')?.value||'0';
   if(tsel!=='0'){
     m.temp=true; m.type=tsel;
-    if(!m.equipment) m.equipment=(it[2]||'').replace(/\s*TEMPERATURE\s*$/i,'').trim()||it[2];
-    if(!it[4]) it[4]='R1-1';                       // temp tasks show a photo slot (AI read; optional)
+    // equipment follows the task NAME while it stays auto-derived (renaming the task must not
+    // leave stale equipment names in temp alerts/reports); hand-set names are never touched
+    const derived=(it[2]||'').replace(/\s*TEMPERATURE\s*$/i,'').trim()||it[2];
+    if(!m.equipment||m.autoEquip){ m.equipment=derived; m.autoEquip=1; }
+    if(!it[4]){ it[4]='R1-1'; m.autoPhoto=1; }     // temp tasks show a photo slot (AI read; optional)
     if(strictStore) m.strict=1;
-  } else if(m.temp){ delete m.temp; delete m.type; delete m.equipment; }
-  if(mode==='R'&&strictStore) m.strict=1;
+  } else if(m.temp){
+    // temperature switched OFF: fully undo what enabling it auto-added — the photo code and
+    // the strict flag must not survive and silently block an ordinary repurposed task
+    delete m.temp; delete m.type; delete m.equipment; delete m.autoEquip;
+    if(m.autoPhoto){ it[4]=0; delete m.autoPhoto; delete m.strict; }
+  }
+  if(tsel==='0'&&mode==='R'&&it[4]&&strictStore) m.strict=1;
+  else if(tsel==='0'&&!it[4]&&!m.temp) delete m.strict;        // no photo + no temp → nothing to enforce
   it[5]=m;
   State.chk.editing=null; ckPersistTemplate(); renderChecklist(); toast('✓ Task saved');
 }
@@ -3954,11 +3971,14 @@ function ckOpsPulse(){
   const subs=mgrSubs().filter(s=>ckMyScope(s.store));
   const todaySubs=subs.filter(s=>s.date===today);
   const expectedPer=Math.max(1,depts.length*stores.length);
+  // a session counts as overdue when the store default OR any department's own override has passed
+  const dlAll=(DB.checklist&&DB.checklist.deadlines)||{};
+  const sessOver=sess=>ckDeadlinePassed(sess)||Object.keys(dlAll).some(k=>k.indexOf(sess+'|')===0&&ckDeadlinePassed(sess,k.slice(sess.length+1)));
   const sessions=['Opening','Mid-afternoon','Closing'].map(sess=>{
     const sub=todaySubs.filter(s=>s.session===sess), submitted=sub.length;
     return {key:sess, submitted, expected:expectedPer,
       pct:Math.min(100,Math.round(submitted/expectedPer*100)),
-      overdue: ckDeadlinePassed(sess) && submitted<expectedPer };
+      overdue: sessOver(sess) && submitted<expectedPer };
   });
   const pendingVerify=todaySubs.filter(ckIsPendingVerifySub).length;   // TODAY's pending (consistent with the rest of this dashboard, which is all today-scoped)
   let tempAlerts=0; todaySubs.forEach(s=>(s.items||[]).forEach(it=>{ if(it.temp&&it.temp.inRange===false) tempAlerts++; }));

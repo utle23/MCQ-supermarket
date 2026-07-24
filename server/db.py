@@ -914,7 +914,9 @@ def check_overdue_and_alert():
                 if not (isinstance(it, list) and len(it) >= 4 and it[0]): continue
                 for s in _wsess.get(str(it[3]), []):
                     if s in expected: expected[s].add(it[0])
-                if len(it) >= 2 and it[1] in expected: expected[it[1]].add(it[0])   # legacy area-named rows
+                # NOTE: no area-name fallback — the WHEN code is authoritative. Matching on a
+                # section named 'Opening'/'Closing' force-added depts with zero tasks in that
+                # session, producing unresolvable daily false overdue alerts.
             # today's submitted (dept,session) for this store
             submitted = {s: set() for s in CK_SESSIONS}
             for r in conn.execute('SELECT data_json FROM checklist_submissions WHERE store_id=?', (store,)).fetchall():
@@ -927,17 +929,25 @@ def check_overdue_and_alert():
                 if not exp: continue
                 # per-checklist deadlines: a flat '<Session>|<DEPT>' key overrides the store's
                 # session default for THAT department (Sundays already replaced the whole dict)
-                def _dept_dl(d):
-                    return _deadline_minutes(deadlines.get(sess + '|' + d) or deadlines.get(sess))
-                missing = sorted(d for d in exp
-                                 if d not in submitted.get(sess, set())
-                                 and _dept_dl(d) is not None and now_min > _dept_dl(d))
-                if not missing: continue
-                marker = 'overdue_sent:%s:%s:%s' % (store, today, sess)
-                if get_setting(marker): continue               # already alerted for this session today
-                _send_overdue_alert(conn, store, sess, deadlines.get(sess), missing)
-                set_setting(marker, 1)
-                fired.append({'store': store, 'session': sess, 'missing': missing})
+                def _dept_dl_txt(d):
+                    return deadlines.get(sess + '|' + d) or deadlines.get(sess)
+                sub_set = submitted.get(sess, set())
+                # DEDUP IS PER-DEPARTMENT (not per session): a dept whose own deadline passes
+                # later must still be alerted even if an earlier-deadline dept in the same
+                # session already fired. Group the depts due now by their ACTUAL deadline so
+                # each alert email states the deadline that really passed.
+                by_dl = {}
+                for d in sorted(exp):
+                    if d in sub_set: continue
+                    dl = _deadline_minutes(_dept_dl_txt(d))
+                    if dl is None or now_min <= dl: continue
+                    if get_setting('overdue_sent:%s:%s:%s:%s' % (store, today, sess, d)): continue
+                    by_dl.setdefault(_dept_dl_txt(d) or '', []).append(d)
+                for dl_txt, depts_missing in by_dl.items():
+                    _send_overdue_alert(conn, store, sess, dl_txt, depts_missing)
+                    for d in depts_missing:
+                        set_setting('overdue_sent:%s:%s:%s:%s' % (store, today, sess, d), 1)
+                    fired.append({'store': store, 'session': sess, 'missing': depts_missing, 'deadline': dl_txt})
             # ---- BIN day enforcement: on active bin days the record is MANDATORY ----
             try:
                 ba = st.get('binAdmin'); ba = json.loads(ba) if isinstance(ba, str) else (ba or {})
@@ -2461,6 +2471,11 @@ def save_state(store_id, state, user, client=None):
             if state.get('checklistDepts', None) is None and pj.get('checklistDepts') is not None:
                 lean['checklistDepts'] = pj.get('checklistDepts')
                 if pj.get('checklistDeptMeta') is not None: lean['checklistDeptMeta'] = pj.get('checklistDeptMeta')
+            # deadlines are SINGLE-WRITER: only the Store-Config path (apply_store_config) may
+            # change them. A blob save always carries whatever dict the device had cached — a
+            # stale device would silently wipe another manager's fresh per-dept override.
+            if pj.get('checklistDeadlines') is not None:
+                lean['checklistDeadlines'] = pj.get('checklistDeadlines')
             # MONOTONIC version: never store a LOWER template version than we already had. A stale
             # blob save (same items but an old version number, e.g. from a device whose local
             # version drifted) must not roll the version back — otherwise a later stale-but-higher

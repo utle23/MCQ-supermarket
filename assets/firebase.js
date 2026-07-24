@@ -174,7 +174,9 @@
       const cloudVer=+d.checklistTemplateVersion||0, seedVer=+((DB.checklist&&DB.checklist.templateVersion)||0);
       if(cloudVer>=seedVer){   // cloud template is same/newer → use it; else keep the newer seed and let next save push it to every store
         let ci=d.checklistItems; if(typeof ci==='string'){ try{ ci=JSON.parse(ci); }catch(e){ ci=null; } } if(Array.isArray(ci)&&ci.length) DB.checklist.items=ci;
-        if(d.checklistDeadlines && typeof d.checklistDeadlines==='object') DB.checklist.deadlines=Object.assign({},DB.checklist.deadlines,d.checklistDeadlines);
+        // REPLACE, not merge: the server copy is authoritative for deadlines, so a DELETED
+        // override actually disappears on every device (Object.assign could never remove keys)
+        if(d.checklistDeadlines && typeof d.checklistDeadlines==='object') DB.checklist.deadlines=clone(d.checklistDeadlines);
         // per-store department list (versioned with the template): a store may drop a department
         if(Array.isArray(d.checklistDepts)&&d.checklistDepts.length) DB.checklist.depts=clone(d.checklistDepts);
         if(d.checklistDeptMeta && typeof d.checklistDeptMeta==='object') DB.checklist.deptMeta=Object.assign({},DB.checklist.deptMeta,clone(d.checklistDeptMeta));
