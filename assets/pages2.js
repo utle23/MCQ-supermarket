@@ -117,7 +117,7 @@ function vioRecords(){
       <div class="vcard-h"><i class="fas ${info?'fa-door-open':(removed?'fa-ban':'fa-triangle-exclamation')}" style="color:${col}"></i><b style="${removed?'text-decoration:line-through;text-decoration-color:#cbd5e1':''}">${esc(v.category)}</b>
         ${info?`<span class="badge" style="background:#e0f2fe;color:#0369a1">ℹ️ Not a violation</span>`:(removed?`<span class="badge" style="background:#e2e8f0;color:#475569;font-weight:800">🚫 ${esc(String(v.status||'Removed'))}</span>`:`<span class="badge ${toneOf(v.severity)}">${esc(v.severity)}</span><span class="badge ${toneOf(v.step)}">${esc(v.step||'')}</span><span class="badge ${toneOf(v.status)}">${esc(v.status)}</span>`)}
         <span class="vcard-meta">👤 ${esc(v.staffName)} · 🏪 ${esc(v.store||'')} · ${esc((v.created||'').slice(0,16))}</span></div>
-      <div class="vcard-b">${esc(v.description||'')}${info&&v.reasonNote?`<div style="margin-top:6px;color:#0369a1">📝 Reason: ${esc(v.reasonNote)}</div>`:''}${removed&&v.removeReason?`<div style="margin-top:6px;color:#64748b">🚫 Removed reason: ${esc(v.removeReason)}${v.removedBy?' · by '+esc(v.removedBy):''}</div>`:''}</div>
+      <div class="vcard-b">${esc(v.description||'')}${v.photo?`<div style="margin-top:8px"><img src="${imgSrc(v.photo)}" data-pref="${esc(v.photo)}" alt="" style="max-height:120px;border-radius:10px;border:1px solid var(--line);cursor:zoom-in" onclick="event.stopPropagation();openLightbox('${ckJS(imgSrc(v.photo))}')"></div>`:''}${info&&v.reasonNote?`<div style="margin-top:6px;color:#0369a1">📝 Reason: ${esc(v.reasonNote)}</div>`:''}${removed&&v.removeReason?`<div style="margin-top:6px;color:#64748b">🚫 Removed reason: ${esc(v.removeReason)}${v.removedBy?' · by '+esc(v.removedBy):''}</div>`:''}</div>
       ${info&&vioCanManage()?`<div style="padding:0 14px 12px"><button class="btn xs" onclick="vioNotePrompt('${ckJS(v.id)}','${ckJS(v.store||'')}','${ckJS(v.staffName||'')}')"><i class="fas fa-pen"></i>&nbsp; ${v.reasonNote?'Edit reason':'Note reason'}</button></div>`:''}
     </div>`; }).join('');
   const vRecStore=isSuper()?((State.vio&&State.vio.recStore)||'ALL'):State.branch;
@@ -171,9 +171,14 @@ function mcqCreateViolation(o){
   const severity=o.severity||'Minor', step=o.step||'Verbal Discussion';
   const desc=(o.description||'').trim(), action=o.action||'', followUp=o.followUp||'';
   if(!staff||!desc) return null;
-  const id=makeRecordId('VIO',store);
+  // deterministic-id callers (e.g. the uniform check) pass o.id → if a record with that id
+  // already exists, do NOTHING (no duplicate record, no second email) — makes a re-submit or a
+  // second device idempotent.
+  const id=o.id||makeRecordId('VIO',store);
+  if(o.id && (DB.modules.violation.records||[]).some(r=>r.id===id)) return null;
   const rec={id,created:perthDT(),staffName:staff,store,
     category:ruleTitle,severity,step,status:step,description:desc,actionTaken:action,followUpDate:followUp};
+  if(o.photo) rec.photo=o.photo;   // evidence photo (e.g. staff not in uniform) — shows in the record detail
   auditLog('create','violation',rec.id,rec.store,null,rec);
   DB.modules.violation.records.unshift(rec);
   if(window.persist) window.persist();
@@ -193,6 +198,23 @@ function mcqCreateViolation(o){
   return rec;
 }
 window.mcqCreateViolation=mcqCreateViolation;
+/* Uniform check → violation. ONE per staff per day (deterministic id), so re-submitting the
+   checklist or another device syncing never double-records or re-emails. The warning step is
+   the count-based next step, so the record label matches the standing the person moves to. */
+function mcqCreateUniformViolation(o){
+  o=o||{}; const staff=(o.staff||'').trim(); if(!staff) return null;
+  const store=o.store||State.branch, date=String(o.date||todayISO());
+  const sm=(typeof staffByName==='function')&&staffByName(staff);
+  const slug=(sm&&sm.id)?('S'+String(sm.id)):(staff.replace(/[^A-Za-z0-9]+/g,'').slice(0,16).toUpperCase()||'X');
+  const id='VIO-UNI-'+date.replace(/-/g,'')+'-'+slug;
+  if((DB.modules.violation.records||[]).some(r=>r.id===id)) return null;   // already logged today
+  const cur=(typeof vioStanding==='function')?vioStanding(staff,isSuper()?store:null):{count:0};
+  const nextStep=(window.VIO_STEPS&&window.vioStepIdxForCount)?VIO_STEPS[vioStepIdxForCount((cur.count||0)+1)]:'Verbal Discussion';
+  return mcqCreateViolation({ id, staff, store, photo:o.photo||null,
+    ruleTitle:'Uniform & name badge', severity:'Minor', step:nextStep,
+    description:'Not in proper uniform / name badge — flagged on the '+(o.session||'')+' checklist'+(o.taskLabel?(' · '+o.taskLabel):'')+'. Automatic reminder sent.' });
+}
+window.mcqCreateUniformViolation=mcqCreateUniformViolation;
 function vioSubmit(){
   const staff=$('#vio-staff').value, desc=$('#vio-desc').value.trim();
   if(!staff||staff.startsWith('—')||!State.vio.ruleTitle||!desc){ toast('Pick a rule, staff and description'); return; }

@@ -305,6 +305,47 @@ function ckInSession(r,session){
   if(session==='Mid-afternoon') return r.when==='M';
   return false;
 }
+/* ---- uniform check: any task about staff uniform (every store — matched by meta.uniform OR
+   the word "uniform" in the task text, so existing uniform tasks in ALL stores get it) lets the
+   person ticking flag which staff were NOT in uniform (multi-select of the whole store, optional
+   photo each). On submit each flagged staff gets an automatic violation (email + level + record). */
+function ckIsUniformTask(r){ return !!(r && ((r.meta&&r.meta.uniform) || /uniform/i.test(r.task||''))); }
+function ckUniformStaff(){ const store=ckActiveStore(); return (DB.staff||[]).filter(s=>s&&s.active!==0&&!s.archived&&s.store===store).sort((a,b)=>String(a.name).localeCompare(String(b.name))); }
+function ckUniformPanel(r,st){
+  const bad=(st.uniformBad||[]).filter(o=>o&&o.name), badBy={}; bad.forEach(o=>badBy[o.name]=o);
+  const staff=ckUniformStaff();
+  const chips=staff.length?staff.map(s=>{ const on=!!badBy[s.name];
+    return `<button type="button" class="ck-uni-chip ${on?'on':''}" onclick="ckUniformToggle(${r.i},'${ckJS(s.name)}')">${on?'✕ ':''}${esc(s.name)}</button>`; }).join('')
+    : '<span class="fhint">No staff listed for this store yet.</span>';
+  const chosen=bad.map(o=>{
+    const ph=o.photo
+      ? `<span class="ck-uni-thumb"><img src="${imgSrc(o.photo)}" data-pref="${esc(o.photo)}" alt=""><button type="button" class="ck-rm" onclick="ckUniformRmPhoto(event,${r.i},'${ckJS(o.name)}')">✕</button></span>`
+      : `<label class="ck-uni-addphoto"><input type="file" accept="image/*" capture="environment" style="display:none" onchange="ckUniformPhoto(this,${r.i},'${ckJS(o.name)}')"><i class="fas fa-camera"></i>&nbsp;Photo (optional)</label>`;
+    return `<div class="ck-uni-row"><span class="ck-uni-name">🙅 ${esc(o.name)}</span>${ph}</div>`;
+  }).join('');
+  return `<div class="ck-uniform">
+      <div class="ck-uni-h">👕 Any staff NOT in proper uniform / name badge? <small>tap their name (multi-select) — leave empty if everyone is compliant</small></div>
+      <div class="ck-uni-chips">${chips}</div>
+      ${bad.length?`<div class="ck-uni-chosen">${chosen}
+        <div class="ck-uni-warn">⚠️ On submit, each selected staff gets an email reminder + a recorded uniform violation (their level rises automatically).</div></div>`:''}
+    </div>`;
+}
+function ckUniformToggle(i,name){
+  const st=State.chk.state[i]=State.chk.state[i]||{}; st.uniformBad=st.uniformBad||[];
+  const idx=st.uniformBad.findIndex(o=>o&&o.name===name);
+  if(idx>=0) st.uniformBad.splice(idx,1); else st.uniformBad.push({name:name,photo:null});
+  ckWriteDraft(); ckDraw();
+}
+async function ckUniformPhoto(input,i,name){
+  const f=input.files&&input.files[0]; if(!f) return;
+  const st=State.chk.state[i]=State.chk.state[i]||{}; st.uniformBad=st.uniformBad||[];
+  let o=st.uniformBad.find(x=>x&&x.name===name); if(!o){ o={name:name,photo:null}; st.uniformBad.push(o); }
+  const preview=URL.createObjectURL(f); o.photo=preview; ckDraw();   // instant preview
+  try{ const d=await compressImage(f); const ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d;
+    o.photo=ref; try{URL.revokeObjectURL(preview);}catch(e){} ckWriteDraft(); ckDraw(); }catch(e){}
+}
+function ckUniformRmPhoto(e,i,name){ if(e)e.stopPropagation(); const st=State.chk.state[i]||{}; const o=(st.uniformBad||[]).find(x=>x&&x.name===name); if(o){ o.photo=null; ckWriteDraft(); ckDraw(); } }
+window.ckUniformToggle=ckUniformToggle; window.ckUniformPhoto=ckUniformPhoto; window.ckUniformRmPhoto=ckUniformRmPhoto;
 function ckDeadline(session, dept){
   // Sundays have their own full schedule (stores open later): 12:30 PM / 3:30 PM / 6:30 PM
   const ds=(State.chk&&State.chk.date)||ckTodayStr(); const d=new Date(ds+'T00:00');
@@ -1583,7 +1624,7 @@ function ckDraw(){
             <div class="ck-text"><div class="ck-name">${esc(r.task)}</div>
               ${r.meta.temp?ckTempBox(r,st):''}
               <input id="ck-note-${r.i}" class="ck-note" placeholder="Note / reason…" value="${esc(st.note||'')}" oninput="ckNote(${r.i},this.value)"></div>
-            ${photoHtml}</div></div>`;
+            ${photoHtml}${ckIsUniformTask(r)?ckUniformPanel(r,st):''}</div></div>`;
       });
       if(ckCanBuild()) html+=`<button class="ck-add-ghost" onclick="ckAddTask('${ckJS(dept)}','${ckJS(area)}')"><i class="fas fa-plus"></i> Add task</button>`;
     });
@@ -2174,7 +2215,9 @@ function ckDoSubmit(){
   const allRows=DB.checklist.items.map(ckItem).filter(r=>ckStoreOk(r) && r.dept===State.chk.dept && ckInSession(r,State.chk.session));
   const out=allRows.filter(r=>r.meta.temp&&(State.chk.state[r.i]||{}).temp&&!((State.chk.state[r.i]||{}).temp.inRange)).length;
   const items=allRows.map(r=>{ const st=State.chk.state[r.i]||{};
-    return {task:r.task, area:r.area, done:!!st.done, note:st.note||'', photos:(st.photos||[]).slice(), temp: st.temp?{value:st.temp.value,inRange:!!st.temp.inRange,defrosting:!!st.defrosting,source:st.temp.source||'',manual:!!st.temp.manual,confirmedBy:st.temp.confirmedBy||'',suggestedValue:st.temp.suggestedValue??null,rawReading:st.temp.rawReading||''}:null }; });
+    const item={task:r.task, area:r.area, done:!!st.done, note:st.note||'', photos:(st.photos||[]).slice(), temp: st.temp?{value:st.temp.value,inRange:!!st.temp.inRange,defrosting:!!st.defrosting,source:st.temp.source||'',manual:!!st.temp.manual,confirmedBy:st.temp.confirmedBy||'',suggestedValue:st.temp.suggestedValue??null,rawReading:st.temp.rawReading||''}:null };
+    if(ckIsUniformTask(r)){ const bad=(st.uniformBad||[]).filter(o=>o&&o.name); if(bad.length) item.uniformOffenders=bad.map(o=>({name:o.name,photo:o.photo||null})); }
+    return item; });
   const doneN=items.filter(i=>i.done).length, totalN=items.length;
   const resp=(State.chk.resp||{})[State.chk.dept]||{};
   const ymd=todayISO();
@@ -2193,6 +2236,16 @@ function ckDoSubmit(){
   if(window.mcqMsgSend) try{ mcqMsgSend({kind:'message', store:_store, to_managers:true,
     subject:`📋 Checklist submitted · ${sub.dept} ${sub.session} · ${_store}`,
     body_html:`<p><b>${esc(sub.dept)}</b> · ${esc(sub.session)} · ${esc(_store)}</p><p>Progress: <b>${doneN}/${totalN}</b> (${sub.progress}%)<br>Submitted by: ${esc(sub.by||'—')}<br>Responsible: ${esc(sub.responsible||'—')}${out?`<br>⚠️ ${out} temperature alert(s)`:''}</p><p style="color:#6b7280">Open the checklist to verify.</p>`}); }catch(e){}
+  // 👕 uniform: each staff flagged as NOT in uniform on this checklist gets ONE automatic
+  // violation for the day (email reminder + level bump + record with their optional photo).
+  // Deterministic id (one per staff/day) makes a re-submit or another device idempotent —
+  // never a duplicate record and never a second email.
+  try{
+    let uni=0;
+    allRows.forEach(r=>{ if(!ckIsUniformTask(r)) return; const st=State.chk.state[r.i]||{};
+      (st.uniformBad||[]).forEach(o=>{ if(o&&o.name && mcqCreateUniformViolation({staff:o.name,store:_store,date:ymd,photo:o.photo||null,taskLabel:r.task,session:sub.session})) uni++; }); });
+    if(uni) toast('👕 '+uni+' uniform violation'+(uni>1?'s':'')+' recorded & emailed');
+  }catch(e){}
   if(State.chk&&State.chk.reopen) delete State.chk.reopen[sub.dept+'|'+sub.session];   // clear re-open flag so the Done screen shows
   ckSubmitSuccess(sub,out);
   renderChecklist();   // repaint underneath → shows the "Submitted ✓" Done screen

@@ -1239,7 +1239,7 @@ function openDetail(modId,id,store){
   const rows=Object.entries(r).filter(([k,v])=>!skip.has(k)&&v!==''&&v!=null).map(([k,v])=>{
     const isB=m.severities.includes(v)||m.statuses.includes(v)||TONES[v];
     return `<dt>${esc(prettyKey(k))}</dt><dd>${isB?badge(v):esc(v)}</dd>`;}).join('');
-  const photoBlk=r.photo?`<div class="section-title" style="margin-top:4px">📷 Photo</div><a href="${imgSrc(r.photo)}" target="_blank" rel="noopener"><img src="${imgSrc(r.photo)}" style="max-width:100%;border-radius:12px;border:1px solid var(--line);margin-bottom:14px"></a>`:'';
+  const photoBlk=r.photo?`<div class="section-title" style="margin-top:4px">📷 Photo</div><a href="${imgSrc(r.photo)}" target="_blank" rel="noopener"><img src="${imgSrc(r.photo)}" data-pref="${esc(r.photo)}" style="max-width:100%;border-radius:12px;border:1px solid var(--line);margin-bottom:14px"></a>`:'';
   const canEdit=isAdmin() && recordInScope(r);
   $('#drawer').innerHTML=`<div class="drawer-head"><div class="dh-ic">${m.icon}</div>
     <div><div style="font-weight:840;font-size:16px">${esc(r.id)}</div><div style="color:var(--muted);font-size:12.5px">${esc(m.label)} · ${esc(r.store||'')} ${r.created?'· '+esc(r.created):''}</div>
