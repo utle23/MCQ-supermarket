@@ -311,41 +311,74 @@ function ckInSession(r,session){
    photo each). On submit each flagged staff gets an automatic violation (email + level + record). */
 function ckIsUniformTask(r){ return !!(r && ((r.meta&&r.meta.uniform) || /uniform/i.test(r.task||''))); }
 function ckUniformStaff(){ const store=ckActiveStore(); return (DB.staff||[]).filter(s=>s&&s.active!==0&&!s.archived&&s.store===store).sort((a,b)=>String(a.name).localeCompare(String(b.name))); }
+/* Uniform panel — a clean search-to-add picker (NOT a wall of every staff chip): the flagged
+   staff show as compact cards with an optional photo; a search box adds more. Handlers key off
+   the array INDEX (a safe integer), never the name, so a name with a quote can't break markup. */
 function ckUniformPanel(r,st){
-  const bad=(st.uniformBad||[]).filter(o=>o&&o.name), badBy={}; bad.forEach(o=>badBy[o.name]=o);
-  const staff=ckUniformStaff();
-  const chips=staff.length?staff.map(s=>{ const on=!!badBy[s.name];
-    return `<button type="button" class="ck-uni-chip ${on?'on':''}" onclick="ckUniformToggle(${r.i},'${ckJS(s.name)}')">${on?'✕ ':''}${esc(s.name)}</button>`; }).join('')
-    : '<span class="fhint">No staff listed for this store yet.</span>';
-  const chosen=bad.map(o=>{
+  const bad=(st.uniformBad||[]).filter(o=>o&&o.name);
+  const chosen=new Set(bad.map(o=>o.name.toLowerCase()));
+  const pool=ckUniformStaff().filter(s=>!chosen.has(String(s.name).toLowerCase()));
+  const opts=pool.map(s=>`<option value="${esc(s.name)}">${esc(s.role||'')}</option>`).join('');
+  const cards=bad.map((o,idx)=>{
     const ph=o.photo
-      ? `<span class="ck-uni-thumb"><img src="${imgSrc(o.photo)}" data-pref="${esc(o.photo)}" alt=""><button type="button" class="ck-rm" onclick="ckUniformRmPhoto(event,${r.i},'${ckJS(o.name)}')">✕</button></span>`
-      : `<label class="ck-uni-addphoto"><input type="file" accept="image/*" capture="environment" style="display:none" onchange="ckUniformPhoto(this,${r.i},'${ckJS(o.name)}')"><i class="fas fa-camera"></i>&nbsp;Photo (optional)</label>`;
-    return `<div class="ck-uni-row"><span class="ck-uni-name">🙅 ${esc(o.name)}</span>${ph}</div>`;
+      ? `<span class="ck-uni-thumb"><img src="${imgSrc(o.photo)}" data-pref="${esc(o.photo)}" alt=""><button type="button" class="ck-uni-xph" title="Remove photo" onclick="ckUniformRmPhotoAt(event,${r.i},${idx})">✕</button></span>`
+      : `<label class="ck-uni-cam" title="Add a photo (optional)"><input type="file" accept="image/*" capture="environment" style="display:none" onchange="ckUniformPhotoAt(this,${r.i},${idx})"><i class="fas fa-camera"></i></label>`;
+    return `<div class="ck-uni-card">
+        <span class="ck-uni-av">${esc(String(o.name||'?').trim().slice(0,1).toUpperCase())}</span>
+        <span class="ck-uni-nm">${esc(o.name)}</span>${ph}
+        <button type="button" class="ck-uni-del" title="Remove" onclick="ckUniformRmAt(${r.i},${idx})"><i class="fas fa-xmark"></i></button>
+      </div>`;
   }).join('');
-  return `<div class="ck-uniform">
-      <div class="ck-uni-h">👕 Any staff NOT in proper uniform / name badge? <small>tap their name (multi-select) — leave empty if everyone is compliant</small></div>
-      <div class="ck-uni-chips">${chips}</div>
-      ${bad.length?`<div class="ck-uni-chosen">${chosen}
-        <div class="ck-uni-warn">⚠️ On submit, each selected staff gets an email reminder + a recorded uniform violation (their level rises automatically).</div></div>`:''}
+  return `<div class="ck-uniform ${bad.length?'has':''}">
+      <div class="ck-uni-top"><span class="ck-uni-ic">👕</span>
+        <div class="ck-uni-tt"><b>Uniform &amp; name badge</b>
+          <span>${bad.length?(bad.length+' flagged — email + violation sent on submit'):'Add anyone NOT in proper uniform (optional photo). Leave empty if all good.'}</span></div></div>
+      ${bad.length?`<div class="ck-uni-cards">${cards}</div>`:''}
+      <div class="ck-uni-search">
+        <i class="fas fa-user-plus"></i>
+        <input list="ck-uni-dl-${r.i}" id="ck-uni-in-${r.i}" placeholder="Search a staff member not in uniform…" autocomplete="off" onchange="ckUniformAdd(${r.i},this)" onkeydown="if(event.key==='Enter'){event.preventDefault();ckUniformAdd(${r.i},this);}">
+        <datalist id="ck-uni-dl-${r.i}">${opts}</datalist>
+      </div>
     </div>`;
 }
-function ckUniformToggle(i,name){
+function ckUniformAdd(i,el){
+  const raw=String(el&&el.value||'').trim(); if(el) el.value=''; if(!raw) return;
+  const pool=ckUniformStaff();
+  const m=pool.find(s=>s.name===raw)||pool.find(s=>String(s.name).toLowerCase()===raw.toLowerCase());
+  if(!m){ toast('Pick a staff member from the list'); return; }
   const st=State.chk.state[i]=State.chk.state[i]||{}; st.uniformBad=st.uniformBad||[];
-  const idx=st.uniformBad.findIndex(o=>o&&o.name===name);
-  if(idx>=0) st.uniformBad.splice(idx,1); else st.uniformBad.push({name:name,photo:null});
-  ckWriteDraft(); ckDraw();
+  if(st.uniformBad.some(o=>o&&o.name===m.name)) return;
+  st.uniformBad.push({name:m.name,photo:null}); ckWriteDraft(); ckDraw();
 }
-async function ckUniformPhoto(input,i,name){
+function ckUniformRmAt(i,idx){ const st=State.chk.state[i]||{}; if(st.uniformBad&&st.uniformBad[idx]){ st.uniformBad.splice(idx,1); ckWriteDraft(); ckDraw(); } }
+async function ckUniformPhotoAt(input,i,idx){
   const f=input.files&&input.files[0]; if(!f) return;
-  const st=State.chk.state[i]=State.chk.state[i]||{}; st.uniformBad=st.uniformBad||[];
-  let o=st.uniformBad.find(x=>x&&x.name===name); if(!o){ o={name:name,photo:null}; st.uniformBad.push(o); }
-  const preview=URL.createObjectURL(f); o.photo=preview; ckDraw();   // instant preview
+  const o=((State.chk.state[i]||{}).uniformBad||[])[idx]; if(!o) return;   // object ref is stable across the async
+  const preview=URL.createObjectURL(f); o.photo=preview; ckDraw();
   try{ const d=await compressImage(f); const ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d;
-    o.photo=ref; try{URL.revokeObjectURL(preview);}catch(e){} ckWriteDraft(); ckDraw(); }catch(e){}
+    if(o.photo===preview){ o.photo=ref; try{URL.revokeObjectURL(preview);}catch(e){} ckWriteDraft(); ckDraw(); } }catch(e){}
 }
-function ckUniformRmPhoto(e,i,name){ if(e)e.stopPropagation(); const st=State.chk.state[i]||{}; const o=(st.uniformBad||[]).find(x=>x&&x.name===name); if(o){ o.photo=null; ckWriteDraft(); ckDraw(); } }
-window.ckUniformToggle=ckUniformToggle; window.ckUniformPhoto=ckUniformPhoto; window.ckUniformRmPhoto=ckUniformRmPhoto;
+function ckUniformRmPhotoAt(e,i,idx){ if(e)e.stopPropagation(); const o=((State.chk.state[i]||{}).uniformBad||[])[idx]; if(o){ o.photo=null; ckWriteDraft(); ckDraw(); } }
+window.ckUniformAdd=ckUniformAdd; window.ckUniformRmAt=ckUniformRmAt; window.ckUniformPhotoAt=ckUniformPhotoAt; window.ckUniformRmPhotoAt=ckUniformRmPhotoAt;
+/* Required documentation photo(s) (e.g. Morley meat display cabinet) — SEPARATE from the optional
+   temperature photo, so a task can require '1 photo of the cabinet' AND still read temperature. */
+function ckDocPhotoBlock(r,st){
+  const need=(+((r.meta&&r.meta.docPhoto)))||1, have=(st.docPhotos||[]).length, ok=have>=need;
+  let slots=(st.docPhotos||[]).map((u,idx)=>`<span class="ck-slot filled"><img class="ck-slot-img" src="${imgSrc(u)}" data-pref="${esc(u)}"><span class="ck-rm" onclick="ckRmDocPhoto(event,${r.i},${idx})">✕</span></span>`).join('');
+  if(have<Math.max(need,3)) slots+=`<label class="ck-slot"><input type="file" accept="image/*" capture="environment" onchange="ckDocPhoto(this,${r.i})"><span class="ck-slot-empty">📷<small>Cabinet</small></span></label>`;
+  return `<div class="ck-docphoto ${ok?'ok':'need'}">
+      <div class="ck-docphoto-h"><span>📷 Photo of the display cabinet</span><b class="ck-doc-req">required ${need}</b><span class="ck-pc ${ok?'ok':''}">${have}/${need}</span></div>
+      <div class="ck-slots">${slots}</div></div>`;
+}
+async function ckDocPhoto(input,i){
+  const f=input.files&&input.files[0]; if(!f) return;
+  const st=State.chk.state[i]=State.chk.state[i]||{}; st.docPhotos=st.docPhotos||[];
+  const preview=URL.createObjectURL(f); st.docPhotos.push(preview); ckDraw();
+  try{ const d=await compressImage(f); const ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d;
+    const idx=(st.docPhotos||[]).indexOf(preview); if(idx>=0){ st.docPhotos[idx]=ref; try{URL.revokeObjectURL(preview);}catch(e){} ckWriteDraft(); ckDraw(); } }catch(e){}
+}
+function ckRmDocPhoto(e,i,idx){ if(e)e.stopPropagation(); const st=State.chk.state[i]||{}; if(st.docPhotos&&st.docPhotos[idx]!=null){ st.docPhotos.splice(idx,1); ckWriteDraft(); ckDraw(); } }
+window.ckDocPhoto=ckDocPhoto; window.ckRmDocPhoto=ckRmDocPhoto;
 function ckDeadline(session, dept){
   // Sundays have their own full schedule (stores open later): 12:30 PM / 3:30 PM / 6:30 PM
   const ds=(State.chk&&State.chk.date)||ckTodayStr(); const d=new Date(ds+'T00:00');
@@ -419,6 +452,9 @@ function ckWriteDraft(){ try{ if(!State.chk) return; if(State.chk._day&&State.ch
   const cleanBucket=(obj)=>{ const clean={}; Object.keys(obj||{}).forEach(k=>{ const st=obj[k]; if(!st) return;
     const c=Object.assign({},st);
     if(Array.isArray(c.photos)) c.photos=c.photos.filter(p=>typeof p==='string'&&p.indexOf('blob:')!==0);
+    if(Array.isArray(c.docPhotos)) c.docPhotos=c.docPhotos.filter(p=>typeof p==='string'&&p.indexOf('blob:')!==0);
+    // same for uniform offenders' optional photos — a dead blob: on restore would show a broken tile
+    if(Array.isArray(c.uniformBad)) c.uniformBad=c.uniformBad.map(o=>(o&&String(o.photo||'').indexOf('blob:')===0)?Object.assign({},o,{photo:null}):o);
     clean[k]=c; }); return clean; };
   const sess={}; Object.keys(s).forEach(k=>{ sess[k]=cleanBucket(s[k]); });
   localStorage.setItem(ckDraftKey(), JSON.stringify({sess, resp:State.chk.resp||{}, dept:State.chk.dept||'', session:State.chk.session||'', area:State.chk.area||'ALL', t:Date.now()})); }catch(e){} }
@@ -1437,7 +1473,11 @@ function renderBaView(){
     const out=(s.items||[]).filter(it=>!it.done);
     return `<div class="ba-card" style="--c:${meta.color}"><div class="ba-card-h">
         <div><b>${meta.icon?meta.icon+' ':''}${esc(s.dept)}</b> <span class="badge ${s.session==='Opening'?'warn':'info'}">${esc(s.session)}</span></div>
-        <div class="ba-meta">${s.done||0}/${s.total||0} · ${s.progress||0}%${s.verifiedBy?` · ✅ ${esc(s.verifiedBy)}`:''}${s.by?` · 👤 ${esc(s.by)}`:''}</div></div>
+        <div class="ba-meta">${s.done||0}/${s.total||0} · ${s.progress||0}%${s.by?` · 👤 ${esc(s.by)}`:''}</div>
+        <div class="ba-stamps">
+          ${s.created?`<span class="ba-stamp"><i class="fas fa-paper-plane"></i> Submitted ${esc(String(s.created).slice(0,16).replace('T',' '))}</span>`:''}
+          ${(s.verifiedAt||s.verifiedBy)?`<span class="ba-stamp ok"><i class="fas fa-circle-check"></i> Verified${(s.verifiedAt||s.verifiedAtTime)?' '+esc((String(s.verifiedAt||'')+' '+String(s.verifiedAtTime||'')).trim()):''}${s.verifiedBy?' · '+esc(s.verifiedBy):''}</span>`:'<span class="ba-stamp pend"><i class="fas fa-hourglass-half"></i> Awaiting verify</span>'}
+        </div></div>
       <div class="ba-prog"><i style="width:${s.progress||0}%;background:${meta.color}"></i></div>
       ${areas}
       ${out.length?`<div class="ba-incomplete">⚠️ ${out.length} not completed: ${esc(out.slice(0,6).map(it=>it.task).join(', '))}${out.length>6?'…':''}</div>`:''}
@@ -1618,13 +1658,17 @@ function ckDraw(){
             photoHtml=`<div class="ck-photos" id="ck-photo-${r.i}"><div class="ck-photos-h">${photoChip(r.photo, r.meta.temp)} ${counter}</div><div class="ck-slots">${slots}</div></div>`;
           }
         }
-        html+=`<div class="ck-task ${done?'done':''}" id="ck-row-${r.i}" ${ckCanBuild()?`ondblclick="ckEditTask(${r.i})" title="Double-click to edit / delete"`:''}>
+        const docHtml=(r.meta&&r.meta.docPhoto)?ckDocPhotoBlock(r,st):'';
+        const uniHtml=ckIsUniformTask(r)?ckUniformPanel(r,st):'';
+        const tempHdr=(r.meta&&r.meta.reqTemp)?'<div class="ck-temp-lead">🌡️ Temperature <span>type °C or take a photo to auto-read</span></div>':'';
+        html+=`<div class="ck-task ${done?'done':''}${(docHtml||uniHtml)?' ck-task-wide':''}" id="ck-row-${r.i}" ${ckCanBuild()?`ondblclick="ckEditTask(${r.i})" title="Double-click to edit / delete"`:''}>
           <button class="ck-check" onclick="ckTick(${r.i})">${done?'✓':''}</button>
           <div class="ck-main">
             <div class="ck-text"><div class="ck-name">${esc(r.task)}</div>
-              ${r.meta.temp?ckTempBox(r,st):''}
+              ${tempHdr}${r.meta.temp?ckTempBox(r,st):''}
               <input id="ck-note-${r.i}" class="ck-note" placeholder="Note / reason…" value="${esc(st.note||'')}" oninput="ckNote(${r.i},this.value)"></div>
-            ${photoHtml}${ckIsUniformTask(r)?ckUniformPanel(r,st):''}</div></div>`;
+            ${photoHtml}</div>
+          ${docHtml}${uniHtml}</div>`;
       });
       if(ckCanBuild()) html+=`<button class="ck-add-ghost" onclick="ckAddTask('${ckJS(dept)}','${ckJS(area)}')"><i class="fas fa-plus"></i> Add task</button>`;
     });
@@ -1689,6 +1733,18 @@ function ckProgress(){
 function ckTaskIssue(r,st){
   st=st||{};
   if(st.done){
+    // per-task hard requirements that work in ANY store (not only strict templates):
+    //  meta.reqTemp  → a temperature must be entered (typed °C or photo-read)
+    //  meta.docPhoto → N documentation photos are required (e.g. the meat display cabinet shot),
+    //                  kept SEPARATE from the optional temperature photo
+    if(r.meta&&r.meta.reqTemp){
+      const tOk=st.defrosting || (st.temp && st.temp.value!=null && st.temp.value!=='');
+      if(!tOk) return 'enter the temperature — type °C or take a photo to auto-read';
+    }
+    if(r.meta&&r.meta.docPhoto){
+      const need=(+r.meta.docPhoto)||1, have=(st.docPhotos||[]).length;
+      if(have<need) return 'take '+(need-have)+' photo'+((need-have)>1?'s':'')+' of the display cabinet ('+have+'/'+need+')';
+    }
     // meta.strict tasks (Subiaco's rebuilt template): the photo minimum / temperature entry is
     // MANDATORY to complete the task. Everywhere else photos & temps stay optional helpers.
     if(r.meta&&r.meta.strict){
@@ -2214,9 +2270,15 @@ function ckDoSubmit(){
   // ---- persist a REAL submission (Manager verify / Performance / records all read this) ----
   const allRows=DB.checklist.items.map(ckItem).filter(r=>ckStoreOk(r) && r.dept===State.chk.dept && ckInSession(r,State.chk.session));
   const out=allRows.filter(r=>r.meta.temp&&(State.chk.state[r.i]||{}).temp&&!((State.chk.state[r.i]||{}).temp.inRange)).length;
+  const durablePhoto=p=>(typeof p==='string'&&p.indexOf('blob:')!==0)?p:null;
   const items=allRows.map(r=>{ const st=State.chk.state[r.i]||{};
-    const item={task:r.task, area:r.area, done:!!st.done, note:st.note||'', photos:(st.photos||[]).slice(), temp: st.temp?{value:st.temp.value,inRange:!!st.temp.inRange,defrosting:!!st.defrosting,source:st.temp.source||'',manual:!!st.temp.manual,confirmedBy:st.temp.confirmedBy||'',suggestedValue:st.temp.suggestedValue??null,rawReading:st.temp.rawReading||''}:null };
-    if(ckIsUniformTask(r)){ const bad=(st.uniformBad||[]).filter(o=>o&&o.name); if(bad.length) item.uniformOffenders=bad.map(o=>({name:o.name,photo:o.photo||null})); }
+    // required cabinet/doc photos lead the item's photo list so every reader (history, PDF,
+    // gallery) shows them; the optional temperature photos follow.
+    const doc=(st.docPhotos||[]).map(durablePhoto).filter(Boolean);
+    const tmp=(st.photos||[]).map(durablePhoto).filter(Boolean);
+    const item={task:r.task, area:r.area, done:!!st.done, note:st.note||'', photos:doc.concat(tmp), temp: st.temp?{value:st.temp.value,inRange:!!st.temp.inRange,defrosting:!!st.defrosting,source:st.temp.source||'',manual:!!st.temp.manual,confirmedBy:st.temp.confirmedBy||'',suggestedValue:st.temp.suggestedValue??null,rawReading:st.temp.rawReading||''}:null };
+    if(doc.length) item.docPhotos=doc;
+    if(ckIsUniformTask(r)){ const bad=(st.uniformBad||[]).filter(o=>o&&o.name); if(bad.length) item.uniformOffenders=bad.map(o=>({name:o.name,photo:durablePhoto(o.photo)})); }
     return item; });
   const doneN=items.filter(i=>i.done).length, totalN=items.length;
   const resp=(State.chk.resp||{})[State.chk.dept]||{};
@@ -2242,8 +2304,9 @@ function ckDoSubmit(){
   // never a duplicate record and never a second email.
   try{
     let uni=0;
+    const durable=p=>(p&&String(p).indexOf('blob:')!==0)?p:null;   // never store a not-yet-uploaded objectURL
     allRows.forEach(r=>{ if(!ckIsUniformTask(r)) return; const st=State.chk.state[r.i]||{};
-      (st.uniformBad||[]).forEach(o=>{ if(o&&o.name && mcqCreateUniformViolation({staff:o.name,store:_store,date:ymd,photo:o.photo||null,taskLabel:r.task,session:sub.session})) uni++; }); });
+      (st.uniformBad||[]).forEach(o=>{ if(o&&o.name && mcqCreateUniformViolation({staff:o.name,store:_store,date:ymd,photo:durable(o.photo),taskLabel:r.task,session:sub.session})) uni++; }); });
     if(uni) toast('👕 '+uni+' uniform violation'+(uni>1?'s':'')+' recorded & emailed');
   }catch(e){}
   if(State.chk&&State.chk.reopen) delete State.chk.reopen[sub.dept+'|'+sub.session];   // clear re-open flag so the Done screen shows

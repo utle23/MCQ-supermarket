@@ -2021,19 +2021,52 @@ html,body{max-width:100%}
 .aud-time{flex:none;color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums;padding-top:2px}
 @media(max-width:640px){ .aud-row{padding:10px 12px} .aud-time{font-size:10px} }
 
-/* ---- uniform check sub-panel (staff not in uniform → auto violation on submit) ---- */
-.ck-uniform{margin-top:10px;padding:10px 12px;background:var(--surface-2,#f8fafc);border:1px solid var(--line-soft,#e2e8f0);border-left:4px solid #e11d48;border-radius:12px}
-.ck-uni-h{font-size:12px;font-weight:800;color:#9f1239;margin-bottom:8px}
-.ck-uni-h small{display:block;font-weight:600;color:var(--muted,#64748b);margin-top:2px}
-.ck-uni-chips{display:flex;flex-wrap:wrap;gap:6px}
-.ck-uni-chip{font-size:12px;padding:5px 11px;border-radius:999px;border:1.5px solid var(--line,#cbd5e1);background:var(--card,#fff);color:var(--text,#0f172a);cursor:pointer;font-weight:600;transition:all .12s}
-.ck-uni-chip:hover{border-color:#fda4af}
-.ck-uni-chip.on{background:#e11d48;border-color:#e11d48;color:#fff}
-.ck-uni-chosen{margin-top:10px;display:flex;flex-direction:column;gap:8px}
-.ck-uni-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--card,#fff);border:1px solid #fecdd3;border-radius:10px;padding:7px 10px}
-.ck-uni-name{font-weight:700;font-size:12.5px;color:#9f1239}
-.ck-uni-addphoto{display:inline-flex;align-items:center;gap:4px;font-size:11.5px;padding:5px 10px;border:1.5px dashed #fda4af;border-radius:8px;color:#e11d48;cursor:pointer;background:#fff5f6}
-.ck-uni-thumb{position:relative;display:inline-block}
-.ck-uni-thumb img{height:46px;width:46px;object-fit:cover;border-radius:8px;border:1px solid var(--line,#cbd5e1)}
-.ck-uni-thumb .ck-rm{position:absolute;top:-6px;right:-6px;width:18px;height:18px;border-radius:50%;border:0;background:#0f172a;color:#fff;font-size:10px;line-height:18px;text-align:center;cursor:pointer;padding:0}
-.ck-uni-warn{font-size:11.5px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:6px 9px}
+/* ---- full-width blocks that drop below the task row (uniform panel, cabinet doc photo) ---- */
+.ck-task-wide{flex-wrap:wrap}
+.ck-uniform,.ck-docphoto{flex-basis:100%;width:100%;margin:10px 0 2px 37px}
+@media(max-width:640px){.ck-uniform,.ck-docphoto{margin-left:0}}
+
+/* ---- uniform check panel (search-to-add; flagged staff as cards) ---- */
+.ck-uniform{padding:12px 14px;background:linear-gradient(180deg,#fff5f6,var(--card,#fff));border:1px solid #fecdd3;border-radius:14px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.ck-uni-top{display:flex;align-items:flex-start;gap:10px;margin-bottom:4px}
+.ck-uni-ic{font-size:20px;line-height:1.1}
+.ck-uni-tt b{display:block;font-size:13px;font-weight:800;color:#9f1239}
+.ck-uni-tt span{display:block;font-size:11.5px;color:var(--muted,#64748b);margin-top:1px}
+.ck-uni-cards{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0}
+.ck-uni-card{display:inline-flex;align-items:center;gap:8px;background:var(--card,#fff);border:1px solid #fecdd3;border-radius:999px;padding:4px 5px 4px 5px;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+.ck-uni-av{width:26px;height:26px;border-radius:50%;background:#e11d48;color:#fff;font-size:12px;font-weight:800;display:flex;align-items:center;justify-content:center;flex:none}
+.ck-uni-nm{font-size:12.5px;font-weight:700;color:#0f172a;padding-right:2px}
+.ck-uni-cam{width:28px;height:28px;border-radius:50%;border:1.5px dashed #fda4af;color:#e11d48;display:flex;align-items:center;justify-content:center;cursor:pointer;background:#fff5f6;font-size:12px}
+.ck-uni-cam:hover{background:#ffe4e6}
+.ck-uni-thumb{position:relative;width:34px;height:34px}
+.ck-uni-thumb img{width:34px;height:34px;object-fit:cover;border-radius:50%;border:2px solid #fecdd3}
+.ck-uni-xph{position:absolute;top:-5px;right:-5px;width:16px;height:16px;border-radius:50%;border:0;background:#0f172a;color:#fff;font-size:9px;line-height:16px;text-align:center;cursor:pointer;padding:0}
+.ck-uni-del{width:26px;height:26px;border-radius:50%;border:0;background:#fee2e2;color:#b91c1c;cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center}
+.ck-uni-del:hover{background:#fecaca}
+.ck-uni-search{position:relative;display:flex;align-items:center;margin-top:4px}
+.ck-uni-search i{position:absolute;left:12px;color:#e11d48;font-size:12px;pointer-events:none}
+.ck-uni-search input{width:100%;padding:9px 12px 9px 32px;border:1.5px solid #fecdd3;border-radius:10px;font-size:13px;background:var(--card,#fff);color:var(--text,#0f172a)}
+.ck-uni-search input:focus{outline:0;border-color:#e11d48;box-shadow:0 0 0 3px rgba(225,29,72,.12)}
+.ck-uniform.has{border-color:#fca5a5}
+
+/* ---- required documentation photo (meat display cabinet) ---- */
+.ck-docphoto{padding:11px 13px;border:1px solid var(--line-soft,#e2e8f0);border-radius:14px;background:var(--surface-2,#f8fafc)}
+.ck-docphoto.need{border-color:#fbbf24;background:#fffbeb}
+.ck-docphoto.ok{border-color:#86efac;background:#f0fdf4}
+.ck-docphoto-h{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:700;color:var(--text,#0f172a);margin-bottom:8px}
+.ck-doc-req{font-size:10.5px;font-weight:800;color:#b45309;background:#fef3c7;border-radius:6px;padding:2px 7px}
+.ck-docphoto.ok .ck-doc-req{color:#15803d;background:#dcfce7}
+.ck-doc-req::before{content:"★ "}
+.ck-docphoto .ck-pc{margin-left:auto}
+.ck-docphoto .ck-slots{display:flex;flex-wrap:wrap;gap:8px}
+
+/* ---- temperature lead-in label (cabinet tasks) ---- */
+.ck-temp-lead{font-size:12px;font-weight:800;color:#0369a1}
+.ck-temp-lead span{font-weight:600;color:var(--muted,#64748b);font-size:11px;margin-left:4px}
+
+/* ---- history card submit/verify time stamps ---- */
+.ba-stamps{display:flex;flex-wrap:wrap;gap:6px;margin-top:6px}
+.ba-stamp{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;background:var(--surface-2,#f1f5f9);color:var(--muted,#475569);border:1px solid var(--line-soft,#e2e8f0)}
+.ba-stamp i{font-size:10px;opacity:.85}
+.ba-stamp.ok{background:#f0fdf4;color:#15803d;border-color:#bbf7d0}
+.ba-stamp.pend{background:#fffbeb;color:#b45309;border-color:#fde68a}
