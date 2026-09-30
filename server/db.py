@@ -2490,6 +2490,19 @@ def save_state(store_id, state, user, client=None):
             pass
         if isinstance(ba, dict):
             ba2 = dict(ba); ba2['records'] = []
+            # The bin collection days + bin task list belong to THIS store. A client that does
+            # not send them (a super session that holds other stores, an older cached build)
+            # must never blank them out, so the stored copy is carried forward. This is what
+            # kept reverting a manager's saved bin days to the seeded Tue/Thu/Fri.
+            prev_ba = None
+            try:
+                prev_ba = _parse(pj.get('binAdmin'))
+            except Exception:
+                prev_ba = None
+            if isinstance(prev_ba, dict):
+                for _k in ('activeDays', 'checklist'):
+                    if not isinstance(ba2.get(_k), list) and isinstance(prev_ba.get(_k), list):
+                        ba2[_k] = prev_ba[_k]
             lean['binAdmin'] = json.dumps(ba2)
         blob = json.dumps(lean)
         conn.execute("""INSERT INTO store_state(store_id,state_json,updated_at,updated_by) VALUES(?,?,?,?)

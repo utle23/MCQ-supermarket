@@ -130,13 +130,42 @@
     RECORD_MODS.forEach(m=>{ if(DB.modules[m]) modules[m]=(DB.modules[m].records||[]).filter(r=>inStore(r,store)).map(r=>Object.assign({store:store||r.store},clone(r))); });
     return modules;
   }
+  /* Bin collection days + the bin task list belong to ONE store. A super session holds every
+     store in memory at once, so writing the single in-memory config into every store's blob
+     copied one store's schedule (in practice the seed's Tue/Thu/Fri + seed tasks) over all of
+     them — that is why a manager's saved days "reverted" a moment later. Each store now gets
+     ITS OWN config back, and when this session has no config for that store the fields are
+     left out entirely so the server keeps the one it already has. */
   function buildBinAdmin(store){
     const b=DB.binAdmin||{};
-    return {
-      activeDays:Array.isArray(b.activeDays)?clone(b.activeDays):['Tue','Thu','Fri'],
-      checklist:Array.isArray(b.checklist)?clone(b.checklist):[],
-      records:(Array.isArray(b.records)?b.records:[]).filter(r=>inStore(r,store)).map(r=>Object.assign({store:store||r.store},clone(r)))
-    };
+    const per=(DB.binByStore||{})[store];
+    const acct=(window.State&&State.account)||{};
+    const ownStore=store && !isAllStore(store) && acct.role!=='super' && acct.role!=='ba' && acct.branch===store;
+    const src=per||(ownStore?b:null);
+    const out={ records:(Array.isArray(b.records)?b.records:[]).filter(r=>inStore(r,store)).map(r=>Object.assign({store:store||r.store},clone(r))) };
+    if(src){
+      out.activeDays=Array.isArray(src.activeDays)?clone(src.activeDays):['Tue','Thu','Fri'];
+      out.checklist=Array.isArray(src.checklist)?clone(src.checklist):[];
+    }
+    return out;
+  }
+  // remember a store's own bin config as it is loaded (keyed by store id, never aggregated)
+  function noteBinConfig(store,ba){
+    try{
+      if(!ba||typeof ba!=='object') return;
+      const acct=(window.State&&State.account)||{};
+      if(!store||isAllStore(store)){
+        // older blobs were written without a store id. In a STORE session the blob being
+        // applied can only be that store's own, so key it there; an aggregated session has
+        // no single store it could belong to.
+        if(acct.role==='super'||acct.role==='ba') return;
+        store=acct.branch;
+      }
+      if(!store||isAllStore(store)) return;
+      DB.binByStore=DB.binByStore||{};
+      DB.binByStore[store]={activeDays:Array.isArray(ba.activeDays)?clone(ba.activeDays):[],
+                            checklist:Array.isArray(ba.checklist)?clone(ba.checklist):[]};
+    }catch(e){}
   }
   function buildState(store,opts){
     const full=opts&&opts.full, scoped=!full&&!isAllStore(store);
@@ -185,7 +214,9 @@
       if(window.normalizeChecklistTemplate) window.normalizeChecklistTemplate();
     }
     if(d.checklistSubs!=null){ let cs=parseJSON(d.checklistSubs,null); if(Array.isArray(cs)) DB.checklistSubs=clone(cs); }
-    if(d.binAdmin!=null){ const ba=parseJSON(d.binAdmin,null); if(ba&&typeof ba==='object') DB.binAdmin=Object.assign({activeDays:['Tue','Thu','Fri'],checklist:[],records:[]},clone(ba)); }
+    if(d.binAdmin!=null){ const ba=parseJSON(d.binAdmin,null); if(ba&&typeof ba==='object'){ DB.binAdmin=Object.assign({activeDays:['Tue','Thu','Fri'],checklist:[],records:[]},clone(ba));
+      noteBinConfig(d.store,DB.binAdmin);   // a REAL store id only ('All stores'/the seed base is skipped)
+    } }
     if(d.jobDuties!=null){ let jd=d.jobDuties; if(typeof jd==='string'){ try{ jd=JSON.parse(jd); }catch(e){ jd=null; } } if(jd&&typeof jd==='object') DB.jobDuties=jd; }
     if(d.jobRoster!=null){ let jr=d.jobRoster; if(typeof jr==='string'){ try{ jr=JSON.parse(jr); }catch(e){ jr=null; } } if(jr&&typeof jr==='object') DB.jobRoster=jr; }
     if(d.scheduleTasks!=null){ let st=d.scheduleTasks; if(typeof st==='string'){ try{ st=JSON.parse(st); }catch(e){ st=null; } } if(Array.isArray(st)&&st.length) DB.scheduleTasks=st; }
@@ -245,6 +276,7 @@
     RECORD_MODS.forEach(m=>{ if(DB.modules[m]) DB.modules[m].records=[]; });
     DB.staff=[]; DB.checklistSubs=[]; DB.auditLogs=[]; DB.scheduleHistory=[]; DB.binAdmin=DB.binAdmin||{activeDays:['Tue','Thu','Fri'],checklist:[],records:[]}; DB.binAdmin.records=[];
     DB.checklistLeadEmails={};   // per-store dept-lead emails — rebuilt from each store's blob
+    DB.binByStore={};            // per-store bin config (days + task list) — rebuilt per store below
     DB.feedback=[];              // Share-Your-Thought — collected from every store for the Super inbox
     const seenStaff=new Set(), seenSubs=new Set(), seenAudit=new Set(), seenBin=new Set(), seenSched=new Set(), seenRec={}, seenFb=new Set();
     rows.forEach(row=>{
@@ -281,10 +313,12 @@
         if(!seenAudit.has(key)){ seenAudit.add(key); DB.auditLogs.push(rec); }
       });
       const ba=parseJSON(d.binAdmin,null);
-      if(ba&&Array.isArray(ba.records)){
-        if(!DB.binAdmin.checklist.length && Array.isArray(ba.checklist)) DB.binAdmin.checklist=clone(ba.checklist);
-        if((!DB.binAdmin.activeDays||!DB.binAdmin.activeDays.length) && Array.isArray(ba.activeDays)) DB.binAdmin.activeDays=clone(ba.activeDays);
-        ba.records.forEach(r=>{
+      if(ba&&typeof ba==='object'){
+        // per-store bin config. (The old "only if empty" copy could never fire — resetToBase
+        // had just refilled DB.binAdmin with the seed — so a super saw the seed's collection
+        // days for every store and saved them back over each store's real setup.)
+        noteBinConfig(store,ba);
+        (Array.isArray(ba.records)?ba.records:[]).forEach(r=>{
           const rec=Object.assign({store},clone(r));
           const key=rec.store+'|'+(rec.id||rec.created+'|'+rec.day);
           if(!seenBin.has(key)){ seenBin.add(key); DB.binAdmin.records.push(rec); }

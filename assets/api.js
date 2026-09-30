@@ -165,7 +165,10 @@
   var TOKEN = (window.localStorage && localStorage.getItem('mcq_token')) || '';
   var api = function(p){ return (BASE||'') + p; };
   function headers(json){ var h={}; if(json) h['Content-Type']='application/json'; if(TOKEN) h['Authorization']='Bearer '+TOKEN; return h; }
-  function setToken(t){ TOKEN=t||''; try{ TOKEN?localStorage.setItem('mcq_token',TOKEN):localStorage.removeItem('mcq_token'); }catch(e){} }
+  function setToken(t){ TOKEN=t||''; try{ TOKEN?localStorage.setItem('mcq_token',TOKEN):localStorage.removeItem('mcq_token'); }catch(e){}
+    // just signed in: push anything the previous session could not confirm (a photo taken
+    // right before the tab was killed, or while the store was offline)
+    if(TOKEN) setTimeout(function(){ try{ if(window.mcqReplayPhotoSpool) window.mcqReplayPhotoSpool(); }catch(e){} }, 1500); }
   // NB: DB is a top-level `const` (NOT on window), so use the lexical DB, not window.DB
   // (the old `window.DB && ...` made this return [] → Super Admin never saved!).
   function stores(){ try{ var b=DB.branches||DB.stores||[]; return b&&b.length?b:[]; }catch(e){ return []; } }
@@ -328,26 +331,92 @@
       for(var i=0;i<n;i++) arr[i]=bin.charCodeAt(i);
       return new Blob([arr],{type:mime}); }catch(e){ return null; }
   }
+  /* ---- durable photo spool (IndexedDB) ------------------------------------------------
+     A photo taken on the floor lived ONLY in memory (PhotoStore) while it uploaded in the
+     background. Two everyday things then destroyed it for good: Android kills the tab as
+     soon as the camera closes, and store wifi drops mid-upload. The checklist draft kept
+     the photo's id, but the bytes were gone — so the tile came back as "photo syncing from
+     other device…" forever and the person had to shoot it again.
+     Every photo is now written to IndexedDB BEFORE the upload and removed only once the
+     server confirms it. On the next start the spool is replayed: the tiles show straight
+     away from local bytes and anything unconfirmed is uploaded again. */
+  var SPOOL_DB='mcq_photo_spool', SPOOL_ST='pending', SPOOL_KEEP_MS=14*864e5, _spoolP=null;
+  function spool(){
+    if(_spoolP) return _spoolP;
+    _spoolP=new Promise(function(res){
+      try{
+        if(!window.indexedDB) return res(null);
+        var rq=indexedDB.open(SPOOL_DB,1);
+        rq.onupgradeneeded=function(){ try{ var db=rq.result; if(!db.objectStoreNames.contains(SPOOL_ST)) db.createObjectStore(SPOOL_ST,{keyPath:'id'}); }catch(e){} };
+        rq.onsuccess=function(){ res(rq.result||null); };
+        rq.onerror=function(){ res(null); };
+        rq.onblocked=function(){ res(null); };
+      }catch(e){ res(null); }
+    });
+    return _spoolP;
+  }
+  function spoolTx(mode,fn){
+    return spool().then(function(db){
+      if(!db) return null;
+      return new Promise(function(res){
+        try{ var tx=db.transaction(SPOOL_ST,mode), st=tx.objectStore(SPOOL_ST), out=fn(st);
+          tx.oncomplete=function(){ res(out&&out.result!==undefined?out.result:out); };
+          tx.onerror=function(){ res(null); }; tx.onabort=function(){ res(null); };
+        }catch(e){ res(null); }
+      });
+    }).catch(function(){ return null; });
+  }
+  function spoolPut(id,dataUrl,store){ return spoolTx('readwrite',function(st){ return st.put({id:id,data:dataUrl,store:store||'',ts:Date.now()}); }); }
+  function spoolDel(id){ return spoolTx('readwrite',function(st){ return st.delete(id); }); }
+  function spoolAll(){ return spoolTx('readonly',function(st){ return st.getAll(); }); }
   // upload with retries — a dropped request used to lose the photo silently, so other
   // devices saw "loading…" forever. Retries on failure and again when back online.
-  function postPhotoRetry(fd, tries){
+  // `id` (when given) is dropped from the durable spool the moment the server confirms.
+  function postPhotoRetry(fd, tries, id){
     fetch(api('/api/photos'), {method:'POST', headers:headers(), body:fd})
-      .then(function(r){ if(!r.ok) throw new Error('photo post '+r.status); })
+      .then(function(r){ if(!r.ok) throw new Error('photo post '+r.status); if(id) spoolDel(id); })
       .catch(function(){
-        if(tries>0) setTimeout(function(){ postPhotoRetry(fd, tries-1); }, 6000);
-        else { try{ window.addEventListener('online', function once(){ window.removeEventListener('online', once); postPhotoRetry(fd, 2); }); }catch(e){} }
+        if(tries>0) setTimeout(function(){ postPhotoRetry(fd, tries-1, id); }, 6000);
+        else { try{ window.addEventListener('online', function once(){ window.removeEventListener('online', once); postPhotoRetry(fd, 2, id); }); }catch(e){} }
       });
   }
+  /* Replay whatever the last session could not confirm: show it immediately and re-upload. */
+  var _replayed=false;
+  function replaySpool(){
+    if(!TOKEN) return;
+    spoolAll().then(function(rows){
+      if(!rows||!rows.length) return;
+      var now=Date.now(), n=0;
+      rows.forEach(function(row){
+        if(!row||!row.id||!row.data) return;
+        if(now-(row.ts||0)>SPOOL_KEEP_MS){ spoolDel(row.id); return; }   // long submitted — stop carrying it
+        if(!PS[row.id] || PS[row.id]===PHOTO_WAIT_IMG) PS[row.id]=row.data;   // the tile paints from local bytes
+        if(n++>=40) return;                                                   // spread a big backlog over sessions
+        try{
+          var fd=new FormData(); fd.append('id',row.id); fd.append('store_id',row.store||(stores()[0]||'Morley'));
+          var blob=dataUrlToBlob(row.data);
+          if(blob) fd.append('image', blob, row.id+'.jpg'); else fd.append('dataUrl', row.data);
+          postPhotoRetry(fd, 2, row.id);
+        }catch(e){}
+      });
+      try{ if(window.patchPendingImgs) window.patchPendingImgs(); }catch(e){}
+      photoRerenderSoon();
+    });
+  }
+  window.mcqReplayPhotoSpool=function(){ replaySpool(); };
+  setTimeout(function(){ if(!_replayed){ _replayed=true; replaySpool(); } }, 1500);
+  try{ window.addEventListener('online', function(){ setTimeout(replaySpool, 1200); }); }catch(e){}
   FB.savePhoto = function(dataUrl){
     var id='p_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7);
     PS[id]=dataUrl;
     var acct=(window.State&&State.account)||{}; var store=(acct.role==='super'||acct.role==='ba'||acct.branch==='All stores')?(stores()[0]||'Morley'):(acct.branch||stores()[0]||'Morley');   // super/ba have no store of their own — file the photo under a real store (any store they can access)
+    spoolPut(id,dataUrl,store);   // durable FIRST: the camera may kill the tab a moment from now
     try{
       var fd=new FormData(); fd.append('id',id); fd.append('store_id',store);
       // send as a real file part — form FIELDS are capped at 500KB by Werkzeug (413), files are not
       var blob=dataUrlToBlob(dataUrl);
       if(blob){ fd.append('image', blob, id+'.jpg'); } else { fd.append('dataUrl', dataUrl); }
-      postPhotoRetry(fd, 3);
+      postPhotoRetry(fd, 3, id);
     }catch(e){}
     return id;
   };
@@ -360,9 +429,10 @@
     var fd=new FormData(); fd.append('id',id); fd.append('store_id',store);
     var blob=dataUrlToBlob(dataUrl);
     if(blob){ fd.append('image', blob, id+'.jpg'); } else { fd.append('dataUrl', dataUrl); }
+    spoolPut(id,dataUrl,store);
     return fetch(api('/api/photos'), {method:'POST', headers:headers(), body:fd})
       .then(function(r){ return r.json(); })
-      .then(function(j){ return (j&&j.ok)?{ok:true,id:j.id||id}:{ok:false}; })
+      .then(function(j){ if(j&&j.ok) spoolDel(id); return (j&&j.ok)?{ok:true,id:j.id||id}:{ok:false}; })
       .catch(function(){ return {ok:false}; });
   };
   // A photo arriving must NEVER rebuild the page or an open overlay — rebuilds reset the

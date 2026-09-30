@@ -283,9 +283,18 @@ DB.checklist = {
   [['Meat Cool Room','fridge'],['Produce Cool Room','fridge'],['Dairy Cool Room','fridge'],['Banana Cool Room','fridge'],['Frozen Food Room','freezer']].forEach(function(r){
     ['O','C'].forEach(function(w){ T.push(['MANAGER','Cool Room / Frozen Room',r[0].toUpperCase()+' TEMPERATURE',w,'R1-1',{temp:true,type:r[1],equipment:r[0]}]); }); });
 })();
+/* Identity fingerprint of the live template (dept|area|task|when per row, in order).
+   Used to tell whether the migration below actually CHANGED anything. */
+var _ckNormalizeBooted=false;
+function ckTplFingerprint(){
+  try{ return ((DB.checklist&&DB.checklist.items)||[])
+    .map(function(r){ return Array.isArray(r)?((r[0]||'')+'|'+(r[1]||'')+'|'+(r[2]||'')+'|'+(r[3]||'')):String(r); }).join('\n'); }
+  catch(e){ return ''; }
+}
 function normalizeChecklistTemplate(){
   const items=(DB.checklist&&DB.checklist.items)||[];
   if(!Array.isArray(items)) return;
+  const fpBefore=ckTplFingerprint();
   const removeTasks=new Set([
     'OVERNIGHT FRIDGE / FREEZER ALARMS CHECKED — ALL RECOVERED',
     'CCTV AND SECURITY ALARM WORKING',
@@ -315,8 +324,21 @@ function normalizeChecklistTemplate(){
   addManagerPhoto(['MANAGER','Cool Room / Frozen Room','OPENING FROZEN ROOM PHOTO — WELL ORGANISED, STOCK OFF FLOOR AND WALKWAY CLEAR','O','R1-5']);
   addManagerPhoto(['MANAGER','Cool Room / Frozen Room','CLOSING COOL ROOM PHOTO — WELL ORGANISED, STOCK OFF FLOOR AND WALKWAY CLEAR','C','R1-5']);
   addManagerPhoto(['MANAGER','Cool Room / Frozen Room','CLOSING FROZEN ROOM PHOTO — WELL ORGANISED, STOCK OFF FLOOR AND WALKWAY CLEAR','C','R1-5']);
+  /* This migration runs on EVERY store load. When the copy on the server is still the old
+     one it removes/renames/inserts rows again and again — and because those inserts shift
+     every following task index, a checklist being filled in at that moment lost its ticks
+     and PHOTOS (they had to be shot again). The version guard on the server keeps any
+     template change that does NOT bump the version, so the corrected template never landed
+     and the shift repeated forever. Bumping the version here makes the server ACCEPT it
+     once; from then on this function is a no-op for that store and indices stop moving.
+     (Not at boot: the seed must never out-version a store's real template.) */
+  if(_ckNormalizeBooted && ckTplFingerprint()!==fpBefore){
+    try{ DB.checklist.templateVersion=(+(DB.checklist.templateVersion||0))+1; }catch(e){}
+    try{ if(window.persist) setTimeout(window.persist,0); }catch(e){}
+  }
 }
 normalizeChecklistTemplate();
+_ckNormalizeBooted=true;   // the seed is normalised; every later call is a real store load
 /* ============================================================
    CLEANING & MAINTENANCE — editable WEEKLY schedule (per department).
    Each task is scheduled on weekdays (days[]); scheduled day cells show

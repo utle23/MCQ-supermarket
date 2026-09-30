@@ -33,7 +33,7 @@ function todoFlowHTML(){
   const ckState=sess.every(x=>x.done)?'done':(sess.some(x=>x.over)?'over':'pend');
   const ckSub=sess.map(x=>`<span class="tf-pill ${x.done?'d':x.over?'o':''}">${HV_SESS[x.s]} ${x.done?'✓':(x.over?'overdue':ckDeadline(x.s,leadDept))}</span>`).join('');
   const wd=perthNow().toLocaleDateString('en-US',{weekday:'short'});
-  const binDay=((DB.binAdmin&&DB.binAdmin.activeDays)||[]).includes(wd);
+  const binDay=binActiveDays(store).includes(wd);   // collection days are per store
   const binDone=(((DB.binAdmin||{}).records)||[]).some(r=>r.store===store&&String(r.date||'').slice(0,10)===today);
   const dlvN=(((DB.modules||{}).delivery||{}).records||[]).filter(r=>r.store===store&&String(r.date||r.created||'').slice(0,10)===today).length;
   const steps=[
@@ -242,18 +242,59 @@ function ckLinkActive(){ if(!State.chk) return; const s=ckSess(), k=State.chk.se
 function ckUseSession(sess){ if(!State.chk) return; const s=ckSess(); if(State.chk.session) s[State.chk.session]=State.chk.state||s[State.chk.session]||{}; State.chk.session=sess; State.chk.state=s[sess]=s[sess]||{}; }
 function ckClearAllState(){ if(!State.chk) return; const s=ckSess(); Object.keys(s).forEach(k=>s[k]={}); State.chk.state={}; s[State.chk.session||'Opening']=State.chk.state; }
 function ckShiftAllState(i){ if(!State.chk) return; const s=ckSess(); Object.keys(s).forEach(k=>{ const old=s[k]||{}, ns={}; Object.keys(old).forEach(kk=>{ const n=+kk; if(n===i)return; ns[n>i?n-1:n]=old[kk]; }); s[k]=ns; }); const cur=State.chk.session||'Opening'; s[cur]=s[cur]||{}; State.chk.state=s[cur]; }
+/* signature -> every index that currently carries it. A signature that appears TWICE
+   (the same dept|area|task|when listed twice) is not a safe relocation target. */
+function ckSigMap(){
+  const items=(DB.checklist&&DB.checklist.items)||[], m={};
+  for(let i=0;i<items.length;i++){ const k=ckSig(i); (m[k]=m[k]||[]).push(i); }
+  return m;
+}
+/* The live template can move under a half-filled checklist at any moment: another device at
+   the store saves, the WS 'state' event re-loads the store, normalizeChecklistTemplate()
+   inserts/removes rows, or a draft is restored under a newer version. This used to DELETE the
+   entry whose index no longer matched its task tag — throwing away the ticks, notes and
+   PHOTOS that had just been taken (the "I shoot a few photos and they disappear, I have to
+   shoot them again" bug). The entry is now RELOCATED to wherever its OWN task lives now, and
+   dropped only when that task is really gone — so nothing can leak onto another task either. */
 function ckSanitizeState(){
   try{ if(!State.chk) return;
+    const map=ckSigMap();
     ckBuckets().forEach(state=>{ if(!state) return;
+      const moves=[];
       Object.keys(state).forEach(k=>{ const st=state[k]; if(!st||typeof st!=='object') return;
         const sig=ckSig(+k);
-        if(st._sig==null) st._sig=sig;                    // first-seen → tag to its current task
-        else if(st._sig!==sig) delete state[k];           // index now maps to a DIFFERENT task → stale → drop
+        if(st._sig==null){ st._sig=sig; return; }         // first-seen → tag to its current task
+        if(st._sig===sig) return;                          // still the same task → keep
+        const home=map[st._sig]||[];
+        if(home.length===1) moves.push([k,home[0],st]);    // exactly one home → carry it over
+        else delete state[k];                              // task deleted (or ambiguous) → drop
       });
+      moves.forEach(m=>{ delete state[m[0]]; });           // two-phase: a swap can't clobber itself
+      moves.forEach(m=>{ const to=m[1], st=m[2];
+        if(state[to] && state[to]!==st) return;            // a live entry already owns that task
+        st._sig=ckSig(to); state[to]=st; });
     });
   }catch(e){}
 }
 window.ckSanitizeState=ckSanitizeState;
+/* Resolve the entry that is LIVE RIGHT NOW for (session, task signature). A photo takes a
+   second to compress + upload, and in that window the bucket object can be replaced (draft
+   restored, store re-synced, template relocated). Writing the finished photo into the stale
+   object made it vanish on the next repaint, so every async photo handler re-resolves the
+   entry through here before storing its result. */
+function ckLiveEntry(sessKey,sig,idxHint){
+  try{
+    if(!State.chk) return null;
+    const bucket=(sessKey?ckSess()[sessKey]:null)||State.chk.state; if(!bucket) return null;
+    let idx=-1;
+    if(ckSig(idxHint)===sig) idx=idxHint;                  // usual case: nothing moved
+    else { const items=(DB.checklist&&DB.checklist.items)||[];
+      for(let j=0;j<items.length;j++){ if(ckSig(j)===sig){ idx=j; break; } } }
+    if(idx<0) return null;                                 // the task itself is gone
+    const st=bucket[idx]=bucket[idx]||{}; if(st._sig==null) st._sig=sig;
+    return st;
+  }catch(e){ return null; }
+}
 /* Super with a HOME STORE (set in Account Management): the whole Checklist module works
    as THAT store — its own live template, its drafts, its submissions — and everything they
    do saves to THAT store only. Supers without a home store keep the read-only overview. */
@@ -353,10 +394,15 @@ function ckUniformAdd(i,el){
 function ckUniformRmAt(i,idx){ const st=State.chk.state[i]||{}; if(st.uniformBad&&st.uniformBad[idx]){ st.uniformBad.splice(idx,1); ckWriteDraft(); ckDraw(); } }
 async function ckUniformPhotoAt(input,i,idx){
   const f=input.files&&input.files[0]; if(!f) return;
-  const o=((State.chk.state[i]||{}).uniformBad||[])[idx]; if(!o) return;   // object ref is stable across the async
+  const o=((State.chk.state[i]||{}).uniformBad||[])[idx]; if(!o) return;
+  const sessKey=State.chk.session, sig=ckSig(i), who=o.name;
   const preview=URL.createObjectURL(f); o.photo=preview; ckDraw();
   try{ const d=await compressImage(f); const ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d;
-    if(o.photo===preview){ o.photo=ref; try{URL.revokeObjectURL(preview);}catch(e){} ckWriteDraft(); ckDraw(); } }catch(e){}
+    // re-resolve the offender row by NAME on the live entry — the bucket may have been
+    // replaced while the photo was compressing
+    const live=ckLiveEntry(sessKey,sig,i);
+    const row=(live&&(live.uniformBad||[]).find(x=>x&&x.name===who))||((o.photo===preview)?o:null);
+    if(row){ row.photo=ref; try{URL.revokeObjectURL(preview);}catch(e){} ckWriteDraft(); ckDraw(); } }catch(e){}
 }
 function ckUniformRmPhotoAt(e,i,idx){ if(e)e.stopPropagation(); const o=((State.chk.state[i]||{}).uniformBad||[])[idx]; if(o){ o.photo=null; ckWriteDraft(); ckDraw(); } }
 window.ckUniformAdd=ckUniformAdd; window.ckUniformRmAt=ckUniformRmAt; window.ckUniformPhotoAt=ckUniformPhotoAt; window.ckUniformRmPhotoAt=ckUniformRmPhotoAt;
@@ -373,9 +419,15 @@ function ckDocPhotoBlock(r,st){
 async function ckDocPhoto(input,i){
   const f=input.files&&input.files[0]; if(!f) return;
   const st=State.chk.state[i]=State.chk.state[i]||{}; st.docPhotos=st.docPhotos||[];
+  const sessKey=State.chk.session, sig=ckSig(i); if(st._sig==null) st._sig=sig;
   const preview=URL.createObjectURL(f); st.docPhotos.push(preview); ckDraw();
   try{ const d=await compressImage(f); const ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d;
-    const idx=(st.docPhotos||[]).indexOf(preview); if(idx>=0){ st.docPhotos[idx]=ref; try{URL.revokeObjectURL(preview);}catch(e){} ckWriteDraft(); ckDraw(); } }catch(e){}
+    const live=ckLiveEntry(sessKey,sig,i)||st; live.docPhotos=live.docPhotos||[];
+    const idx=live.docPhotos.indexOf(preview);
+    if(idx>=0) live.docPhotos[idx]=ref;
+    else if(live!==st && live.docPhotos.indexOf(ref)<0) live.docPhotos.push(ref);
+    else if(live===st) return;
+    try{URL.revokeObjectURL(preview);}catch(e){} ckWriteDraft(); ckDraw(); }catch(e){}
 }
 function ckRmDocPhoto(e,i,idx){ if(e)e.stopPropagation(); const st=State.chk.state[i]||{}; if(st.docPhotos&&st.docPhotos[idx]!=null){ st.docPhotos.splice(idx,1); ckWriteDraft(); ckDraw(); } }
 window.ckDocPhoto=ckDocPhoto; window.ckRmDocPhoto=ckRmDocPhoto;
@@ -1812,6 +1864,8 @@ function ckNote(i,v){const st=State.chk.state[i]=State.chk.state[i]||{};st.note=
 async function ckPhoto(input,i){
   const f=input.files&&input.files[0]; if(!f)return;
   const r=ckItem(DB.checklist.items[i],i), st=State.chk.state[i]=State.chk.state[i]||{};
+  const sessKey=State.chk.session, sig=ckSig(i);   // identity of the task+session this photo belongs to
+  if(st._sig==null) st._sig=sig;
   if(r.meta.temp&&st.defrosting){ input.value=''; toast('Defrosting is ticked, so photo capture is locked'); return; }
   st.photos=st.photos||[];
   const preview=URL.createObjectURL(f);     // show the photo INSTANTLY (no wait for compression)
@@ -1823,8 +1877,16 @@ async function ckPhoto(input,i){
   try{
     const d=await compressImage(f);
     const ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d;
-    const idx=(st.photos||[]).indexOf(preview);
-    if(idx>=0){ st.photos[idx]=ref; try{URL.revokeObjectURL(preview);}catch(e){} ckWriteDraft(); if(!r.meta.temp) ckDraw(); }   // write-through: Android can kill the page at any moment after the camera
+    // the bucket may have been REPLACED while we were compressing (store re-sync, draft
+    // restore, template relocation) — always land the photo on the entry that is live now
+    const live=ckLiveEntry(sessKey,sig,i)||st;
+    live.photos=live.photos||[];
+    const idx=live.photos.indexOf(preview);
+    if(idx>=0){ live.photos[idx]=ref; }
+    else if(live!==st && live.photos.indexOf(ref)<0){ live.photos.push(ref); }   // preview died with the old object → re-attach
+    else if(live===st){ return; }                                                // the person removed it → respect that
+    try{URL.revokeObjectURL(preview);}catch(e){}
+    ckWriteDraft(); if(!r.meta.temp) ckDraw();   // write-through: Android can kill the page at any moment after the camera
   }catch(e){ /* keep the instant objectURL preview if compression fails */ }
 }
 function ckRmPhoto(e,i,url){
@@ -2032,9 +2094,13 @@ function ckTempInRange(v,type){
   return true;
 }
 async function ckAiTemp(i,fileName,file){
-  const r=ckItem(DB.checklist.items[i],i), st=State.chk.state[i]=State.chk.state[i]||{};
-  if(!r.meta.temp||st.defrosting) return;
+  const r=ckItem(DB.checklist.items[i],i), st0=State.chk.state[i]=State.chk.state[i]||{};
+  if(!r.meta.temp||st0.defrosting) return;
+  const sessKey=State.chk.session, sig=ckSig(i); if(st0._sig==null) st0._sig=sig;
   const result=await ckVisionValue(fileName,file,r,i);
+  // reading a display takes seconds — by now the bucket may have been replaced by a store
+  // re-sync or a draft restore, so write the result onto the entry that is live NOW
+  const st=ckLiveEntry(sessKey,sig,i)||st0;
   if(!result||result.error||!Number.isFinite(result.value)){
     const suggestion=Number(result&&result.suggestedValue);
     st.aiStatus=Number.isFinite(suggestion)?'confirm':'error';
@@ -2096,7 +2162,7 @@ function ckManualTemp(i){
 function ckRetakeTemp(i){
   const st=State.chk.state[i]=State.chk.state[i]||{};
   st.photos=[]; st.temp=null; st.aiStatus=null; st.aiError=''; st.aiSuggestion=null; st.aiManualAllowed=false; st.done=false;
-  ckDraw();
+  ckDraw(); ckSaveDraft();   // the draft must not bring the cleared photo back after a tab kill
   toast('Temperature photo cleared. Take a new close-up photo.');
 }
 /* downscale a photo to a small JPEG Blob before upload — big speed win (a 3-4 MB
@@ -2259,7 +2325,7 @@ function ckConfirmSubmit(g){
   ov.innerHTML=`<div class="lb-panel" style="max-width:440px"><div class="card-head" style="padding:14px 16px"><h3>Submit the whole checklist?</h3><button class="x-btn" onclick="this.closest('.ck-block-ov').remove()">✕</button></div>
     <div class="card-pad"><p>You're submitting the <b>ENTIRE</b> <b>${esc(State.chk.dept)} · ${esc(State.chk.session)}</b> checklist for <b>${esc(ckActiveStore())}</b>.</p>
     <p class="fhint">${g.sections.length} section(s) · ${ok}/${total} items complete. It will then go to the manager to verify.</p>
-    ${(State.chk.session==='Closing'&&(()=>{try{const cfg=DB.binAdmin||{};const wd=SCHED_DAYS[(perthNow().getDay()+6)%7];return (cfg.activeDays||[]).includes(wd)&&!((cfg.records||[]).some(r=>r.store===State.branch&&String(r.date||'').slice(0,10)===todayISO()));}catch(e){return false;}})())?'<p class="fhint" style="color:#b45309">⚠️ Today is a BIN day and the bin checklist has not been submitted yet — it is mandatory.</p>':''}
+    ${(State.chk.session==='Closing'&&(()=>{try{const cfg=DB.binAdmin||{};const wd=SCHED_DAYS[(perthNow().getDay()+6)%7];return binActiveDays(State.branch).includes(wd)&&!((cfg.records||[]).some(r=>r.store===State.branch&&String(r.date||'').slice(0,10)===todayISO()));}catch(e){return false;}})())?'<p class="fhint" style="color:#b45309">⚠️ Today is a BIN day and the bin checklist has not been submitted yet — it is mandatory.</p>':''}
     <div style="display:flex;gap:10px;justify-content:flex-end;margin-top:14px"><button class="btn" onclick="this.closest('.ck-block-ov').remove()">Cancel</button><button class="btn primary" onclick="this.closest('.ck-block-ov').remove();ckDoSubmit()">✓ Submit checklist</button></div></div></div>`;
   document.body.appendChild(ov);
 }
@@ -3594,13 +3660,49 @@ function renderSchedules(){
 }
 
 /* ============================================================ BIN ADMIN */
-function binCfg(){ DB.binAdmin=DB.binAdmin||{activeDays:['Tue','Thu','Fri'],checklist:[],records:[]}; return DB.binAdmin; }
+/* The store whose bin config is on screen. Deliberately does NOT go through binState()
+   (binState() calls binCfg(), so that would recurse). */
+function binActiveStore(){
+  const real=v=>(v&&v!=='All stores'&&v!=='ALL')?v:'';
+  try{
+    if(isSuper()||isBa()) return real(State.bin&&State.bin.store)||(DB.stores&&DB.stores[0])||'';
+    return real(State.branch);
+  }catch(e){ return ''; }
+}
+function binActiveDays(store){
+  try{
+    const per=(DB.binByStore||{})[store||binActiveStore()];
+    if(per&&Array.isArray(per.activeDays)) return per.activeDays;
+    return ((DB.binAdmin&&DB.binAdmin.activeDays)||[]);   // legacy blob with no store id
+  }catch(e){ return []; }
+}
+/* Bin collection days and the bin task list are PER STORE, so they are read and written
+   through ONE place, keyed by the store on screen (a store session has exactly one; a super
+   session holds all of them and picks with the store selector). The single shared object
+   showed one store's — in practice the seed's Tue/Thu/Fri — days for every store, and the
+   next autosave wrote that back onto every store: that is why a saved bin setup kept
+   reverting. Records stay in the one aggregated array (each carries its own store). */
+function binCfg(){
+  DB.binAdmin=DB.binAdmin||{activeDays:['Tue','Thu','Fri'],checklist:[],records:[]};
+  const store=binActiveStore(); if(!store) return DB.binAdmin;
+  DB.binByStore=DB.binByStore||{};
+  const c=DB.binByStore[store]=DB.binByStore[store]||{
+    activeDays:((DB.binAdmin.activeDays)||[]).slice(),
+    checklist:JSON.parse(JSON.stringify((DB.binAdmin.checklist)||[]))};
+  const recs=DB.binAdmin;
+  return {
+    get activeDays(){ return c.activeDays; }, set activeDays(v){ c.activeDays=v; },
+    get checklist(){ return c.checklist; },  set checklist(v){ c.checklist=v; },
+    get records(){ return recs.records; },   set records(v){ recs.records=v; }
+  };
+}
+window.binActiveDays=binActiveDays;
 function binState(){
   const b=binCfg(), active=(b.activeDays&&b.activeDays[0])||'Tue';
   const fresh=!State.bin;
-  State.bin=State.bin||{week:0,day:active,edit:false,store:isSuper()?DB.stores[0]:State.branch,checks:{},name:'',qty:'',photo:null};
+  State.bin=State.bin||{week:0,day:active,edit:false,store:binActiveStore()||DB.stores[0],checks:{},name:'',qty:'',photo:null};
   if(!State.bin.day) State.bin.day=active;
-  if(isSuper()&&!State.bin.store) State.bin.store=DB.stores[0];
+  if((isSuper()||isBa())&&!State.bin.store) State.bin.store=DB.stores[0];
   if(fresh) binDraftRestore(State.bin);   // Android killed the tab mid-form (camera) → bring it back
   return State.bin;
 }
