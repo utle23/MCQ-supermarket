@@ -93,6 +93,27 @@ def _client_ip():
     xff = request.headers.get('X-Forwarded-For', '')
     return (xff.split(',')[0].strip() if xff else '') or request.remote_addr or 'unknown'
 
+# A 'stock' session exists only to fill in the stock sheet. Rather than trusting every
+# endpoint to check the role, everything outside this short list is refused here, once.
+_STOCK_OK_PATHS = ('/api/stock-list', '/api/stock-count', '/api/me', '/api/health', '/api/login', '/api/logout')
+
+
+@api.before_request
+def _stock_only_guard():
+    try:
+        au = current_auth()
+    except Exception:
+        return None
+    if not au or au.get('role') != 'stock':
+        return None
+    path = request.path or ''
+    if any(path == p or path.startswith(p + '/') for p in _STOCK_OK_PATHS):
+        return None
+    if path.startswith('/api/stock-code'):   # only a Super may touch the code itself
+        return jsonify(ok=False, error='Not allowed for a stock-sheet sign-in'), 403
+    return jsonify(ok=False, error='This sign-in can only open the stock list'), 403
+
+
 @api.route('/api/login', methods=['POST'])
 def login():
     d = request.get_json(force=True, silent=True) or {}
@@ -114,6 +135,16 @@ def login():
         db.login_note_fail(ip, lid); time.sleep(0.4)
         return jsonify(ok=False, error='This account has been archived — please contact your manager or Head Office to restore access.'), 403
     if not res:
+        # STOCK SHEET SIGN-IN: no ID, just the stock code. Checked only after every real
+        # credential has been tried, so a genuine account can never be shadowed by it.
+        # The session it opens can reach the stock list and nothing else (see
+        # _stock_only_guard), which is why it is safe to hand to whoever does the count.
+        want = _stock_code_current()
+        if not lid and want and hmac.compare_digest(str(d.get('password') or '').strip(), want):
+            db.login_note_ok(ip, lid)
+            tok = db.issue_token('stock', None, staff_name='Stock sheet')
+            return jsonify(ok=True, token=tok, role='stock', store=None,
+                           staff_name='Stock sheet', stores=db.STORES, stock_only=True)
         db.login_note_fail(ip, lid); time.sleep(0.4)   # slow down scripted guessing
         return jsonify(ok=False, error='Invalid credentials'), 401
     db.login_note_ok(ip, lid)
@@ -1448,6 +1479,9 @@ def require_stock_code():
     """The page is locked behind a shared code, on the SERVER — a client that
     does not send the right code is never given the list. No code configured =
     locked for everyone (never 'open by default')."""
+    au = current_auth()
+    if au and au.get('role') == 'stock':
+        return   # signed in WITH the code already; the token is the proof
     want = _stock_code_current()
     sent = _stock_code_sent()
     if not want or not sent or not hmac.compare_digest(sent, want):
@@ -1482,10 +1516,30 @@ def set_stock_code():
     return jsonify(ok=True)
 
 
+def _stock_migrate(doc):
+    """Give an older document the page grouping (the sheet is printed as three
+    separate pages and each one is its own kind of stock)."""
+    changed = False
+    pages = doc.get('pages')
+    if not isinstance(pages, list) or not pages:
+        doc['pages'] = [dict(p) for p in stock_seed.PAGES]
+        changed = True
+    ids = [p.get('id') for p in doc['pages']]
+    seed_page = {c['id']: c.get('page') for c in stock_seed.CATEGORIES}
+    for c in doc.get('categories') or []:
+        if c.get('page') not in ids:
+            c['page'] = seed_page.get(c.get('id')) if seed_page.get(c.get('id')) in ids else ids[0]
+            changed = True
+    return changed
+
+
 def _stock_doc():
     doc = db.get_setting(STOCK_DOC_KEY, None)
     if not isinstance(doc, dict) or not isinstance(doc.get('categories'), list):
         doc = stock_seed.default_doc()
+        db.set_setting(STOCK_DOC_KEY, doc)
+        return doc
+    if _stock_migrate(doc):
         db.set_setting(STOCK_DOC_KEY, doc)
     return doc
 
@@ -1502,8 +1556,15 @@ def _apply_stock_op(doc, op):
     """Apply ONE edit. Returns (ok, message). Ids are never reused, so a store's
     counted numbers stay attached to the right item across any reordering."""
     cats = doc.get('categories') or []
+    pages = doc.setdefault('pages', [dict(p) for p in stock_seed.PAGES])
     kind = op.get('op') or ''
     tones = ('veg', 'fruit', 'other')
+
+    def page_at(pid):
+        for i, p in enumerate(pages):
+            if p.get('id') == pid:
+                return i, p
+        return -1, None
 
     def cat_at(cid):
         for i, c in enumerate(cats):
@@ -1518,16 +1579,66 @@ def _apply_stock_op(doc, op):
                     return ci, ii, c, it
         return -1, -1, None, None
 
+    # ---- pages: the sheet is printed as several separate pages, one kind of
+    # stock each. A page always starts on a fresh printed sheet.
+    if kind == 'page.add':
+        name = _stock_clean(op.get('name'), 60) or ('Page %d' % (len(pages) + 1))
+        pg = {'id': _stock_new_id('sp'), 'name': name}
+        pages.append(pg)
+        return True, pg['id']
+
+    if kind == 'page.rename':
+        i, pg = page_at(op.get('id'))
+        if not pg: return False, 'page not found'
+        name = _stock_clean(op.get('name'), 60)
+        if not name: return False, 'name required'
+        pg['name'] = name
+        return True, ''
+
+    if kind == 'page.move':
+        i, pg = page_at(op.get('id'))
+        if not pg: return False, 'page not found'
+        to = max(0, min(len(pages) - 1, i + (1 if op.get('dir') == 'down' else -1)))
+        pages.insert(to, pages.pop(i))
+        return True, ''
+
+    if kind == 'page.del':
+        i, pg = page_at(op.get('id'))
+        if not pg: return False, 'page not found'
+        if len(pages) <= 1: return False, 'the sheet needs at least one page'
+        if [c for c in cats if c.get('page') == pg['id']]:
+            return False, 'move or delete this page\'s categories first'
+        pages.pop(i)
+        return True, ''
+
     if kind == 'cat.add':
         name = _stock_clean(op.get('name')) or 'NEW CATEGORY'
         tone = op.get('tone') if op.get('tone') in tones else 'veg'
-        cat = {'id': _stock_new_id('sc'), 'name': name, 'tone': tone, 'items': []}
-        at = op.get('index')
-        if isinstance(at, int) and 0 <= at <= len(cats):
-            cats.insert(at, cat)
-        else:
-            cats.append(cat)
+        pid = op.get('page')
+        if not page_at(pid)[1]:
+            pid = pages[0]['id']
+        cat = {'id': _stock_new_id('sc'), 'name': name, 'tone': tone, 'page': pid, 'items': []}
+        # a new category lands at the END of ITS OWN page, never between two pages
+        last = -1
+        for i, c in enumerate(cats):
+            if c.get('page') == pid:
+                last = i
+        cats.insert(last + 1 if last >= 0 else len(cats), cat)
         return True, cat['id']
+
+    if kind == 'cat.setPage':
+        i, c = cat_at(op.get('id'))
+        if not c: return False, 'category not found'
+        pi, pg = page_at(op.get('page'))
+        if not pg: return False, 'page not found'
+        c['page'] = pg['id']
+        cats.pop(i)
+        last = -1
+        for j, other in enumerate(cats):
+            if other.get('page') == pg['id']:
+                last = j
+        cats.insert(last + 1 if last >= 0 else len(cats), c)
+        return True, ''
 
     if kind == 'cat.rename':
         i, c = cat_at(op.get('id'))
@@ -1553,11 +1664,15 @@ def _apply_stock_op(doc, op):
     if kind == 'cat.move':
         i, c = cat_at(op.get('id'))
         if not c: return False, 'category not found'
-        to = op.get('index')
-        if not isinstance(to, int):
-            to = i + (1 if op.get('dir') == 'down' else -1)
-        to = max(0, min(len(cats) - 1, to))
-        cats.insert(to, cats.pop(i))
+        # move WITHIN its own page: swapping with the neighbour on the same page
+        # keeps one kind of stock from drifting onto another page's sheet.
+        same = [j for j, o in enumerate(cats) if o.get('page') == c.get('page')]
+        at = same.index(i)
+        to_at = at + (1 if op.get('dir') == 'down' else -1)
+        if to_at < 0 or to_at >= len(same):
+            return True, 'already at the end of its page'
+        j = same[to_at]
+        cats[i], cats[j] = cats[j], cats[i]
         return True, ''
 
     if kind == 'item.add':
@@ -1610,7 +1725,9 @@ def _apply_stock_op(doc, op):
         return True, ''
 
     if kind == 'doc.restore':
-        doc['categories'] = stock_seed.default_doc()['categories']
+        fresh = stock_seed.default_doc()
+        doc['pages'] = fresh['pages']
+        doc['categories'] = fresh['categories']
         return True, 'restored'
 
     return False, 'unknown operation'

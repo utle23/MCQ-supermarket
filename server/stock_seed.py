@@ -1,20 +1,41 @@
 """Default STOCK LIST — transcribed from the printed Stock_List_Landscape sheet
-(33 categories / 256 items, in the order and grouping the stores already use).
+(3 pages / 33 categories / 256 items, in the order and grouping the stores use).
 
-Seeded into the `stock_list` setting the first time the page is opened. After that
-the live document in the database is the source of truth and this file is only a
-fallback / "restore the original sheet" source, so editing it does not disturb a
-list the stores have already changed.
+The sheet is printed as THREE separate pages and each one is its own kind of
+stock, so every category carries the page it belongs to. A page always starts on
+a fresh sheet when printed: if one page grows past a single sheet it simply
+continues onto the next one, and the following page still starts clean — two
+different kinds are never mixed on one sheet.
 
-tone: veg (green band) | fruit (orange band) | other (grey band) — the colours on
-the paper form.
+Seeded into the `stock_list` setting the first time the page is opened. After
+that the live document in the database is the source of truth and this file is
+only a fallback / "restore the original sheet" source.
+
+tone: veg (green band) | fruit (orange band) | other (grey band) — the colours
+on the paper form.
 """
+
+PAGES = [
+  {
+    "id": "p1",
+    "name": "Page 1"
+  },
+  {
+    "id": "p2",
+    "name": "Page 2"
+  },
+  {
+    "id": "p3",
+    "name": "Page 3"
+  }
+]
 
 CATEGORIES = [
   {
     "id": "sc01",
     "name": "OTHER",
     "tone": "veg",
+    "page": "p1",
     "items": [
       {
         "id": "si001",
@@ -102,6 +123,7 @@ CATEGORIES = [
     "id": "sc02",
     "name": "VEGIES",
     "tone": "veg",
+    "page": "p1",
     "items": [
       {
         "id": "si021",
@@ -185,6 +207,7 @@ CATEGORIES = [
     "id": "sc03",
     "name": "CHILLI & CAPS & PAPRIKA",
     "tone": "veg",
+    "page": "p1",
     "items": [
       {
         "id": "si040",
@@ -240,6 +263,7 @@ CATEGORIES = [
     "id": "sc04",
     "name": "BEANS & PEAS",
     "tone": "veg",
+    "page": "p1",
     "items": [
       {
         "id": "si052",
@@ -275,6 +299,7 @@ CATEGORIES = [
     "id": "sc05",
     "name": "CUCUMBER & ZUCCHINI",
     "tone": "veg",
+    "page": "p1",
     "items": [
       {
         "id": "si059",
@@ -302,6 +327,7 @@ CATEGORIES = [
     "id": "sc06",
     "name": "CARROT & RADISH",
     "tone": "veg",
+    "page": "p1",
     "items": [
       {
         "id": "si064",
@@ -325,6 +351,7 @@ CATEGORIES = [
     "id": "sc07",
     "name": "ASIAN VEGIES",
     "tone": "veg",
+    "page": "p1",
     "items": [
       {
         "id": "si068",
@@ -380,6 +407,7 @@ CATEGORIES = [
     "id": "sc08",
     "name": "GINGER & GARLIC",
     "tone": "veg",
+    "page": "p1",
     "items": [
       {
         "id": "si080",
@@ -399,6 +427,7 @@ CATEGORIES = [
     "id": "sc09",
     "name": "LEMON & LIME",
     "tone": "fruit",
+    "page": "p1",
     "items": [
       {
         "id": "si083",
@@ -418,6 +447,7 @@ CATEGORIES = [
     "id": "sc10",
     "name": "MIX LEAVES",
     "tone": "veg",
+    "page": "p1",
     "items": [
       {
         "id": "si086",
@@ -449,6 +479,7 @@ CATEGORIES = [
     "id": "sc11",
     "name": "ASIAN GREENS",
     "tone": "veg",
+    "page": "p1",
     "items": [
       {
         "id": "si092",
@@ -488,6 +519,7 @@ CATEGORIES = [
     "id": "sc12",
     "name": "APPLE",
     "tone": "fruit",
+    "page": "p2",
     "items": [
       {
         "id": "si100",
@@ -539,6 +571,7 @@ CATEGORIES = [
     "id": "sc13",
     "name": "BERRIES & CHERRIES",
     "tone": "fruit",
+    "page": "p2",
     "items": [
       {
         "id": "si111",
@@ -574,6 +607,7 @@ CATEGORIES = [
     "id": "sc14",
     "name": "GRAPES & KIWI",
     "tone": "fruit",
+    "page": "p2",
     "items": [
       {
         "id": "si118",
@@ -609,6 +643,7 @@ CATEGORIES = [
     "id": "sc15",
     "name": "DATES, LONGAN & LYCHEE",
     "tone": "fruit",
+    "page": "p2",
     "items": [
       {
         "id": "si125",
@@ -632,6 +667,7 @@ CATEGORIES = [
     "id": "sc16",
     "name": "PEARS",
     "tone": "fruit",
+    "page": "p2",
     "items": [
       {
         "id": "si129",
@@ -695,6 +731,7 @@ CATEGORIES = [
     "id": "sc17",
     "name": "MUSHROOM",
     "tone": "veg",
+    "page": "p2",
     "items": [
       {
         "id": "si143",
@@ -754,6 +791,7 @@ CATEGORIES = [
     "id": "sc18",
     "name": "STONE FRUIT",
     "tone": "fruit",
+    "page": "p2",
     "items": [
       {
         "id": "si156",
@@ -817,6 +855,7 @@ CATEGORIES = [
     "id": "sc19",
     "name": "OTHER",
     "tone": "other",
+    "page": "p2",
     "items": [
       {
         "id": "si170",
@@ -848,6 +887,7 @@ CATEGORIES = [
     "id": "sc20",
     "name": "BANANA & AVOCADO",
     "tone": "fruit",
+    "page": "p3",
     "items": [
       {
         "id": "si176",
@@ -887,6 +927,7 @@ CATEGORIES = [
     "id": "sc21",
     "name": "MANGO",
     "tone": "fruit",
+    "page": "p3",
     "items": [
       {
         "id": "si184",
@@ -906,6 +947,7 @@ CATEGORIES = [
     "id": "sc22",
     "name": "CITRUS",
     "tone": "fruit",
+    "page": "p3",
     "items": [
       {
         "id": "si187",
@@ -969,6 +1011,7 @@ CATEGORIES = [
     "id": "sc23",
     "name": "PINEAPPLE & PAPAYA",
     "tone": "fruit",
+    "page": "p3",
     "items": [
       {
         "id": "si201",
@@ -992,6 +1035,7 @@ CATEGORIES = [
     "id": "sc24",
     "name": "MELON",
     "tone": "fruit",
+    "page": "p3",
     "items": [
       {
         "id": "si205",
@@ -1015,6 +1059,7 @@ CATEGORIES = [
     "id": "sc25",
     "name": "ONION",
     "tone": "veg",
+    "page": "p3",
     "items": [
       {
         "id": "si209",
@@ -1054,6 +1099,7 @@ CATEGORIES = [
     "id": "sc26",
     "name": "GARLIC",
     "tone": "veg",
+    "page": "p3",
     "items": [
       {
         "id": "si217",
@@ -1073,6 +1119,7 @@ CATEGORIES = [
     "id": "sc27",
     "name": "COCONUT",
     "tone": "fruit",
+    "page": "p3",
     "items": [
       {
         "id": "si220",
@@ -1084,6 +1131,7 @@ CATEGORIES = [
     "id": "sc28",
     "name": "WATERMELON",
     "tone": "fruit",
+    "page": "p3",
     "items": [
       {
         "id": "si221",
@@ -1107,6 +1155,7 @@ CATEGORIES = [
     "id": "sc29",
     "name": "POTATO & SWEET POTATO",
     "tone": "veg",
+    "page": "p3",
     "items": [
       {
         "id": "si225",
@@ -1150,6 +1199,7 @@ CATEGORIES = [
     "id": "sc30",
     "name": "PUMPKIN",
     "tone": "veg",
+    "page": "p3",
     "items": [
       {
         "id": "si234",
@@ -1173,6 +1223,7 @@ CATEGORIES = [
     "id": "sc31",
     "name": "YAM & ASIAN MELON",
     "tone": "veg",
+    "page": "p3",
     "items": [
       {
         "id": "si238",
@@ -1196,6 +1247,7 @@ CATEGORIES = [
     "id": "sc32",
     "name": "TOMATO",
     "tone": "veg",
+    "page": "p3",
     "items": [
       {
         "id": "si242",
@@ -1227,6 +1279,7 @@ CATEGORIES = [
     "id": "sc33",
     "name": "EGGS (in CTN only please)",
     "tone": "other",
+    "page": "p3",
     "items": [
       {
         "id": "si248",
@@ -1274,6 +1327,7 @@ def default_doc():
     import copy
     return {
         'rev': 1,
+        'pages': copy.deepcopy(PAGES),
         'categories': copy.deepcopy(CATEGORIES),
         'updatedAt': '',
         'updatedBy': 'seed',

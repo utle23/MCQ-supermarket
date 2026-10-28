@@ -2247,8 +2247,10 @@ def delete_announcement(au, aid):
         conn.close()
 
 def can_access(au, store_id):
-    # super + ba (read-only viewer) can read any store; others only their own
-    return bool(au) and (au['role'] in ('super', 'ba') or au['store_id'] == store_id)
+    # super + ba (read-only viewer) can read any store; a stock-sheet session counts
+    # for whichever store it picks (it can reach NOTHING but the stock endpoints —
+    # see _stock_only_guard in app.py); others only their own
+    return bool(au) and (au['role'] in ('super', 'ba', 'stock') or au['store_id'] == store_id)
 
 def can_write(au):
     return bool(au) and au['role'] != 'ba'   # Chú Ba is strictly read-only

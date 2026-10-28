@@ -2160,3 +2160,37 @@ html,body{max-width:100%}
 .stk-fail span{color:var(--muted,#64748b);font-size:13px;line-height:1.5;margin-bottom:6px}
 .stk-setcode{margin-top:10px}
 .stk-note{color:var(--muted,#64748b);font-weight:600}
+
+/* ---- Stock List: pages (each page = one kind of stock, one printed sheet) ---- */
+.stk-page{margin:0 0 22px}
+.stk-page-bar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#111827;color:#fff;
+  border-radius:12px 12px 0 0;padding:9px 14px;font-size:13.5px}
+.stk-page-no{display:grid;place-items:center;width:22px;height:22px;border-radius:7px;background:rgba(255,255,255,.16);
+  font-size:11.5px;font-weight:800;flex:none}
+.stk-page-bar b{font-weight:800;letter-spacing:.3px}
+.stk-page-sub{font-size:11px;font-weight:600;opacity:.72}
+.stk-page-ops{margin-left:auto;display:flex;gap:5px}
+.stk-page-ops .stk-ic{height:24px;width:26px;font-size:10px;background:rgba(255,255,255,.14);border-color:rgba(255,255,255,.25);color:#fff}
+.stk-page-ops .stk-ic:hover:not(:disabled){background:rgba(255,255,255,.28);color:#fff;border-color:#fff}
+.stk-page-ops .stk-ic.danger:hover{background:#ef4444;border-color:#ef4444}
+.stk-page>.stk-grid{border:1px solid var(--line,#dbe3de);border-top:0;border-radius:0 0 12px 12px;padding:13px;background:var(--surface-2,#f8fafc)}
+.stk-page .stk-add-cat{margin:9px 0 0}
+.stk-add-page{margin-top:6px}
+
+/* editing: one column, so the name boxes are long enough to actually read */
+.stk-pages.editing .stk-grid{column-count:1}
+.stk-pages.editing .stk-name-in{font-size:14px;padding:8px 11px}
+.stk-pages.editing .stk-band-in{font-size:13.5px;padding:7px 11px}
+.stk-pages.editing .stk-n{width:auto}
+.stk-pages.editing .stk-move-sel,.stk-pages.editing .stk-page-sel,.stk-pages.editing .stk-tone-sel{max-width:none;width:auto;font-size:11.5px;padding:6px 7px}
+.stk-page-sel{border:1px solid rgba(0,0,0,.18);border-radius:7px;padding:4px 6px;font-size:10.5px;font-weight:700;background:rgba(255,255,255,.8)}
+
+/* the naming dialog — a big, readable box instead of a browser prompt */
+.stk-dlg{display:flex;flex-direction:column;gap:6px;min-width:min(420px,78vw)}
+.stk-dlg-lbl{font-size:11px;font-weight:800;letter-spacing:.5px;color:var(--muted,#64748b);margin-top:6px}
+.stk-dlg-in{width:100%;border:1.5px solid var(--line,#dbe3de);border-radius:11px;padding:13px 14px;
+  font:inherit;font-size:17px;font-weight:700;color:var(--ink,#0f172a);background:#fff}
+.stk-dlg-in:focus{outline:0;border-color:var(--accent,#2f6f3e);box-shadow:0 0 0 4px rgba(47,111,62,.13)}
+.stk-dlg-sel{width:100%;border:1.5px solid var(--line,#dbe3de);border-radius:11px;padding:11px 12px;font:inherit;font-size:14px;font-weight:600;background:#fff}
+.stk-dlg-hint{font-size:11.5px;color:var(--muted,#64748b);line-height:1.45}
+.stk-dlg-actions{display:flex;gap:9px;justify-content:flex-end;margin-top:16px}
