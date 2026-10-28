@@ -763,7 +763,7 @@ DB.modules.issue = {
 
 /* ---------- navigation groups (sidebar) ---------- */
 DB.navGroups = [
-  { id:'ops',    label:'Operations', icon:'fa-clipboard-list', items:['handover','schedules'] },
+  { id:'ops',    label:'Operations', icon:'fa-clipboard-list', items:['handover','schedules','stocklist'] },
   { id:'hr',     label:'Staff & HR', icon:'fa-users',          items:['structure','staff','schedule','performance','training','reward','raise','birthday'], admin:true },
   { id:'mgmt',   label:'Management', icon:'fa-user-shield',     items:['manager','storeconfig','analytics','photos','whatsapp','email','data','auditlog'], admin:true },
   { id:'reports',label:'Reports & Rules', icon:'fa-flag',       items:['rules'] },
@@ -848,6 +848,7 @@ DB.customPages = {
   handover: { label:'Shift Handover', icon:'🔁', render:'renderHandover' },
   history:  { label:'Checklist History', icon:'🧾', render:'renderHistory' },
   binadmin: { label:'Bin Admin', icon:'🗑️', render:'renderBinAdmin' },
+  stocklist:{ label:'Stock List', icon:'📦', render:'renderStockList' },   // code-locked live version of the printed stock sheet
   performance:{ label:'Performance & Scoring', icon:'📊', render:'renderPerformance', admin:true },
   aiuse:    { label:'AI Lab',          icon:'🤖', render:'renderAIUse', admin:true },
   manager:  { label:'Manager Panel',   icon:'🛡️', render:'renderManager', admin:true },

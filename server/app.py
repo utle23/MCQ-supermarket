@@ -13,6 +13,7 @@ import os, sys, json, time, secrets, base64, re, hmac, hashlib, urllib.request, 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # so `import db` works when imported as server.app too
 import db
 import cloudstore
+import stock_seed
 import ssl as _ssl
 try:
     import certifi as _certifi
@@ -1401,6 +1402,285 @@ def post_settings():
     if not key: abort(400)
     db.set_setting(key, d.get('value'))
     return jsonify(ok=True)
+
+# ============================================================================
+# STOCK LIST — the printed produce stock/order sheet, live and shared.
+#
+# Two separate pieces, deliberately:
+#   * stock_list            one company-wide DOCUMENT: the categories and the
+#                           item names (the sheet itself). Edited rarely, by
+#                           whoever holds the code; every store prints the same
+#                           sheet.
+#   * stock_count:<store>   each store's OWN numbers (IN / O / D) plus the date
+#                           and who checked/ordered. Per store, so two stores
+#                           counting at the same time can never overwrite each
+#                           other.
+#
+# Structural edits are applied HERE, on the server, one operation at a time, so
+# two people editing the list at once cannot clobber each other's change (no
+# "whole document" writes, no lost updates).
+#
+# Access: a signed-in user PLUS the stock code. THIS REPOSITORY IS PUBLIC, so the
+# code is never written here — it comes from the STOCK_LIST_CODE environment
+# variable on the host, or from the settings table where a Super sets it from
+# inside the app. With neither set the page stays locked for everyone.
+# ============================================================================
+STOCK_DOC_KEY = 'stock_list'
+STOCK_CODE_KEY = 'stock_list_code'
+STOCK_CODE_ENV = 'STOCK_LIST_CODE'
+
+
+def _stock_code_sent():
+    v = request.headers.get('X-Stock-Code') or ''
+    if not v:
+        d = request.get_json(force=True, silent=True) or {}
+        v = d.get('code') or ''
+    if not v:
+        v = request.args.get('code') or ''
+    return str(v).strip()
+
+
+def _stock_code_current():
+    return str(os.environ.get(STOCK_CODE_ENV) or db.get_setting(STOCK_CODE_KEY, '') or '').strip()
+
+
+def require_stock_code():
+    """The page is locked behind a shared code, on the SERVER — a client that
+    does not send the right code is never given the list. No code configured =
+    locked for everyone (never 'open by default')."""
+    want = _stock_code_current()
+    sent = _stock_code_sent()
+    if not want or not sent or not hmac.compare_digest(sent, want):
+        abort(403)
+
+
+@api.route('/api/stock-code', methods=['GET'])
+def get_stock_code_state():
+    """Super only, and it never returns the code itself — only whether one is set
+    and where it comes from, so the page can offer to set one."""
+    au = require_auth()
+    if au['role'] != 'super': abort(403)
+    src = 'env' if os.environ.get(STOCK_CODE_ENV) else ('setting' if db.get_setting(STOCK_CODE_KEY, '') else 'none')
+    return jsonify(ok=True, configured=bool(_stock_code_current()), source=src)
+
+
+@api.route('/api/stock-code', methods=['POST'])
+def set_stock_code():
+    au = require_auth(); require_write(au)
+    if au['role'] != 'super': abort(403)
+    if os.environ.get(STOCK_CODE_ENV):
+        return jsonify(ok=False, error='The code is fixed by STOCK_LIST_CODE on the server — change it there.'), 400
+    d = request.get_json(force=True, silent=True) or {}
+    code = str(d.get('code') or '').strip()
+    if len(code) < 6:
+        return jsonify(ok=False, error='Use at least 6 characters.'), 400
+    db.set_setting(STOCK_CODE_KEY, code)
+    try:
+        db.write_audit(who(au), au.get('store_id') or 'ALL', 'update', 'stockList', 'code', None, {'changed': True})
+    except Exception:
+        pass
+    return jsonify(ok=True)
+
+
+def _stock_doc():
+    doc = db.get_setting(STOCK_DOC_KEY, None)
+    if not isinstance(doc, dict) or not isinstance(doc.get('categories'), list):
+        doc = stock_seed.default_doc()
+        db.set_setting(STOCK_DOC_KEY, doc)
+    return doc
+
+
+def _stock_new_id(prefix):
+    return prefix + secrets.token_hex(5)
+
+
+def _stock_clean(v, limit=120):
+    return ' '.join(str(v or '').split())[:limit]
+
+
+def _apply_stock_op(doc, op):
+    """Apply ONE edit. Returns (ok, message). Ids are never reused, so a store's
+    counted numbers stay attached to the right item across any reordering."""
+    cats = doc.get('categories') or []
+    kind = op.get('op') or ''
+    tones = ('veg', 'fruit', 'other')
+
+    def cat_at(cid):
+        for i, c in enumerate(cats):
+            if c.get('id') == cid:
+                return i, c
+        return -1, None
+
+    def item_at(iid):
+        for ci, c in enumerate(cats):
+            for ii, it in enumerate(c.get('items') or []):
+                if it.get('id') == iid:
+                    return ci, ii, c, it
+        return -1, -1, None, None
+
+    if kind == 'cat.add':
+        name = _stock_clean(op.get('name')) or 'NEW CATEGORY'
+        tone = op.get('tone') if op.get('tone') in tones else 'veg'
+        cat = {'id': _stock_new_id('sc'), 'name': name, 'tone': tone, 'items': []}
+        at = op.get('index')
+        if isinstance(at, int) and 0 <= at <= len(cats):
+            cats.insert(at, cat)
+        else:
+            cats.append(cat)
+        return True, cat['id']
+
+    if kind == 'cat.rename':
+        i, c = cat_at(op.get('id'))
+        if not c: return False, 'category not found'
+        name = _stock_clean(op.get('name'))
+        if not name: return False, 'name required'
+        c['name'] = name
+        return True, ''
+
+    if kind == 'cat.tone':
+        i, c = cat_at(op.get('id'))
+        if not c: return False, 'category not found'
+        if op.get('tone') not in tones: return False, 'bad tone'
+        c['tone'] = op.get('tone')
+        return True, ''
+
+    if kind == 'cat.del':
+        i, c = cat_at(op.get('id'))
+        if not c: return False, 'category not found'
+        cats.pop(i)
+        return True, ''
+
+    if kind == 'cat.move':
+        i, c = cat_at(op.get('id'))
+        if not c: return False, 'category not found'
+        to = op.get('index')
+        if not isinstance(to, int):
+            to = i + (1 if op.get('dir') == 'down' else -1)
+        to = max(0, min(len(cats) - 1, to))
+        cats.insert(to, cats.pop(i))
+        return True, ''
+
+    if kind == 'item.add':
+        i, c = cat_at(op.get('cat'))
+        if not c: return False, 'category not found'
+        name = _stock_clean(op.get('name')) or 'New item'
+        it = {'id': _stock_new_id('si'), 'name': name}
+        c.setdefault('items', [])
+        at = op.get('index')
+        if isinstance(at, int) and 0 <= at <= len(c['items']):
+            c['items'].insert(at, it)
+        else:
+            c['items'].append(it)
+        return True, it['id']
+
+    if kind == 'item.rename':
+        ci, ii, c, it = item_at(op.get('id'))
+        if not it: return False, 'item not found'
+        name = _stock_clean(op.get('name'))
+        if not name: return False, 'name required'
+        it['name'] = name
+        return True, ''
+
+    if kind == 'item.del':
+        ci, ii, c, it = item_at(op.get('id'))
+        if not it: return False, 'item not found'
+        c['items'].pop(ii)
+        return True, ''
+
+    if kind == 'item.move':
+        ci, ii, c, it = item_at(op.get('id'))
+        if not it: return False, 'item not found'
+        to = ii + (1 if op.get('dir') == 'down' else -1)
+        to = max(0, min(len(c['items']) - 1, to))
+        c['items'].insert(to, c['items'].pop(ii))
+        return True, ''
+
+    if kind == 'item.moveTo':
+        ci, ii, c, it = item_at(op.get('id'))
+        if not it: return False, 'item not found'
+        ti, tc = cat_at(op.get('cat'))
+        if not tc: return False, 'target category not found'
+        c['items'].pop(ii)
+        tc.setdefault('items', [])
+        at = op.get('index')
+        if isinstance(at, int) and 0 <= at <= len(tc['items']):
+            tc['items'].insert(at, it)
+        else:
+            tc['items'].append(it)
+        return True, ''
+
+    if kind == 'doc.restore':
+        doc['categories'] = stock_seed.default_doc()['categories']
+        return True, 'restored'
+
+    return False, 'unknown operation'
+
+
+@api.route('/api/stock-list', methods=['GET'])
+def get_stock_list():
+    require_auth(); require_stock_code()
+    return jsonify(ok=True, doc=_stock_doc())
+
+
+@api.route('/api/stock-list/op', methods=['POST'])
+def post_stock_op():
+    au = require_auth(); require_write(au); require_stock_code()
+    d = request.get_json(force=True, silent=True) or {}
+    ops = d.get('ops')
+    if not isinstance(ops, list):
+        ops = [d.get('op_data') or d]
+    doc = _stock_doc()
+    done = 0; last = ''
+    for op in ops[:50]:
+        if not isinstance(op, dict):
+            continue
+        ok, msg = _apply_stock_op(doc, op)
+        if not ok:
+            return jsonify(ok=False, error=msg, doc=doc), 400
+        done += 1; last = msg
+    doc['rev'] = int(doc.get('rev') or 0) + 1
+    doc['updatedAt'] = db.now()
+    doc['updatedBy'] = who(au)
+    db.set_setting(STOCK_DOC_KEY, doc)
+    try:
+        db.emit_event('stocklist')   # other open devices refresh the list within seconds
+    except Exception:
+        pass
+    return jsonify(ok=True, doc=doc, applied=done, result=last)
+
+
+@api.route('/api/stock-count/<store_id>', methods=['GET'])
+def get_stock_count(store_id):
+    au = require_auth(); require_stock_code(); require_store(au, store_id)
+    c = db.get_setting('stock_count:' + store_id, None)
+    if not isinstance(c, dict):
+        c = {'values': {}, 'meta': {}, 'updatedAt': '', 'updatedBy': ''}
+    return jsonify(ok=True, count=c)
+
+
+@api.route('/api/stock-count/<store_id>', methods=['POST'])
+def post_stock_count(store_id):
+    au = require_auth(); require_write(au); require_stock_code(); require_store(au, store_id)
+    d = request.get_json(force=True, silent=True) or {}
+    values = d.get('values') if isinstance(d.get('values'), dict) else {}
+    meta = d.get('meta') if isinstance(d.get('meta'), dict) else {}
+    clean = {}
+    for k, v in list(values.items())[:4000]:
+        if not isinstance(v, dict):
+            continue
+        row = {}
+        for f in ('in', 'o', 'd'):
+            val = _stock_clean(v.get(f), 16)
+            if val:
+                row[f] = val
+        if row:
+            clean[_stock_clean(k, 40)] = row
+    c = {'values': clean,
+         'meta': {f: _stock_clean(meta.get(f), 60) for f in ('date', 'checkedBy', 'orderedBy')},
+         'updatedAt': db.now(), 'updatedBy': who(au)}
+    db.set_setting('stock_count:' + store_id, c)
+    return jsonify(ok=True, count=c)
+
 
 # ---- global "all-stores" notification recipients (one place, applies to every store) ----
 # Read by EVERY signed-in device (a store's client needs it to know who also gets its alerts);

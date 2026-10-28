@@ -106,6 +106,29 @@
       } return n; }).catch(function(){ return window.__inboxUnread; }); };
   // ---- AI Assistant (parse only; execution stays on the normal store-scoped endpoints) ----
   window.mcqAiCommand=function(text,roster,stores,rules){ return _authFetch('/api/ai-command',{method:'POST',body:JSON.stringify({text:text,roster:roster||[],stores:stores||[],rules:rules||[]})}); };
+  // ---- STOCK LIST: one shared sheet + each store's own counted numbers ----
+  // Locked behind a code that is checked ON THE SERVER, so the list is never served
+  // to a device that does not have it. The code lives in sessionStorage: it is asked
+  // for once per session and never written to disk.
+  function stockCode(){ try{ return (window.sessionStorage&&sessionStorage.getItem('mcq_stock_code'))||''; }catch(e){ return ''; } }
+  window.mcqStockCode=stockCode;
+  window.mcqStockSetCode=function(c){ try{ c?sessionStorage.setItem('mcq_stock_code',c):sessionStorage.removeItem('mcq_stock_code'); }catch(e){} };
+  function _stockFetch(path,opts,code){
+    opts=opts||{};
+    opts.headers=Object.assign({'Content-Type':'application/json','X-Stock-Code':(code||stockCode()),
+      Authorization:'Bearer '+TOKEN}, opts.headers||{});
+    return fetch((BASE||'')+path,opts)
+      .then(function(r){ return r.json().catch(function(){ return {}; }).then(function(j){
+        j=j||{}; if(!r.ok){ j.ok=false; j.status=r.status; } return j; }); })
+      .catch(function(){ return {ok:false,offline:true}; });
+  }
+  window.mcqStockGet=function(code){ return _stockFetch('/api/stock-list',{method:'GET'},code); };
+  // Super only: is a code configured, and may it be changed here? (never returns the code)
+  window.mcqStockCodeState=function(){ return _authFetch('/api/stock-code'); };
+  window.mcqStockCodeSet=function(code){ return _authFetch('/api/stock-code',{method:'POST',body:JSON.stringify({code:code})}); };
+  window.mcqStockOps=function(ops){ return _stockFetch('/api/stock-list/op',{method:'POST',body:JSON.stringify({ops:ops||[]})}); };
+  window.mcqStockCount=function(store){ return _stockFetch('/api/stock-count/'+encodeURIComponent(store),{method:'GET'}); };
+  window.mcqStockCountSave=function(store,payload){ return _stockFetch('/api/stock-count/'+encodeURIComponent(store),{method:'POST',body:JSON.stringify(payload||{})}); };
   // ---- central account management (account admin only) ----
   window.mcqAccounts=function(q){ return _authFetch('/api/accounts'+(q?('?q='+encodeURIComponent(q)):'')); };
   window.mcqAccountCreate=function(payload){ return _authFetch('/api/account/create',{method:'POST',body:JSON.stringify(payload||{})}); };

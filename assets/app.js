@@ -589,6 +589,8 @@ function wsStart(){
       if(State.route&&State.route.mod==='inbox' && window.renderInbox && !document.getElementById('mcq-modal')) try{ renderInbox(); }catch(e){}
     }
     if(d.what==='announcements' && State.route&&State.route.mod==='announcements' && window.renderAnnouncements && !document.getElementById('mcq-modal')) try{ renderAnnouncements(); }catch(e){}
+    // the shared stock sheet changed on another device → pull it in (never while typing)
+    if(d.what==='stocklist' && State.route&&State.route.mod==='stocklist' && window.stkOnRemoteChange) try{ stkOnRemoteChange(); }catch(e){}
     // someone at MY store saved (checklist template edit, submission, config…) → re-sync so
     // every device at the store sees the SAME up-to-date checklist within seconds
     if(d.what==='state' && d.store && State.account && (isSuper() || State.account.branch===d.store)){
@@ -1378,7 +1380,7 @@ function ensureJsPDF(){ return (window.jspdf&&window.jspdf.jsPDF)?Promise.resolv
 function _assetVer(){ try{ const s=[...document.scripts].find(x=>/assets\/app\.js/.test(x.src||'')); const m=s&&(s.src.match(/\?v=[\w.-]+/)); return m?m[0]:''; }catch(e){ return ''; } }
 let _lazyModsP;
 function ensureLazyModules(){ if(_lazyModsP) return _lazyModsP; const v=_assetVer();
-  _lazyModsP=Promise.all(['assets/pages2.js','assets/ai.js'].map(a=>mcqLoadScript(a+v).catch(()=>false)));
+  _lazyModsP=Promise.all(['assets/pages2.js','assets/ai.js','assets/stocklist.js'].map(a=>mcqLoadScript(a+v).catch(()=>false)));
   return _lazyModsP; }
 window.ensureJsPDF=ensureJsPDF; window.ensureChart=ensureChart; window.ensureLazyModules=ensureLazyModules;
 
