@@ -661,7 +661,9 @@ function renderTempCheck(){
         ${(tcCanEdit()&&!hist)?`<button class="btn sm ${s.edit?'primary':''}" onclick="tcToggleEdit()"><i class="fas fa-pen"></i> ${s.edit?'Done':'Edit sheet'}</button>`:''}
         ${hist?'':`<div class="exp-dd"><button class="btn sm exp-trigger" onclick="expToggle(this,event)"><i class="fas fa-file-export"></i>&nbsp; Export <i class="fas fa-caret-down"></i></button>
           <div class="exp-menu">
+            <button onclick="tcExport('pdfblank')"><i class="fas fa-file-pdf"></i> PDF \u2014 BLANK form</button>
             <button onclick="tcExport('blank')"><i class="fas fa-file-lines"></i> Print BLANK form</button>
+            <button onclick="tcExport('pdf')"><i class="fas fa-file-pdf"></i> PDF \u2014 filled in</button>
             <button onclick="tcExport('print')"><i class="fas fa-print"></i> Print what is filled in</button>
             <button onclick="tcExport('excel')"><i class="fas fa-file-excel"></i> Excel</button>
           </div></div>`}
@@ -744,25 +746,150 @@ function tcSheetTable(blank){
   return head+body;
 }
 /* ---- goods received ---- */
+/* How many lines a category prints: the ones actually added. A BLANK form keeps
+   at least the configured minimum so there is something to write on when nothing
+   has been entered yet. */
+function tcRecvLineCount(catId, blank){
+  const have=tcRecvOf(catId).length;
+  return blank ? Math.max(have, tcBlankRows()) : have;
+}
 function tcRecvTable(blank){
-  const s=tcState(), cats=tcRecvCats(), n=tcBlankRows();
+  const s=tcState(), cats=tcRecvCats();
   let body='<tbody>';
   cats.forEach(c=>{
     body+=`<tr class="cat"><td colspan="5">${esc(c.name)} <span class="rng">\u00b7 ${esc(tcRange(c.type).text||'')}</span></td></tr>`;
-    const rows = blank ? new Array(n).fill(null) : tcRecvOf(c.id);
-    if(!rows.length) body+='<tr><td></td><td></td><td></td><td></td><td></td></tr>';
-    rows.forEach(r=>{
-      if(!r){ body+='<tr><td></td><td class="c"></td><td class="c"></td><td class="c"></td><td></td></tr>'; return; }
+    const have=tcRecvOf(c.id), n=tcRecvLineCount(c.id, blank);
+    for(let i=0;i<n;i++){
+      const r = blank ? null : have[i];
+      if(!r){ body+='<tr><td></td><td class="c"></td><td class="c"></td><td class="c"></td><td></td></tr>'; continue; }
       const vd=tcVerdict(r.temp,c.type);
       body+=`<tr><td>${esc(r.product||'')}</td><td class="c${vd.state==='bad'?' bad':''}">${esc(r.temp?r.temp+' \u00b0C':'')}</td>`
           + `<td class="c">${esc(r.quality||'')}</td><td class="c">${esc(r.time||'')}</td><td>${esc(r.by||'')}</td></tr>`;
-    });
+    }
+    if(!n) body+='<tr><td colspan="5" style="color:#777">\u2014 nothing received \u2014</td></tr>';
   });
   body+='</tbody>';
   return '<thead><tr><th style="text-align:left">PRODUCT</th><th>TEMPERATURE</th><th>QUALITY</th><th>TIME RECEIVED</th><th>RECEIVED BY</th></tr></thead>'+body;
 }
 
+/* ---- PDF, drawn with jsPDF so it downloads as a file ---- */
+function tcPdfSpec(blank){
+  const s=tcState(), recvView=(s.view==='recv');
+  if(recvView){
+    const blocks=tcRecvCats().map(c=>{
+      const have=tcRecvOf(c.id), n=tcRecvLineCount(c.id, blank), rows=[];
+      for(let i=0;i<n;i++){
+        const r = blank ? null : have[i];
+        if(!r){ rows.push({cells:['','','','',''] }); continue; }
+        rows.push({cells:[r.product||'', r.temp?(r.temp+' \u00b0C'):'', r.quality||'', r.time||'', r.by||''],
+                   bad:tcVerdict(r.temp,c.type).state==='bad'});
+      }
+      if(!n) rows.push({cells:['\u2014 nothing received \u2014','','','','']});
+      return {head:c.name+'   \u00b7   '+(tcRange(c.type).text||''), rows};
+    });
+    return { title:s.doc.recvTitle||'Goods received temperature log',
+             cols:[{label:'PRODUCT',w:0.34},{label:'TEMPERATURE',w:0.16,c:1},{label:'QUALITY',w:0.15,c:1},
+                   {label:'TIME RECEIVED',w:0.16,c:1},{label:'RECEIVED BY',w:0.19}],
+             blocks };
+  }
+  const rounds=tcRounds();
+  const rows=tcItems().map(it=>({cells:[it.name].concat(rounds.map(r=>{
+      if(blank) return '';
+      const rec=s.values[tcKey(r.id,it.id)]||{};
+      return rec.v?(rec.v+' \u00b0C'):'';
+    })),
+    bad:!blank && rounds.some(r=>tcVerdict((s.values[tcKey(r.id,it.id)]||{}).v, r.type).state==='bad')}));
+  const w=(1-0.34)/Math.max(1,rounds.length);
+  return { title:s.doc.title||'Temperature check',
+           cols:[{label:'UNIT / SAMPLE',w:0.34}].concat(rounds.map(r=>({label:r.name+'  '+tcTimeLabel(r.time),sub:tcRange(r.type).text||'',w,c:1}))),
+           blocks:[{head:null, rows}] };
+}
+async function tcPdf(blank){
+  const ok = await (window.ensureJsPDF?ensureJsPDF():Promise.resolve(false));
+  if(!ok || !(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine not ready \u2014 using the print window'); return tcExport(blank?'blank':'print'); }
+  const s=tcState(), spec=tcPdfSpec(blank);
+  const { jsPDF }=window.jspdf, doc=new jsPDF({unit:'pt',format:'a4'});
+  const PW=doc.internal.pageSize.getWidth(), PH=doc.internal.pageSize.getHeight(), M=34;
+  const TW=PW-2*M; let y=0;
+  function header(){
+    doc.setFillColor(3,105,161); doc.rect(0,0,PW,62,'F');
+    let tx=M;
+    if(window.MCQ_LOGO_URL){ try{ doc.addImage(MCQ_LOGO_URL,'PNG',M,12,38,38); tx=M+48; }catch(e){} }
+    doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.text('MCQ Supermarket',tx,26);
+    doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.text(String(spec.title),tx,43);
+    doc.setFontSize(9.5);
+    doc.text((blank?'STORE: ______________':('Store: '+s.store))+'     '+(blank?'DATE: ______________':('Date: '+s.day)), PW-M, 43, {align:'right'});
+    y=78;
+  }
+  function room(h){ if(y+h>PH-70){ doc.addPage(); header(); } }
+  function colX(){ let x=M; return spec.cols.map(c=>{ const o=x; x+=c.w*TW; return o; }); }
+  const xs=colX();
+  function colHead(){
+    room(26);
+    doc.setFillColor(17,24,39); doc.rect(M,y,TW,22,'F');
+    doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(7.6);
+    spec.cols.forEach((c,i)=>{
+      const cw=c.w*TW, cx=c.c?xs[i]+cw/2:xs[i]+5;
+      doc.text(String(c.label),cx,c.sub?y+9:y+14,{align:c.c?'center':'left'});
+      if(c.sub){ doc.setFont('helvetica','normal'); doc.setFontSize(6.6); doc.text(String(c.sub),cx,y+18,{align:c.c?'center':'left'}); doc.setFont('helvetica','bold'); doc.setFontSize(7.6); }
+    });
+    y+=22;
+  }
+  header(); colHead();
+  spec.blocks.forEach(b=>{
+    if(b.head){
+      room(20);
+      doc.setFillColor(232,237,242); doc.rect(M,y,TW,17,'F');
+      doc.setTextColor(17,24,39); doc.setFont('helvetica','bold'); doc.setFontSize(8.4);
+      doc.text(String(b.head),M+5,y+12); y+=17;
+    }
+    b.rows.forEach(r=>{
+      room(22);
+      const h=21;
+      if(r.bad){ doc.setFillColor(254,226,226); doc.rect(M,y,TW,h,'F'); }
+      doc.setDrawColor(154,164,175); doc.setLineWidth(.5);
+      doc.rect(M,y,TW,h);
+      spec.cols.forEach((c,i)=>{ if(i) doc.line(xs[i],y,xs[i],y+h); });
+      doc.setTextColor(r.bad?153:17, r.bad?27:24, r.bad?27:39);
+      doc.setFont('helvetica', r.bad?'bold':'normal'); doc.setFontSize(8.6);
+      r.cells.forEach((v,i)=>{
+        if(v===''||v==null) return;
+        const c=spec.cols[i], cw=c.w*TW;
+        const txt=doc.splitTextToSize(String(v), cw-10)[0];
+        doc.text(txt, c.c?xs[i]+cw/2:xs[i]+5, y+14, {align:c.c?'center':'left'});
+      });
+      y+=h;
+    });
+  });
+  if(!blank && s.view!=='recv' && s.note){
+    room(40); y+=10;
+    doc.setTextColor(60); doc.setFont('helvetica','bold'); doc.setFontSize(8.5); doc.text('Notes:',M,y);
+    doc.setFont('helvetica','normal');
+    doc.splitTextToSize(String(s.note),TW-40).slice(0,4).forEach((ln,i)=>doc.text(ln,M+34,y+(i*11))); y+=22;
+  }
+  if(blank){
+    room(56); y+=10;
+    doc.setTextColor(60); doc.setFont('helvetica','bold'); doc.setFontSize(8.5); doc.text('Notes / corrective action:',M,y); y+=8;
+    doc.setDrawColor(154,164,175); doc.rect(M,y,TW,24); y+=24;
+  }
+  room(44); y+=20;
+  doc.setDrawColor(17,24,39); doc.setLineWidth(.7);
+  doc.line(M,y,M+TW/2-14,y); doc.line(M+TW/2+14,y,M+TW,y);
+  doc.setTextColor(90); doc.setFont('helvetica','normal'); doc.setFontSize(8);
+  doc.text('Checked by (print & sign)',M,y+11); doc.text('Manager verified',M+TW/2+14,y+11);
+  const n=doc.internal.getNumberOfPages();
+  for(let i=1;i<=n;i++){ doc.setPage(i); doc.setTextColor(130); doc.setFontSize(7.5);
+    doc.text('MCQ Supermarket \u00b7 butcher temperature record \u00b7 '+(blank?'blank form':perthStamp()), M, PH-18);
+    doc.text('Page '+i+' / '+n, PW-M, PH-18, {align:'right'}); }
+  const name=(spec.title.replace(/[^\w]+/g,'_')+'_'+(blank?'BLANK':(s.store+'_'+s.day))).replace(/_+/g,'_');
+  doc.save(name+'.pdf');
+  toast('\u2b07\ufe0f PDF downloaded');
+}
+window.tcPdf=tcPdf;
+
 function tcExport(fmt){
+  if(fmt==='pdf') return tcPdf(false);
+  if(fmt==='pdfblank') return tcPdf(true);
   const s=tcState(), recvView=(s.view==='recv'), blank=(fmt==='blank');
   const title = recvView ? (s.doc.recvTitle||'Goods received temperature log')
                          : (s.doc.title||'Temperature check');
