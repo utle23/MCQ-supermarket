@@ -13,7 +13,7 @@ import os, sys, json, time, secrets, base64, re, hmac, hashlib, urllib.request, 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # so `import db` works when imported as server.app too
 import db
 import cloudstore
-import stock_seed
+import temp_seed
 import ssl as _ssl
 try:
     import certifi as _certifi
@@ -93,27 +93,6 @@ def _client_ip():
     xff = request.headers.get('X-Forwarded-For', '')
     return (xff.split(',')[0].strip() if xff else '') or request.remote_addr or 'unknown'
 
-# A 'stock' session exists only to fill in the stock sheet. Rather than trusting every
-# endpoint to check the role, everything outside this short list is refused here, once.
-_STOCK_OK_PATHS = ('/api/stock-list', '/api/stock-count', '/api/me', '/api/health', '/api/login', '/api/logout')
-
-
-@api.before_request
-def _stock_only_guard():
-    try:
-        au = current_auth()
-    except Exception:
-        return None
-    if not au or au.get('role') != 'stock':
-        return None
-    path = request.path or ''
-    if any(path == p or path.startswith(p + '/') for p in _STOCK_OK_PATHS):
-        return None
-    if path.startswith('/api/stock-code'):   # only a Super may touch the code itself
-        return jsonify(ok=False, error='Not allowed for a stock-sheet sign-in'), 403
-    return jsonify(ok=False, error='This sign-in can only open the stock list'), 403
-
-
 @api.route('/api/login', methods=['POST'])
 def login():
     d = request.get_json(force=True, silent=True) or {}
@@ -135,16 +114,6 @@ def login():
         db.login_note_fail(ip, lid); time.sleep(0.4)
         return jsonify(ok=False, error='This account has been archived — please contact your manager or Head Office to restore access.'), 403
     if not res:
-        # STOCK SHEET SIGN-IN: no ID, just the stock code. Checked only after every real
-        # credential has been tried, so a genuine account can never be shadowed by it.
-        # The session it opens can reach the stock list and nothing else (see
-        # _stock_only_guard), which is why it is safe to hand to whoever does the count.
-        want = _stock_code_current()
-        if not lid and want and hmac.compare_digest(str(d.get('password') or '').strip(), want):
-            db.login_note_ok(ip, lid)
-            tok = db.issue_token('stock', None, staff_name='Stock sheet')
-            return jsonify(ok=True, token=tok, role='stock', store=None,
-                           staff_name='Stock sheet', stores=db.STORES, stock_only=True)
         db.login_note_fail(ip, lid); time.sleep(0.4)   # slow down scripted guessing
         return jsonify(ok=False, error='Invalid credentials'), 401
     db.login_note_ok(ip, lid)
@@ -1435,368 +1404,232 @@ def post_settings():
     return jsonify(ok=True)
 
 # ============================================================================
-# STOCK LIST — the printed produce stock/order sheet, live and shared.
+# TEMPERATURE CHECK — the butcher display check, live for every store.
 #
-# Two separate pieces, deliberately:
-#   * stock_list            one company-wide DOCUMENT: the categories and the
-#                           item names (the sheet itself). Edited rarely, by
-#                           whoever holds the code; every store prints the same
-#                           sheet.
-#   * stock_count:<store>   each store's OWN numbers (IN / O / D) plus the date
-#                           and who checked/ordered. Per store, so two stores
-#                           counting at the same time can never overwrite each
-#                           other.
+#   * temp_check            ONE company-wide document: the title, the check
+#                           rounds (time + unit type) and the units to measure.
+#                           Every store sees and prints the same sheet.
+#   * temp_logs(store,day)  each store's OWN readings, one row per day, so a
+#                           food-safety record is kept and two stores checking
+#                           at the same time never overwrite each other.
 #
-# Structural edits are applied HERE, on the server, one operation at a time, so
-# two people editing the list at once cannot clobber each other's change (no
-# "whole document" writes, no lost updates).
-#
-# Access: a signed-in user PLUS the stock code. THIS REPOSITORY IS PUBLIC, so the
-# code is never written here — it comes from the STOCK_LIST_CODE environment
-# variable on the host, or from the settings table where a Super sets it from
-# inside the app. With neither set the page stays locked for everyone.
+# Structural edits are applied HERE, one operation at a time, so two managers
+# editing at once cannot clobber each other's change.
 # ============================================================================
-STOCK_DOC_KEY = 'stock_list'
-STOCK_CODE_KEY = 'stock_list_code'
-STOCK_CODE_ENV = 'STOCK_LIST_CODE'
+TEMP_DOC_KEY = 'temp_check'
+TEMP_TYPES = ('fridge', 'coolroom', 'freezer')
 
 
-def _stock_code_sent():
-    v = request.headers.get('X-Stock-Code') or ''
-    if not v:
-        d = request.get_json(force=True, silent=True) or {}
-        v = d.get('code') or ''
-    if not v:
-        v = request.args.get('code') or ''
-    return str(v).strip()
-
-
-def _stock_code_current():
-    return str(os.environ.get(STOCK_CODE_ENV) or db.get_setting(STOCK_CODE_KEY, '') or '').strip()
-
-
-def require_stock_code():
-    """The page is locked behind a shared code, on the SERVER — a client that
-    does not send the right code is never given the list. No code configured =
-    locked for everyone (never 'open by default')."""
-    au = current_auth()
-    if au and au.get('role') == 'stock':
-        return   # signed in WITH the code already; the token is the proof
-    want = _stock_code_current()
-    sent = _stock_code_sent()
-    if not want or not sent or not hmac.compare_digest(sent, want):
-        abort(403)
-
-
-@api.route('/api/stock-code', methods=['GET'])
-def get_stock_code_state():
-    """Super only, and it never returns the code itself — only whether one is set
-    and where it comes from, so the page can offer to set one."""
-    au = require_auth()
-    if au['role'] != 'super': abort(403)
-    src = 'env' if os.environ.get(STOCK_CODE_ENV) else ('setting' if db.get_setting(STOCK_CODE_KEY, '') else 'none')
-    return jsonify(ok=True, configured=bool(_stock_code_current()), source=src)
-
-
-@api.route('/api/stock-code', methods=['POST'])
-def set_stock_code():
-    au = require_auth(); require_write(au)
-    if au['role'] != 'super': abort(403)
-    if os.environ.get(STOCK_CODE_ENV):
-        return jsonify(ok=False, error='The code is fixed by STOCK_LIST_CODE on the server — change it there.'), 400
-    d = request.get_json(force=True, silent=True) or {}
-    code = str(d.get('code') or '').strip()
-    if len(code) < 6:
-        return jsonify(ok=False, error='Use at least 6 characters.'), 400
-    db.set_setting(STOCK_CODE_KEY, code)
-    try:
-        db.write_audit(who(au), au.get('store_id') or 'ALL', 'update', 'stockList', 'code', None, {'changed': True})
-    except Exception:
-        pass
-    return jsonify(ok=True)
-
-
-def _stock_migrate(doc):
-    """Give an older document the page grouping (the sheet is printed as three
-    separate pages and each one is its own kind of stock)."""
-    changed = False
-    pages = doc.get('pages')
-    if not isinstance(pages, list) or not pages:
-        doc['pages'] = [dict(p) for p in stock_seed.PAGES]
-        changed = True
-    ids = [p.get('id') for p in doc['pages']]
-    seed_page = {c['id']: c.get('page') for c in stock_seed.CATEGORIES}
-    for c in doc.get('categories') or []:
-        if c.get('page') not in ids:
-            c['page'] = seed_page.get(c.get('id')) if seed_page.get(c.get('id')) in ids else ids[0]
-            changed = True
-    return changed
-
-
-def _stock_doc():
-    doc = db.get_setting(STOCK_DOC_KEY, None)
-    if not isinstance(doc, dict) or not isinstance(doc.get('categories'), list):
-        doc = stock_seed.default_doc()
-        db.set_setting(STOCK_DOC_KEY, doc)
-        return doc
-    if _stock_migrate(doc):
-        db.set_setting(STOCK_DOC_KEY, doc)
+def _temp_doc():
+    doc = db.get_setting(TEMP_DOC_KEY, None)
+    if not isinstance(doc, dict) or not isinstance(doc.get('items'), list) or not isinstance(doc.get('rounds'), list):
+        doc = temp_seed.default_doc()
+        db.set_setting(TEMP_DOC_KEY, doc)
     return doc
 
 
-def _stock_new_id(prefix):
-    return prefix + secrets.token_hex(5)
-
-
-def _stock_clean(v, limit=120):
+def _temp_clean(v, limit=80):
     return ' '.join(str(v or '').split())[:limit]
 
 
-def _apply_stock_op(doc, op):
-    """Apply ONE edit. Returns (ok, message). Ids are never reused, so a store's
-    counted numbers stay attached to the right item across any reordering."""
-    cats = doc.get('categories') or []
-    pages = doc.setdefault('pages', [dict(p) for p in stock_seed.PAGES])
+def _temp_time(v):
+    """Accept 8:00, 08:00, 5:30 PM, 17:30 -> 'HH:MM' 24h, or '' when unreadable."""
+    t = str(v or '').strip().upper()
+    m = re.match(r'^(\d{1,2})[:.](\d{2})\s*(AM|PM)?$', t)
+    if not m:
+        return ''
+    h, mi, ap = int(m.group(1)), int(m.group(2)), m.group(3)
+    if ap == 'PM' and h < 12: h += 12
+    if ap == 'AM' and h == 12: h = 0
+    if not (0 <= h <= 23 and 0 <= mi <= 59):
+        return ''
+    return '%02d:%02d' % (h, mi)
+
+
+def require_temp_edit(au):
+    """Managers and Super shape the sheet; everyone else records readings only.
+    It is ONE sheet for every store, so a casual edit changes it everywhere."""
+    require_write(au)
+    if au.get('role') not in ('admin', 'super'):
+        abort(403)
+
+
+def _apply_temp_op(doc, op):
+    """Apply ONE edit. Returns (ok, message). Ids are never reused, so readings
+    already recorded stay attached to the right unit and round."""
+    rounds = doc.setdefault('rounds', [])
+    items = doc.setdefault('items', [])
     kind = op.get('op') or ''
-    tones = ('veg', 'fruit', 'other')
 
-    def page_at(pid):
-        for i, p in enumerate(pages):
-            if p.get('id') == pid:
-                return i, p
+    def find(lst, oid):
+        for i, x in enumerate(lst):
+            if x.get('id') == oid:
+                return i, x
         return -1, None
 
-    def cat_at(cid):
-        for i, c in enumerate(cats):
-            if c.get('id') == cid:
-                return i, c
-        return -1, None
-
-    def item_at(iid):
-        for ci, c in enumerate(cats):
-            for ii, it in enumerate(c.get('items') or []):
-                if it.get('id') == iid:
-                    return ci, ii, c, it
-        return -1, -1, None, None
-
-    # ---- pages: the sheet is printed as several separate pages, one kind of
-    # stock each. A page always starts on a fresh printed sheet.
-    if kind == 'page.add':
-        name = _stock_clean(op.get('name'), 60) or ('Page %d' % (len(pages) + 1))
-        pg = {'id': _stock_new_id('sp'), 'name': name}
-        pages.append(pg)
-        return True, pg['id']
-
-    if kind == 'page.rename':
-        i, pg = page_at(op.get('id'))
-        if not pg: return False, 'page not found'
-        name = _stock_clean(op.get('name'), 60)
-        if not name: return False, 'name required'
-        pg['name'] = name
+    def move(lst, oid, direction):
+        i, x = find(lst, oid)
+        if not x: return False, 'not found'
+        to = max(0, min(len(lst) - 1, i + (1 if direction == 'down' else -1)))
+        lst.insert(to, lst.pop(i))
         return True, ''
 
-    if kind == 'page.move':
-        i, pg = page_at(op.get('id'))
-        if not pg: return False, 'page not found'
-        to = max(0, min(len(pages) - 1, i + (1 if op.get('dir') == 'down' else -1)))
-        pages.insert(to, pages.pop(i))
+    if kind == 'title.set':
+        t = _temp_clean(op.get('title'), 90)
+        if not t: return False, 'a title is required'
+        doc['title'] = t
         return True, ''
 
-    if kind == 'page.del':
-        i, pg = page_at(op.get('id'))
-        if not pg: return False, 'page not found'
-        if len(pages) <= 1: return False, 'the sheet needs at least one page'
-        if [c for c in cats if c.get('page') == pg['id']]:
-            return False, 'move or delete this page\'s categories first'
-        pages.pop(i)
+    if kind == 'round.add':
+        t = _temp_time(op.get('time')) or '08:00'
+        typ = op.get('type') if op.get('type') in TEMP_TYPES else 'fridge'
+        r = {'id': 'tr' + secrets.token_hex(5), 'name': _temp_clean(op.get('name'), 40) or 'New check',
+             'time': t, 'type': typ}
+        rounds.append(r)
+        rounds.sort(key=lambda x: x.get('time') or '')
+        return True, r['id']
+
+    if kind == 'round.set':
+        i, r = find(rounds, op.get('id'))
+        if not r: return False, 'check not found'
+        if 'name' in op:
+            n = _temp_clean(op.get('name'), 40)
+            if not n: return False, 'a name is required'
+            r['name'] = n
+        if 'time' in op:
+            t = _temp_time(op.get('time'))
+            if not t: return False, 'enter the time as 08:00 or 5:30 PM'
+            r['time'] = t
+        if 'type' in op:
+            if op.get('type') not in TEMP_TYPES: return False, 'unknown unit type'
+            r['type'] = op.get('type')
         return True, ''
 
-    if kind == 'cat.add':
-        name = _stock_clean(op.get('name')) or 'NEW CATEGORY'
-        tone = op.get('tone') if op.get('tone') in tones else 'veg'
-        pid = op.get('page')
-        if not page_at(pid)[1]:
-            pid = pages[0]['id']
-        cat = {'id': _stock_new_id('sc'), 'name': name, 'tone': tone, 'page': pid, 'items': []}
-        # a new category lands at the END of ITS OWN page, never between two pages
-        last = -1
-        for i, c in enumerate(cats):
-            if c.get('page') == pid:
-                last = i
-        cats.insert(last + 1 if last >= 0 else len(cats), cat)
-        return True, cat['id']
+    if kind == 'round.move':
+        return move(rounds, op.get('id'), op.get('dir'))
 
-    if kind == 'cat.setPage':
-        i, c = cat_at(op.get('id'))
-        if not c: return False, 'category not found'
-        pi, pg = page_at(op.get('page'))
-        if not pg: return False, 'page not found'
-        c['page'] = pg['id']
-        cats.pop(i)
-        last = -1
-        for j, other in enumerate(cats):
-            if other.get('page') == pg['id']:
-                last = j
-        cats.insert(last + 1 if last >= 0 else len(cats), c)
-        return True, ''
-
-    if kind == 'cat.rename':
-        i, c = cat_at(op.get('id'))
-        if not c: return False, 'category not found'
-        name = _stock_clean(op.get('name'))
-        if not name: return False, 'name required'
-        c['name'] = name
-        return True, ''
-
-    if kind == 'cat.tone':
-        i, c = cat_at(op.get('id'))
-        if not c: return False, 'category not found'
-        if op.get('tone') not in tones: return False, 'bad tone'
-        c['tone'] = op.get('tone')
-        return True, ''
-
-    if kind == 'cat.del':
-        i, c = cat_at(op.get('id'))
-        if not c: return False, 'category not found'
-        cats.pop(i)
-        return True, ''
-
-    if kind == 'cat.move':
-        i, c = cat_at(op.get('id'))
-        if not c: return False, 'category not found'
-        # move WITHIN its own page: swapping with the neighbour on the same page
-        # keeps one kind of stock from drifting onto another page's sheet.
-        same = [j for j, o in enumerate(cats) if o.get('page') == c.get('page')]
-        at = same.index(i)
-        to_at = at + (1 if op.get('dir') == 'down' else -1)
-        if to_at < 0 or to_at >= len(same):
-            return True, 'already at the end of its page'
-        j = same[to_at]
-        cats[i], cats[j] = cats[j], cats[i]
+    if kind == 'round.del':
+        i, r = find(rounds, op.get('id'))
+        if not r: return False, 'check not found'
+        if len(rounds) <= 1: return False, 'the sheet needs at least one check'
+        rounds.pop(i)
         return True, ''
 
     if kind == 'item.add':
-        i, c = cat_at(op.get('cat'))
-        if not c: return False, 'category not found'
-        name = _stock_clean(op.get('name')) or 'New item'
-        it = {'id': _stock_new_id('si'), 'name': name}
-        c.setdefault('items', [])
+        it = {'id': 'ti' + secrets.token_hex(5), 'name': _temp_clean(op.get('name')) or 'New unit'}
         at = op.get('index')
-        if isinstance(at, int) and 0 <= at <= len(c['items']):
-            c['items'].insert(at, it)
+        if isinstance(at, int) and 0 <= at <= len(items):
+            items.insert(at, it)
         else:
-            c['items'].append(it)
+            items.append(it)
         return True, it['id']
 
     if kind == 'item.rename':
-        ci, ii, c, it = item_at(op.get('id'))
-        if not it: return False, 'item not found'
-        name = _stock_clean(op.get('name'))
-        if not name: return False, 'name required'
-        it['name'] = name
-        return True, ''
-
-    if kind == 'item.del':
-        ci, ii, c, it = item_at(op.get('id'))
-        if not it: return False, 'item not found'
-        c['items'].pop(ii)
+        i, it = find(items, op.get('id'))
+        if not it: return False, 'unit not found'
+        n = _temp_clean(op.get('name'))
+        if not n: return False, 'a name is required'
+        it['name'] = n
         return True, ''
 
     if kind == 'item.move':
-        ci, ii, c, it = item_at(op.get('id'))
-        if not it: return False, 'item not found'
-        to = ii + (1 if op.get('dir') == 'down' else -1)
-        to = max(0, min(len(c['items']) - 1, to))
-        c['items'].insert(to, c['items'].pop(ii))
-        return True, ''
+        return move(items, op.get('id'), op.get('dir'))
 
-    if kind == 'item.moveTo':
-        ci, ii, c, it = item_at(op.get('id'))
-        if not it: return False, 'item not found'
-        ti, tc = cat_at(op.get('cat'))
-        if not tc: return False, 'target category not found'
-        c['items'].pop(ii)
-        tc.setdefault('items', [])
-        at = op.get('index')
-        if isinstance(at, int) and 0 <= at <= len(tc['items']):
-            tc['items'].insert(at, it)
-        else:
-            tc['items'].append(it)
+    if kind == 'item.del':
+        i, it = find(items, op.get('id'))
+        if not it: return False, 'unit not found'
+        if len(items) <= 1: return False, 'the sheet needs at least one unit'
+        items.pop(i)
         return True, ''
 
     if kind == 'doc.restore':
-        fresh = stock_seed.default_doc()
-        doc['pages'] = fresh['pages']
-        doc['categories'] = fresh['categories']
+        fresh = temp_seed.default_doc()
+        doc['title'] = fresh['title']; doc['rounds'] = fresh['rounds']; doc['items'] = fresh['items']
         return True, 'restored'
 
     return False, 'unknown operation'
 
 
-@api.route('/api/stock-list', methods=['GET'])
-def get_stock_list():
-    require_auth(); require_stock_code()
-    return jsonify(ok=True, doc=_stock_doc())
+@api.route('/api/temp-check', methods=['GET'])
+def get_temp_check():
+    require_auth()
+    return jsonify(ok=True, doc=_temp_doc(), ranges=temp_seed.RANGES)
 
 
-@api.route('/api/stock-list/op', methods=['POST'])
-def post_stock_op():
-    au = require_auth(); require_write(au); require_stock_code()
+@api.route('/api/temp-check/op', methods=['POST'])
+def post_temp_op():
+    au = require_auth(); require_temp_edit(au)
     d = request.get_json(force=True, silent=True) or {}
-    ops = d.get('ops')
-    if not isinstance(ops, list):
-        ops = [d.get('op_data') or d]
-    doc = _stock_doc()
-    done = 0; last = ''
+    ops = d.get('ops') if isinstance(d.get('ops'), list) else []
+    doc = _temp_doc()
+    before = json.dumps(doc, sort_keys=True)
+    last = ''
     for op in ops[:50]:
         if not isinstance(op, dict):
             continue
-        ok, msg = _apply_stock_op(doc, op)
+        ok, msg = _apply_temp_op(doc, op)
         if not ok:
-            return jsonify(ok=False, error=msg, doc=doc), 400
-        done += 1; last = msg
+            return jsonify(ok=False, error=msg, doc=_temp_doc()), 400
+        last = msg
     doc['rev'] = int(doc.get('rev') or 0) + 1
     doc['updatedAt'] = db.now()
     doc['updatedBy'] = who(au)
-    db.set_setting(STOCK_DOC_KEY, doc)
+    db.set_setting(TEMP_DOC_KEY, doc)
     try:
-        db.emit_event('stocklist')   # other open devices refresh the list within seconds
+        db.write_audit(who(au), au.get('store_id') or 'ALL', 'update', 'tempCheck', 'sheet',
+                       json.loads(before), {'rev': doc['rev'], 'title': doc.get('title')})
     except Exception:
         pass
-    return jsonify(ok=True, doc=doc, applied=done, result=last)
+    try:
+        db.emit_event('tempcheck')   # other open devices pick the change up
+    except Exception:
+        pass
+    return jsonify(ok=True, doc=doc, result=last)
 
 
-@api.route('/api/stock-count/<store_id>', methods=['GET'])
-def get_stock_count(store_id):
-    au = require_auth(); require_stock_code(); require_store(au, store_id)
-    c = db.get_setting('stock_count:' + store_id, None)
-    if not isinstance(c, dict):
-        c = {'values': {}, 'meta': {}, 'updatedAt': '', 'updatedBy': ''}
-    return jsonify(ok=True, count=c)
+@api.route('/api/temp-log/<store_id>', methods=['GET'])
+def get_temp_log(store_id):
+    au = require_auth(); require_store(au, store_id)
+    day = _temp_day(request.args.get('day'))
+    log = db.temp_log_get(store_id, day) or {'values': {}, 'note': ''}
+    return jsonify(ok=True, day=day, log=log)
 
 
-@api.route('/api/stock-count/<store_id>', methods=['POST'])
-def post_stock_count(store_id):
-    au = require_auth(); require_write(au); require_stock_code(); require_store(au, store_id)
+@api.route('/api/temp-log/<store_id>', methods=['POST'])
+def post_temp_log(store_id):
+    au = require_auth(); require_write(au); require_store(au, store_id)
     d = request.get_json(force=True, silent=True) or {}
+    day = _temp_day(d.get('day'))
     values = d.get('values') if isinstance(d.get('values'), dict) else {}
-    meta = d.get('meta') if isinstance(d.get('meta'), dict) else {}
     clean = {}
-    for k, v in list(values.items())[:4000]:
+    for k, v in list(values.items())[:2000]:
         if not isinstance(v, dict):
             continue
-        row = {}
-        for f in ('in', 'o', 'd'):
-            val = _stock_clean(v.get(f), 16)
-            if val:
-                row[f] = val
-        if row:
-            clean[_stock_clean(k, 40)] = row
-    c = {'values': clean,
-         'meta': {f: _stock_clean(meta.get(f), 60) for f in ('date', 'checkedBy', 'orderedBy')},
-         'updatedAt': db.now(), 'updatedBy': who(au)}
-    db.set_setting('stock_count:' + store_id, c)
-    return jsonify(ok=True, count=c)
+        reading = _temp_clean(v.get('v'), 12)
+        if not reading:
+            continue
+        clean[_temp_clean(k, 48)] = {'v': reading,
+                                     'at': _temp_clean(v.get('at'), 8),
+                                     'by': _temp_clean(v.get('by'), 40)}
+    log = {'values': clean, 'note': _temp_clean(d.get('note'), 400)}
+    db.temp_log_save(store_id, day, log, who(au))
+    return jsonify(ok=True, day=day, log=db.temp_log_get(store_id, day))
+
+
+@api.route('/api/temp-log/<store_id>/range', methods=['GET'])
+def get_temp_log_range(store_id):
+    """Every day between two dates — the month report / audit trail."""
+    au = require_auth(); require_store(au, store_id)
+    start = _temp_day(request.args.get('from'))
+    end = _temp_day(request.args.get('to'))
+    if start > end:
+        start, end = end, start
+    return jsonify(ok=True, days=db.temp_log_range(store_id, start, end))
+
+
+def _temp_day(v):
+    v = str(v or '').strip()[:10]
+    return v if re.match(r'^\d{4}-\d{2}-\d{2}$', v) else db.today_str()
 
 
 # ---- global "all-stores" notification recipients (one place, applies to every store) ----

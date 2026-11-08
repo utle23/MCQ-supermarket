@@ -123,6 +123,11 @@ CREATE TABLE IF NOT EXISTS schedule_history (
   id INTEGER PRIMARY KEY AUTOINCREMENT, store_id TEXT, data_json TEXT, created_at TEXT);
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY, value_json TEXT, updated_at TEXT);
+-- temperature check: one row per store per DAY. A food-safety record is kept, never
+-- overwritten by the next day, and each store's readings are its own.
+CREATE TABLE IF NOT EXISTS temp_logs (
+  store_id TEXT, day TEXT, data_json TEXT, updated_at TEXT, updated_by TEXT,
+  PRIMARY KEY (store_id, day));
 -- inbox / messaging (scales with employee count; kept OUT of the per-store state blob)
 CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT, store_id TEXT,
@@ -2247,10 +2252,8 @@ def delete_announcement(au, aid):
         conn.close()
 
 def can_access(au, store_id):
-    # super + ba (read-only viewer) can read any store; a stock-sheet session counts
-    # for whichever store it picks (it can reach NOTHING but the stock endpoints —
-    # see _stock_only_guard in app.py); others only their own
-    return bool(au) and (au['role'] in ('super', 'ba', 'stock') or au['store_id'] == store_id)
+    # super + ba (read-only viewer) can read any store; others only their own
+    return bool(au) and (au['role'] in ('super', 'ba') or au['store_id'] == store_id)
 
 def can_write(au):
     return bool(au) and au['role'] != 'ba'   # Chú Ba is strictly read-only
@@ -2533,6 +2536,10 @@ def save_state(store_id, state, user, client=None):
     finally:
         conn.close()
 
+def today_str():
+    """Perth (UTC+8) calendar date as 'YYYY-MM-DD' — the store's day, not the server's."""
+    return time.strftime('%Y-%m-%d', time.gmtime(time.time() + 8 * 3600))
+
 def _days_ago_str(n):
     """Perth (UTC+8) calendar date n days ago, as 'YYYY-MM-DD' — comparable to created_at."""
     return time.strftime('%Y-%m-%d', time.gmtime(time.time() + 8 * 3600 - int(n) * 86400))
@@ -2588,6 +2595,51 @@ def load_state(store_id, subs_recent_days=None):
         return state
     finally:
         conn.close()
+
+# ---------- temperature check: per-store, per-day readings ----------
+def temp_log_get(store_id, day):
+    conn = connect()
+    try:
+        row = conn.execute('SELECT data_json,updated_at,updated_by FROM temp_logs WHERE store_id=? AND day=?',
+                           (store_id, day)).fetchone()
+        if not row: return None
+        try: data = json.loads(row['data_json'])
+        except Exception: data = {}
+        data['updatedAt'] = row['updated_at']; data['updatedBy'] = row['updated_by']
+        return data
+    finally:
+        conn.close()
+
+
+def temp_log_save(store_id, day, data, user):
+    conn = connect()
+    try:
+        conn.execute('INSERT INTO temp_logs(store_id,day,data_json,updated_at,updated_by) VALUES(?,?,?,?,?) '
+                     'ON CONFLICT (store_id,day) DO UPDATE SET data_json=excluded.data_json, '
+                     'updated_at=excluded.updated_at, updated_by=excluded.updated_by',
+                     (store_id, day, json.dumps(data), now(), user))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def temp_log_range(store_id, start, end):
+    """Every day's readings between two dates (inclusive) — used by the report."""
+    conn = connect()
+    try:
+        rows = conn.execute('SELECT day,data_json,updated_at,updated_by FROM temp_logs '
+                            'WHERE store_id=? AND day>=? AND day<=? ORDER BY day',
+                            (store_id, start, end)).fetchall()
+        out = []
+        for r in rows:
+            try: data = json.loads(r['data_json'])
+            except Exception: data = {}
+            data['day'] = r['day']; data['updatedAt'] = r['updated_at']; data['updatedBy'] = r['updated_by']
+            out.append(data)
+        return out
+    finally:
+        conn.close()
+
 
 def write_audit(user, store_id, action, entity_type, entity_id, before, after):
     conn = connect()

@@ -14,8 +14,6 @@ const isAdmin = ()=> State.account && (State.account.role==='admin' || State.acc
 const isSuper = ()=> State.account && State.account.role==='super';
 const isBa = ()=> State.account && State.account.role==='ba';   // Chú Ba — read-only checklist viewer (all stores)
 const isEmployee = ()=> State.account && State.account.role==='employee';   // individual staff account
-// A sign-in with the stock code alone: it can see the Stock List and nothing else.
-const isStockOnly = ()=> State.account && State.account.role==='stock';
 const seesAllStores = ()=> isSuper() || isBa();
 /* Display labels — internal role strings are unchanged (admin/staff/super/ba/employee) */
 function roleName(role){ return role==='super'?'Super Admin':role==='ba'?'Chú Ba':role==='admin'?'Manager':role==='staff'?'Department Lead':role==='employee'?'Staff':'Staff'; }
@@ -119,7 +117,7 @@ function showLogin(notice){
       <h1 class="login-h">Welcome back</h1>
       <p class="login-p">Sign in to your store operations workspace.</p>
       ${notice?`<div class="login-note"><i>⏱️</i> ${esc(notice)}</div>`:''}
-      <label class="login-lbl">ID <span class="login-opt" id="login-id-opt">· your 4-digit Staff ID — leave empty for the stock sheet</span></label>
+      <label class="login-lbl">ID <span class="login-opt" id="login-id-opt">· your 4-digit Staff ID</span></label>
       <input id="login-id" class="login-input" inputmode="numeric" maxlength="4" placeholder="e.g. 2345" autocomplete="off">
       <label class="login-lbl">Password</label>
       <div class="login-pw">
@@ -459,7 +457,6 @@ async function syncAccountData(){
   refreshSyncUi();
 }
 function hydrateAccountData(){
-  if(isStockOnly()) return;   // nothing to hydrate: this session only reaches the stock sheet
   const scope=syncScopeLabel(State.account);
   try{
     if(window.MCQDB && MCQDB.hydrateFromCache){
@@ -474,7 +471,6 @@ function hydrateAccountData(){
   refreshSyncUi();
 }
 function startAccountSync(force){
-  if(isStockOnly()){ try{ State.dataSync={status:'synced',message:'Stock sheet'}; refreshSyncUi(); }catch(e){} return; }
   if(State.account&&State.account.role==='super'&&!force){
     const cached=State.dataSync&&State.dataSync.status==='cached';
     State.dataSync={status:cached?'cached':'local',message:(cached?'Cached all stores':'Super Admin ready')+' · open a data page to sync all stores'};
@@ -484,7 +480,6 @@ function startAccountSync(force){
   setTimeout(()=>syncAccountData(), State.account&&State.account.role==='super'?250:0);
 }
 function maybeStartRouteSync(){
-  if(isStockOnly()) return;
   if(!State.account || State.account.role!=='super' || State.superFullSyncStarted) return;
   if(State.superFullSyncFailedAt && Date.now()-State.superFullSyncFailedAt<30000) return;
   const heavy=['manager','history','analytics','photos','data','storeconfig','checklist','binadmin','schedules','issue','complaint','maintenance','incident','delivery','violation','reward','training','raise','birthday','feedback','staff','structure','schedule','performance'];
@@ -520,8 +515,8 @@ window.mcqSessionExpired=mcqSessionExpired;
 async function loginAs(role, branch, meta){
   meta=meta||{}; _sessionExpiredShown=false;   // fresh session → re-arm the guard
 
-  const name = role==='stock' ? 'Stock Sheet' : role==='super' ? 'Head Office' : role==='ba' ? 'Chú Ba' : role==='employee' ? (meta.name||'Staff') : role==='admin' ? (branch+' Manager') : (branch+' Dept Lead');
-  const initials = role==='stock' ? '📦' : role==='super' ? 'HO' : role==='ba' ? 'CB' : role==='employee' ? (String(meta.name||'S').trim().slice(0,2).toUpperCase()) : String(branch||'').slice(0,2).toUpperCase();
+  const name = role==='super' ? 'Head Office' : role==='ba' ? 'Chú Ba' : role==='employee' ? (meta.name||'Staff') : role==='admin' ? (branch+' Manager') : (branch+' Dept Lead');
+  const initials = role==='super' ? 'HO' : role==='ba' ? 'CB' : role==='employee' ? (String(meta.name||'S').trim().slice(0,2).toUpperCase()) : branch.slice(0,2).toUpperCase();
   State.account={ name:(meta.name&&role!=='employee'?meta.name:name), role, branch, initials, staffId:meta.staffId||null, staffName:meta.name||null,
     accountId:meta.accountId||null, needsProfile:!!meta.needsProfile, acctAdmin:!!meta.acctAdmin,
     homeStore:(role==='super'&&meta.homeStore)?meta.homeStore:null };   // Super with a HOME STORE: checklist works as that store's
@@ -538,8 +533,7 @@ function enterApp(){
   document.body.className = 'role-'+State.role;
   $('#login-root').style.display='none';
   $('#app').style.display='';   // let CSS decide (grid on desktop, block flow on mobile) — avoids inline override
-  if(isStockOnly()){ location.hash='#/stocklist'; }   // this sign-in has exactly one page
-  else if(!location.hash || location.hash==='#') location.hash='#/home'; else render();
+  if(!location.hash || location.hash==='#') location.hash='#/home'; else render();
   buildTopbar(); buildSidebar(); render();
   startIdleWatch();
   // warm the rarely-used modules AND the rich-text editor in the background so deep pages and
@@ -560,7 +554,6 @@ function enterApp(){
 function refreshNotifyConfig(){ try{ if(window.mcqNotifyConfig) mcqNotifyConfig().then(r=>{ if(r&&r.ok&&r.config&&Array.isArray(r.config.recipients)){ DB.notifyAll={recipients:r.config.recipients}; } }).catch(()=>{}); }catch(e){} }
 let _unreadTimer=null;
 function startUnreadPoll(){
-  if(isStockOnly()) return;   // no inbox for a stock-sheet sign-in
   if(!window.mcqRefreshUnread) return;
   try{ mcqRefreshUnread(); }catch(e){}
   wsStart();                                          // realtime push — polling below is only the fallback
@@ -596,8 +589,8 @@ function wsStart(){
       if(State.route&&State.route.mod==='inbox' && window.renderInbox && !document.getElementById('mcq-modal')) try{ renderInbox(); }catch(e){}
     }
     if(d.what==='announcements' && State.route&&State.route.mod==='announcements' && window.renderAnnouncements && !document.getElementById('mcq-modal')) try{ renderAnnouncements(); }catch(e){}
-    // the shared stock sheet changed on another device → pull it in (never while typing)
-    if(d.what==='stocklist' && State.route&&State.route.mod==='stocklist' && window.stkOnRemoteChange) try{ stkOnRemoteChange(); }catch(e){}
+    // the shared temperature sheet changed on another device -> pull it in (never while typing)
+    if(d.what==='tempcheck' && State.route&&State.route.mod==='tempcheck' && window.tcOnRemoteChange) try{ tcOnRemoteChange(); }catch(e){}
     // someone at MY store saved (checklist template edit, submission, config…) → re-sync so
     // every device at the store sees the SAME up-to-date checklist within seconds
     if(d.what==='state' && d.store && State.account && (isSuper() || State.account.branch===d.store)){
@@ -850,11 +843,6 @@ function buildSidebar(){
     html += navLink('violation','fa-gavel','Report Violation','',true);
     html += navLink('myrewards','fa-gift','My Rewards','',true);
   }
-  if(isStockOnly()){   // one page, nothing else to navigate to
-    $('#nav').innerHTML = navLink('stocklist','fa-boxes-stacked','Stock List','',true);
-    $$('#nav .nav-item').forEach(el=>el.onclick=()=>{ go('stocklist'); if(window.innerWidth<=860) closeSidebarM(); });
-    paintActive(); refreshSyncUi(); return;
-  }
   { const ub=(window.inboxUnread?inboxUnread():0);
     html += navLink('inbox','fa-inbox',isSuper()?'Inbox':'Store Inbox', ub?`<span class="count">${ub}</span>`:'', true); }
   html += navLink('announcements','fa-bullhorn','Announcements','',true);
@@ -915,8 +903,8 @@ window.superScopeLabel=superScopeLabel;
 /* ============================================================ TOPBAR */
 function buildTopbar(){
   const u=me();
-  const scopeLabel=isSuper()?'All stores':isStockOnly()?'Stock sheet':State.branch;
-  const roleLabel=isSuper()?'Super':isStockOnly()?'Stock sheet':State.account&&State.account.role==='ba'?'Chú Ba':State.account&&State.account.role==='admin'?'Manager':State.account&&State.account.role==='employee'?'Staff':'Dept Lead';
+  const scopeLabel=isSuper()?'All stores':State.branch;
+  const roleLabel=isSuper()?'Super':State.account&&State.account.role==='ba'?'Chú Ba':State.account&&State.account.role==='admin'?'Manager':State.account&&State.account.role==='employee'?'Staff':'Dept Lead';
   // the global "Viewing store" bar was removed (redundant — pages have their own
   // store/department selectors); Super simply sees everything by default
   const scopeBar=$('#store-scope-bar');
@@ -955,14 +943,6 @@ function render(){
   const mod=State.route.mod;
   buildSidebar();
   refreshBell();
-  if(isStockOnly()){                  // signed in with the stock code alone
-    if(typeof renderStockList!=='function'){
-      const c=$('#content'); if(c) c.innerHTML='<div class="empty"><div class="e-ic">⏳</div>Loading…</div>';
-      ensureLazyModules().then(()=>{ if(typeof renderStockList==='function') renderStockList(); }).catch(()=>{});
-      return;
-    }
-    return renderStockList();
-  }
   if(isBa()) return renderBaView();   // Chú Ba only ever sees the read-only checklist viewer
   if(isEmployee()){   // individual staff — personal workspace only
     const own={home:renderEmployeeHome, profile:renderEmployeeProfile, myvios:renderMyViolations, myrewards:renderMyPerks};
@@ -1400,7 +1380,7 @@ function ensureJsPDF(){ return (window.jspdf&&window.jspdf.jsPDF)?Promise.resolv
 function _assetVer(){ try{ const s=[...document.scripts].find(x=>/assets\/app\.js/.test(x.src||'')); const m=s&&(s.src.match(/\?v=[\w.-]+/)); return m?m[0]:''; }catch(e){ return ''; } }
 let _lazyModsP;
 function ensureLazyModules(){ if(_lazyModsP) return _lazyModsP; const v=_assetVer();
-  _lazyModsP=Promise.all(['assets/pages2.js','assets/ai.js','assets/stocklist.js'].map(a=>mcqLoadScript(a+v).catch(()=>false)));
+  _lazyModsP=Promise.all(['assets/pages2.js','assets/ai.js','assets/temperature.js'].map(a=>mcqLoadScript(a+v).catch(()=>false)));
   return _lazyModsP; }
 window.ensureJsPDF=ensureJsPDF; window.ensureChart=ensureChart; window.ensureLazyModules=ensureLazyModules;
 
