@@ -1425,6 +1425,18 @@ def _temp_doc():
     if not isinstance(doc, dict) or not isinstance(doc.get('items'), list) or not isinstance(doc.get('rounds'), list):
         doc = temp_seed.default_doc()
         db.set_setting(TEMP_DOC_KEY, doc)
+        return doc
+    # The seeded unit list changed. Bring a sheet NOBODY has edited up to date —
+    # recognised by it still carrying exactly the units the first version shipped
+    # with. A sheet someone has already shaped is never touched.
+    if int(doc.get('seed') or 1) < temp_seed.SEED_VERSION:
+        names = [i.get('name') for i in doc.get('items') or []]
+        if names == temp_seed.LEGACY_ITEM_NAMES:
+            fresh = temp_seed.default_doc()
+            doc['items'] = fresh['items']
+            doc['title'] = doc.get('title') or fresh['title']
+        doc['seed'] = temp_seed.SEED_VERSION
+        db.set_setting(TEMP_DOC_KEY, doc)
     return doc
 
 
@@ -1545,6 +1557,7 @@ def _apply_temp_op(doc, op):
     if kind == 'doc.restore':
         fresh = temp_seed.default_doc()
         doc['title'] = fresh['title']; doc['rounds'] = fresh['rounds']; doc['items'] = fresh['items']
+        doc['seed'] = fresh['seed']
         return True, 'restored'
 
     return False, 'unknown operation'
