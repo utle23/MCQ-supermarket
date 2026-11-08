@@ -700,25 +700,26 @@ window.renderTempCheck = renderTempCheck;
 /* ---------------------------------------------------------------- exporting */
 /* Two kinds of print: what is filled in, and a BLANK form the team writes on by
    hand and photographs back into the day's record. */
-const TC_PRINT_CSS = `@page{size:A4 portrait;margin:11mm}
+const TC_PRINT_CSS = `@page{size:A4 portrait;margin:10mm}
   *{box-sizing:border-box}
-  body{font-family:Inter,Arial,Helvetica,sans-serif;margin:0;color:#111}
-  .hd{display:flex;align-items:flex-end;gap:14px;border-bottom:2.5px solid #111;padding-bottom:7px;margin-bottom:4px}
-  .hd h1{font-size:19px;margin:0;letter-spacing:.4px;flex:1}
-  .hd .f{font-size:10.5px;font-weight:700}
-  .hd .f u{display:inline-block;min-width:95px;border-bottom:1px solid #111;text-decoration:none;font-weight:400;padding:0 4px}
-  .sub{font-size:9.5px;color:#555;margin:0 0 9px}
-  table{width:100%;border-collapse:collapse;margin-bottom:11px;page-break-inside:auto}
-  th{background:#111;color:#fff;font-size:9px;letter-spacing:.5px;padding:5px 6px;border:1px solid #111}
-  td{border:1px solid #9aa4af;padding:0 6px;height:25px;font-size:10.5px;vertical-align:middle}
-  td.u{width:34%;font-weight:600}
-  td.c{text-align:center}
-  tr.cat td{background:#e8edf2;font-weight:800;font-size:10.5px;letter-spacing:.4px;height:19px}
-  .rng{font-weight:400;font-size:8.5px;color:#333}
-  .sign{display:flex;gap:26px;margin-top:14px;font-size:10px}
-  .sign div{flex:1;border-top:1px solid #111;padding-top:3px}
-  .ft{margin-top:8px;font-size:8.5px;color:#555;display:flex;justify-content:space-between}
-  .bad{background:#ffe3e3;font-weight:800}`;
+  body{font-family:Inter,Arial,Helvetica,sans-serif;margin:0;color:#000;font-size:14px}
+  .hd{display:flex;align-items:flex-end;gap:16px;border-bottom:3px solid #000;padding-bottom:9px;margin-bottom:6px}
+  .hd h1{font-size:26px;margin:0;letter-spacing:.3px;flex:1;line-height:1.1}
+  .hd .f{font-size:14px;font-weight:800;white-space:nowrap}
+  .hd .f u{display:inline-block;min-width:130px;border-bottom:1.5px solid #000;text-decoration:none;font-weight:600;padding:0 6px}
+  .sub{font-size:12px;color:#333;margin:0 0 10px;line-height:1.35}
+  table{width:100%;border-collapse:collapse;margin-bottom:12px;page-break-inside:auto}
+  th{background:#000;color:#fff;font-size:12.5px;letter-spacing:.4px;padding:9px 7px;border:1.5px solid #000}
+  th .rng{color:#dfe7ee;display:block;margin-top:2px;font-size:11px}
+  td{border:1.5px solid #555;padding:0 8px;height:36px;font-size:16px;vertical-align:middle}
+  td.u{width:34%;font-weight:700;font-size:15px}
+  td.c{text-align:center;font-weight:700}
+  tr.cat td{background:#dde4ea;font-weight:900;font-size:15px;letter-spacing:.5px;height:28px}
+  .rng{font-weight:600;font-size:11px;color:#222}
+  .sign{display:flex;gap:30px;margin-top:22px;font-size:13px;font-weight:600}
+  .sign div{flex:1;border-top:1.5px solid #000;padding-top:5px}
+  .ft{margin-top:10px;font-size:10.5px;color:#444;display:flex;justify-content:space-between}
+  .bad{background:#ffd4d4;font-weight:900}`;
 
 function tcPrintHead(title, s, blank){
   return `<div class="hd"><h1>${esc(title)}</h1>
@@ -737,7 +738,7 @@ function tcPrintWindow(title, inner){
 function tcSheetTable(blank){
   const s=tcState(), rounds=tcRounds(), items=tcItems();
   const head='<thead><tr><th style="text-align:left">UNIT / SAMPLE</th>'+rounds.map(r=>
-    `<th>${esc(r.name)}<br>${esc(tcTimeLabel(r.time))}<br><span class="rng">${esc(tcRange(r.type).text||'')}</span></th>`).join('')+'</tr></thead>';
+    `<th>${esc(r.name)}<br>${esc(tcTimeLabel(r.time))}<span class="rng">${esc(tcRange(r.type).text||'')}</span></th>`).join('')+'</tr></thead>';
   const body='<tbody>'+items.map(it=>'<tr><td class="u">'+esc(it.name)+'</td>'+rounds.map(r=>{
     if(blank) return '<td class="c"></td>';
     const rec=s.values[tcKey(r.id,it.id)]||{}, vd=tcVerdict(rec.v,r.type);
@@ -812,73 +813,73 @@ async function tcPdf(blank){
   const PW=doc.internal.pageSize.getWidth(), PH=doc.internal.pageSize.getHeight(), M=34;
   const TW=PW-2*M; let y=0;
   function header(){
-    doc.setFillColor(3,105,161); doc.rect(0,0,PW,62,'F');
+    doc.setFillColor(3,105,161); doc.rect(0,0,PW,76,'F');
     let tx=M;
-    if(window.MCQ_LOGO_URL){ try{ doc.addImage(MCQ_LOGO_URL,'PNG',M,12,38,38); tx=M+48; }catch(e){} }
-    doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(13); doc.text('MCQ Supermarket',tx,26);
-    doc.setFont('helvetica','normal'); doc.setFontSize(10.5); doc.text(String(spec.title),tx,43);
-    doc.setFontSize(9.5);
-    doc.text((blank?'STORE: ______________':('Store: '+s.store))+'     '+(blank?'DATE: ______________':('Date: '+s.day)), PW-M, 43, {align:'right'});
-    y=78;
+    if(window.MCQ_LOGO_URL){ try{ doc.addImage(MCQ_LOGO_URL,'PNG',M,15,46,46); tx=M+58; }catch(e){} }
+    doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(15); doc.text('MCQ Supermarket',tx,30);
+    doc.setFont('helvetica','bold'); doc.setFontSize(14); doc.text(String(spec.title),tx,52);
+    doc.setFont('helvetica','normal'); doc.setFontSize(11.5);
+    doc.text((blank?'STORE: ______________':('Store: '+s.store))+'     '+(blank?'DATE: ______________':('Date: '+s.day)), PW-M, 52, {align:'right'});
+    y=94;
   }
-  function room(h){ if(y+h>PH-70){ doc.addPage(); header(); } }
+  function room(h){ if(y+h>PH-88){ doc.addPage(); header(); colHead(); } }
   function colX(){ let x=M; return spec.cols.map(c=>{ const o=x; x+=c.w*TW; return o; }); }
   const xs=colX();
   function colHead(){
-    room(26);
-    doc.setFillColor(17,24,39); doc.rect(M,y,TW,22,'F');
-    doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(7.6);
+    if(y+32>PH-88){ doc.addPage(); header(); }
+    doc.setFillColor(17,24,39); doc.rect(M,y,TW,30,'F');
+    doc.setTextColor(255); doc.setFont('helvetica','bold'); doc.setFontSize(10.5);
     spec.cols.forEach((c,i)=>{
       const cw=c.w*TW, cx=c.c?xs[i]+cw/2:xs[i]+5;
-      doc.text(String(c.label),cx,c.sub?y+9:y+14,{align:c.c?'center':'left'});
-      if(c.sub){ doc.setFont('helvetica','normal'); doc.setFontSize(6.6); doc.text(String(c.sub),cx,y+18,{align:c.c?'center':'left'}); doc.setFont('helvetica','bold'); doc.setFontSize(7.6); }
+      doc.text(String(c.label),cx,c.sub?y+13:y+19,{align:c.c?'center':'left'});
+      if(c.sub){ doc.setFont('helvetica','normal'); doc.setFontSize(8.5); doc.text(String(c.sub),cx,y+25,{align:c.c?'center':'left'}); doc.setFont('helvetica','bold'); doc.setFontSize(10.5); }
     });
-    y+=22;
+    y+=30;
   }
   header(); colHead();
   spec.blocks.forEach(b=>{
     if(b.head){
-      room(20);
-      doc.setFillColor(232,237,242); doc.rect(M,y,TW,17,'F');
-      doc.setTextColor(17,24,39); doc.setFont('helvetica','bold'); doc.setFontSize(8.4);
-      doc.text(String(b.head),M+5,y+12); y+=17;
+      room(28);
+      doc.setFillColor(221,228,234); doc.rect(M,y,TW,26,'F');
+      doc.setTextColor(17,24,39); doc.setFont('helvetica','bold'); doc.setFontSize(12);
+      doc.text(String(b.head),M+7,y+18); y+=26;
     }
     b.rows.forEach(r=>{
-      room(22);
-      const h=21;
+      room(36);
+      const h=34;
       if(r.bad){ doc.setFillColor(254,226,226); doc.rect(M,y,TW,h,'F'); }
-      doc.setDrawColor(154,164,175); doc.setLineWidth(.5);
+      doc.setDrawColor(85,92,100); doc.setLineWidth(.9);
       doc.rect(M,y,TW,h);
       spec.cols.forEach((c,i)=>{ if(i) doc.line(xs[i],y,xs[i],y+h); });
       doc.setTextColor(r.bad?153:17, r.bad?27:24, r.bad?27:39);
-      doc.setFont('helvetica', r.bad?'bold':'normal'); doc.setFontSize(8.6);
+      doc.setFont('helvetica', r.bad?'bold':'normal'); doc.setFontSize(13);
       r.cells.forEach((v,i)=>{
         if(v===''||v==null) return;
         const c=spec.cols[i], cw=c.w*TW;
-        const txt=doc.splitTextToSize(String(v), cw-10)[0];
-        doc.text(txt, c.c?xs[i]+cw/2:xs[i]+5, y+14, {align:c.c?'center':'left'});
+        const txt=doc.splitTextToSize(String(v), cw-12)[0];
+        doc.text(txt, c.c?xs[i]+cw/2:xs[i]+6, y+21, {align:c.c?'center':'left'});
       });
       y+=h;
     });
   });
   if(!blank && s.view!=='recv' && s.note){
     room(40); y+=10;
-    doc.setTextColor(60); doc.setFont('helvetica','bold'); doc.setFontSize(8.5); doc.text('Notes:',M,y);
+    doc.setTextColor(40); doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.text('Notes:',M,y);
     doc.setFont('helvetica','normal');
-    doc.splitTextToSize(String(s.note),TW-40).slice(0,4).forEach((ln,i)=>doc.text(ln,M+34,y+(i*11))); y+=22;
+    doc.splitTextToSize(String(s.note),TW-54).slice(0,4).forEach((ln,i)=>doc.text(ln,M+48,y+(i*15))); y+=30;
   }
   if(blank){
-    room(56); y+=10;
-    doc.setTextColor(60); doc.setFont('helvetica','bold'); doc.setFontSize(8.5); doc.text('Notes / corrective action:',M,y); y+=8;
-    doc.setDrawColor(154,164,175); doc.rect(M,y,TW,24); y+=24;
+    room(78); y+=16;
+    doc.setTextColor(40); doc.setFont('helvetica','bold'); doc.setFontSize(12); doc.text('Notes / corrective action:',M,y); y+=11;
+    doc.setDrawColor(85,92,100); doc.setLineWidth(.9); doc.rect(M,y,TW,46); y+=46;
   }
-  room(44); y+=20;
-  doc.setDrawColor(17,24,39); doc.setLineWidth(.7);
+  room(54); y+=28;
+  doc.setDrawColor(17,24,39); doc.setLineWidth(1.1);
   doc.line(M,y,M+TW/2-14,y); doc.line(M+TW/2+14,y,M+TW,y);
-  doc.setTextColor(90); doc.setFont('helvetica','normal'); doc.setFontSize(8);
-  doc.text('Checked by (print & sign)',M,y+11); doc.text('Manager verified',M+TW/2+14,y+11);
+  doc.setTextColor(60); doc.setFont('helvetica','bold'); doc.setFontSize(11.5);
+  doc.text('Checked by (print & sign)',M,y+16); doc.text('Manager verified',M+TW/2+14,y+16);
   const n=doc.internal.getNumberOfPages();
-  for(let i=1;i<=n;i++){ doc.setPage(i); doc.setTextColor(130); doc.setFontSize(7.5);
+  for(let i=1;i<=n;i++){ doc.setPage(i); doc.setTextColor(120); doc.setFont('helvetica','normal'); doc.setFontSize(9);
     doc.text('MCQ Supermarket \u00b7 butcher temperature record \u00b7 '+(blank?'blank form':perthStamp()), M, PH-18);
     doc.text('Page '+i+' / '+n, PW-M, PH-18, {align:'right'}); }
   const name=(spec.title.replace(/[^\w]+/g,'_')+'_'+(blank?'BLANK':(s.store+'_'+s.day))).replace(/_+/g,'_');
@@ -905,7 +906,7 @@ function tcExport(fmt){
     <p class="sub">${esc(legend)}</p>
     <table>${table}</table>
     ${(!recvView && !blank && s.note)?`<p class="sub"><b>Notes:</b> ${esc(s.note)}</p>`:''}
-    ${blank?'<p class="sub"><b>Notes / corrective action:</b></p><table><tbody><tr><td style="height:30px"></td></tr><tr><td style="height:30px"></td></tr></tbody></table>':''}
+    ${blank?'<p class="sub"><b>Notes / corrective action:</b></p><table><tbody><tr><td style="height:42px"></td></tr><tr><td style="height:42px"></td></tr></tbody></table>':''}
     <div class="sign"><div>Checked by (print &amp; sign)</div><div>Manager verified</div></div>
     <div class="ft"><span>MCQ Supermarket \u00b7 butcher temperature record</span><span>${esc(blank?'Blank form':perthStamp())}</span></div>`);
 }
