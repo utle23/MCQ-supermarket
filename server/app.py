@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # so `import db
 import db
 import cloudstore
 import temp_seed
+import meat_catalog
 import ssl as _ssl
 try:
     import certifi as _certifi
@@ -1429,13 +1430,20 @@ def _temp_doc():
     # The seeded unit list changed. Bring a sheet NOBODY has edited up to date —
     # recognised by it still carrying exactly the units the first version shipped
     # with. A sheet someone has already shaped is never touched.
+    fresh = temp_seed.default_doc()
+    dirty = False
     if int(doc.get('seed') or 1) < temp_seed.SEED_VERSION:
         names = [i.get('name') for i in doc.get('items') or []]
-        if names == temp_seed.LEGACY_ITEM_NAMES:
-            fresh = temp_seed.default_doc()
-            doc['items'] = fresh['items']
-            doc['title'] = doc.get('title') or fresh['title']
+        if names in temp_seed.LEGACY_ITEM_NAMES:
+            doc['items'] = fresh['items']        # untouched sheet -> bring it up to date
         doc['seed'] = temp_seed.SEED_VERSION
+        dirty = True
+    # the goods-received half was added later; give an existing sheet its defaults
+    for key in ('recvTitle', 'recvCategories', 'qualities', 'recvBlankRows'):
+        if doc.get(key) in (None, '', [], {}):
+            doc[key] = fresh[key]
+            dirty = True
+    if dirty:
         db.set_setting(TEMP_DOC_KEY, doc)
     return doc
 
@@ -1554,10 +1562,61 @@ def _apply_temp_op(doc, op):
         items.pop(i)
         return True, ''
 
+    # ---- goods received: the categories that arrive at the back door ----
+    recv = doc.setdefault('recvCategories', [])
+    if kind == 'recvTitle.set':
+        t = _temp_clean(op.get('title'), 90)
+        if not t: return False, 'a title is required'
+        doc['recvTitle'] = t
+        return True, ''
+
+    if kind == 'recv.add':
+        typ = op.get('type') if op.get('type') in TEMP_TYPES else 'fridge'
+        cat = op.get('catalog') if op.get('catalog') in meat_catalog.PRODUCTS else 'beef'
+        c = {'id': 'rc' + secrets.token_hex(5), 'name': _temp_clean(op.get('name'), 40) or 'New category',
+             'type': typ, 'catalog': cat}
+        recv.append(c)
+        return True, c['id']
+
+    if kind == 'recv.set':
+        i, c = find(recv, op.get('id'))
+        if not c: return False, 'category not found'
+        if 'name' in op:
+            n = _temp_clean(op.get('name'), 40)
+            if not n: return False, 'a name is required'
+            c['name'] = n
+        if 'type' in op:
+            if op.get('type') not in TEMP_TYPES: return False, 'unknown unit type'
+            c['type'] = op.get('type')
+        if 'catalog' in op:
+            if op.get('catalog') not in meat_catalog.PRODUCTS: return False, 'unknown product list'
+            c['catalog'] = op.get('catalog')
+        return True, ''
+
+    if kind == 'recv.move':
+        return move(recv, op.get('id'), op.get('dir'))
+
+    if kind == 'recv.del':
+        i, c = find(recv, op.get('id'))
+        if not c: return False, 'category not found'
+        if len(recv) <= 1: return False, 'the log needs at least one category'
+        recv.pop(i)
+        return True, ''
+
+    if kind == 'recv.rows':
+        n = op.get('rows')
+        try: n = int(n)
+        except Exception: return False, 'enter a number'
+        if not (1 <= n <= 20): return False, 'between 1 and 20 blank lines'
+        doc['recvBlankRows'] = n
+        return True, ''
+
     if kind == 'doc.restore':
         fresh = temp_seed.default_doc()
         doc['title'] = fresh['title']; doc['rounds'] = fresh['rounds']; doc['items'] = fresh['items']
         doc['seed'] = fresh['seed']
+        doc['recvTitle'] = fresh['recvTitle']; doc['recvCategories'] = fresh['recvCategories']
+        doc['qualities'] = fresh['qualities']; doc['recvBlankRows'] = fresh['recvBlankRows']
         return True, 'restored'
 
     return False, 'unknown operation'
@@ -1566,7 +1625,7 @@ def _apply_temp_op(doc, op):
 @api.route('/api/temp-check', methods=['GET'])
 def get_temp_check():
     require_auth()
-    return jsonify(ok=True, doc=_temp_doc(), ranges=temp_seed.RANGES)
+    return jsonify(ok=True, doc=_temp_doc(), ranges=temp_seed.RANGES, catalog=meat_catalog.PRODUCTS)
 
 
 @api.route('/api/temp-check/op', methods=['POST'])
@@ -1604,7 +1663,8 @@ def post_temp_op():
 def get_temp_log(store_id):
     au = require_auth(); require_store(au, store_id)
     day = _temp_day(request.args.get('day'))
-    log = db.temp_log_get(store_id, day) or {'values': {}, 'note': ''}
+    log = db.temp_log_get(store_id, day) or {'values': {}, 'note': '', 'recv': [], 'photos': []}
+    log.setdefault('recv', []); log.setdefault('photos', [])
     return jsonify(ok=True, day=day, log=log)
 
 
@@ -1624,7 +1684,22 @@ def post_temp_log(store_id):
         clean[_temp_clean(k, 48)] = {'v': reading,
                                      'at': _temp_clean(v.get('at'), 8),
                                      'by': _temp_clean(v.get('by'), 40)}
-    log = {'values': clean, 'note': _temp_clean(d.get('note'), 400)}
+    rows = []
+    for r in (d.get('recv') if isinstance(d.get('recv'), list) else [])[:400]:
+        if not isinstance(r, dict):
+            continue
+        row = {'id': _temp_clean(r.get('id'), 24) or ('rr' + secrets.token_hex(4)),
+               'cat': _temp_clean(r.get('cat'), 24),
+               'product': _temp_clean(r.get('product'), 80),
+               'temp': _temp_clean(r.get('temp'), 12),
+               'quality': _temp_clean(r.get('quality'), 24),
+               'time': _temp_time(r.get('time')) or _temp_clean(r.get('time'), 8),
+               'by': _temp_clean(r.get('by'), 40)}
+        if row['product'] or row['temp'] or row['quality'] or row['by']:
+            rows.append(row)
+    photos = [_temp_clean(x, 48) for x in (d.get('photos') if isinstance(d.get('photos'), list) else [])[:24]]
+    log = {'values': clean, 'note': _temp_clean(d.get('note'), 400),
+           'recv': rows, 'photos': [x for x in photos if x]}
     db.temp_log_save(store_id, day, log, who(au))
     return jsonify(ok=True, day=day, log=db.temp_log_get(store_id, day))
 
