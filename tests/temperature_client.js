@@ -139,9 +139,25 @@ const html=()=>painted.content?painted.content.innerHTML:'';
   check('product is much wider than time', w('c-prod') > w('c-tin')*3, [w('c-prod'),w('c-tin')]);
   check('the heading is shortened to TIME', /<th>TIME<\/th>/.test(rp) && !/TIME RECEIVED/.test(rp));
 
+  console.log('\n6b. everything prints PORTRAIT, never sideways');
+  tcShowView('day');
+  const bu=capturePrint(()=>tcExport('blank'));
+  check('the butcher sheet is portrait', /size:A4 portrait/.test(bu) && !/landscape/.test(bu));
+  tcSetSheet('sh_dairy');
+  const dy=capturePrint(()=>tcExport('blank'));
+  check('the dairy sheet is portrait too', /size:A4 portrait/.test(dy) && !/landscape/.test(dy));
+  const thSize=(h)=>{ const m=/\n  th\{[^}]*font-size:(\d+(?:\.\d+)?)px/.exec(h); return m?parseFloat(m[1]):0; };
+  check('headings step down when there are more columns', thSize(dy) <= thSize(bu), [thSize(bu),thSize(dy)]);
+  check('and they are allowed to wrap', /overflow-wrap:anywhere/.test(dy));
+  tcShowView('recv');
+  const rvp=capturePrint(()=>tcExport('blank'));
+  check('the received form is portrait', /size:A4 portrait/.test(rvp) && !/landscape/.test(rvp));
+  tcShowView('day'); tcSetSheet('sh_butcher');
+
   console.log('\n7. PDF');
   tcShowView('day'); pdfOut=null; await tcPdf(true); await sleep(20);
   check('a blank PDF is produced', /BLANK/.test(pdfOut.saved||''), pdfOut.saved);
+  check('the PDF is portrait', (pdfOut.opts||{}).orientation===undefined, pdfOut.opts);
   check('it uses the time-row record', pdfOut.texts.includes('TIME') && pdfOut.texts.includes('STAFF'));
   check('each line is a column heading', pdfOut.texts.some(t=>/Beef Display/.test(t)));
   tcSetSheet('sh_dairy'); pdfOut=null; await tcPdf(false); await sleep(20);
