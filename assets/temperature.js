@@ -25,7 +25,7 @@ function tcState(){
   State.temp = State.temp || { doc:null, ranges:null, store:'', day:'', values:{}, note:'',
                                edit:false, loading:false, failed:'', status:'',
                                view:'day', hist:null, histFrom:'', histTo:'', histLoading:false,
-                               recv:[], photos:[], catalog:null };
+                               recv:[], photos:[], tempPhotos:[], products:{}, catalog:null, sheet:'' };
   const s = State.temp;
   if(!s.store) s.store = tcDefaultStore();
   if(!s.day) s.day = todayISO();
@@ -42,8 +42,19 @@ function tcCanRecord(){ try{ return !isBa(); }catch(e){ return false; } }      /
 function tcCanEdit(){ try{ return isAdmin(); }catch(e){ return false; } }      // Manager + Super shape the sheet
 function tcRanges(){ const s=State.temp; return (s&&s.ranges)||TC_FALLBACK_RANGES; }
 function tcRange(type){ return tcRanges()[type]||tcRanges().fridge||{text:''}; }
-function tcRounds(){ const d=(State.temp&&State.temp.doc)||{}; return d.rounds||[]; }
-function tcItems(){ const d=(State.temp&&State.temp.doc)||{}; return d.items||[]; }
+/* One sheet per department (Butcher, Dairy, ...). Reading keys stay
+   roundId|itemId — those ids are unique across sheets — so a day's numbers
+   keep working whichever sheet they were written on. */
+function tcSheets(){ const d=(State.temp&&State.temp.doc)||{}; return (d.sheets&&d.sheets.length)?d.sheets:[{id:'sh1',name:'Sheet',title:d.title||'Temperature check',rounds:d.rounds||[],items:d.items||[]}]; }
+function tcSheet(){
+  const s=State.temp||{}, all=tcSheets();
+  return all.find(x=>x.id===s.sheet) || all[0];
+}
+function tcSheetTitle(){ const sh=tcSheet(); return (sh&&sh.title)||'Temperature check'; }
+function tcRounds(){ const sh=tcSheet(); return (sh&&sh.rounds)||[]; }
+function tcItems(){ const sh=tcSheet(); return (sh&&sh.items)||[]; }
+function tcSetSheet(id){ const s=tcState(); s.sheet=id; s.view='day'; renderTempCheck(); }
+window.tcSetSheet=tcSetSheet;
 function tcKey(roundId,itemId){ return roundId+'|'+itemId; }
 /* A phone gets one CARD PER CHECK instead of a wide grid: at 8:00 you walk round
    and measure every unit, so the check is the thing you work through. A table of
@@ -108,6 +119,8 @@ async function tcLoad(){
     s.values = (log.values && typeof log.values==='object') ? log.values : {};
     s.recv = Array.isArray(log.recv) ? log.recv : [];
     s.photos = Array.isArray(log.photos) ? log.photos : [];
+    s.tempPhotos = Array.isArray(log.tempPhotos) ? log.tempPhotos : [];
+    s.products = (log.products && typeof log.products==='object') ? log.products : {};
     s.note = log.note || '';
     s.savedAt = log.updatedAt || '';
     s.savedBy = log.updatedBy || '';
@@ -133,7 +146,8 @@ function tcQueueSave(){
 }
 function tcSaveLog(){
   const s=tcState(); if(!s.store || !tcCanRecord()) return;
-  mcqTempLogSave(s.store, {day:s.day, values:s.values, note:s.note, recv:s.recv, photos:s.photos}).then(r=>{
+  mcqTempLogSave(s.store, {day:s.day, values:s.values, note:s.note, products:s.products,
+                           recv:s.recv, photos:s.photos, tempPhotos:s.tempPhotos}).then(r=>{
     if(r && r.ok){ s.savedAt=(r.log&&r.log.updatedAt)||''; tcSetStatus('<i class="fas fa-circle-check"></i> Saved · '+esc(s.store)+' · '+esc(s.day)); }
     else { tcSetStatus('<i class="fas fa-triangle-exclamation"></i> Not saved — retrying'); setTimeout(tcSaveLog, 5000); }
   });
@@ -150,6 +164,16 @@ function tcSetVal(roundId, itemId, v){
   tcPaintCell(roundId,itemId);
   tcQueueSave();
 }
+/* The sheet deliberately does NOT name the product. Whoever does the round
+   writes in what they actually probed, and it is kept with that day. */
+function tcProduct(itemId){ const s=tcState(); return (s.products||{})[itemId]||''; }
+function tcSetProduct(itemId, v){
+  const s=tcState(); s.products=s.products||{};
+  v=String(v||'').trim().slice(0,60);
+  if(v) s.products[itemId]=v; else delete s.products[itemId];
+  tcQueueSave();
+}
+window.tcSetProduct=tcSetProduct;
 function tcSetNote(v){ const s=tcState(); s.note=String(v||'').slice(0,400); tcQueueSave(); }
 window.tcSetVal=tcSetVal; window.tcSetNote=tcSetNote;
 
@@ -165,8 +189,8 @@ function tcPaintCell(roundId,itemId){
   const warn=cell.querySelector('.tc-warn');
   if(warn) warn.textContent = vd.state==='bad' ? ('⚠ '+vd.why) : '';
 }
-function tcSetDay(v){ const s=tcState(); s.day=v||todayISO(); s.values={}; s.note=''; s.recv=[]; s.photos=[]; tcLoad(); }
-function tcSetStore(v){ const s=tcState(); if(v===s.store) return; clearTimeout(_tcSaveT); tcSaveLog(); s.store=v; s.values={}; s.note=''; s.recv=[]; s.photos=[]; tcLoad(); }
+function tcSetDay(v){ const s=tcState(); s.day=v||todayISO(); s.values={}; s.note=''; s.recv=[]; s.photos=[]; s.tempPhotos=[]; s.products={}; tcLoad(); }
+function tcSetStore(v){ const s=tcState(); if(v===s.store) return; clearTimeout(_tcSaveT); tcSaveLog(); s.store=v; s.values={}; s.note=''; s.recv=[]; s.photos=[]; s.tempPhotos=[]; s.products={}; tcLoad(); }
 function tcToday(){ tcSetDay(todayISO()); }
 window.tcSetDay=tcSetDay; window.tcSetStore=tcSetStore; window.tcToday=tcToday;
 
@@ -175,6 +199,8 @@ function tcOps(ops, okMsg){
   if(!tcCanEdit()){ toast('Only a manager can change the sheet'); return Promise.resolve(false); }
   const s=tcState();
   tcSetStatus('<i class="fas fa-circle-notch fa-spin"></i> Saving…');
+  const sid=(tcSheet()||{}).id;
+  ops=(ops||[]).map(o=>Object.assign({sheet:sid}, o));
   return mcqTempOps(ops).then(r=>{
     if(r && r.ok && r.doc){ s.doc=r.doc; renderTempCheck(); if(okMsg) toast(okMsg); return r; }
     toast((r&&r.error)||'Could not save that change');
@@ -215,7 +241,7 @@ function tcTypeOptions(sel){
 }
 function tcTitleEdit(){
   const s=tcState();
-  tcDialog({ title:'Sheet title', label:'Title', value:s.doc.title||'', ok:'Save',
+  tcDialog({ title:'Sheet title', label:'Title', value:tcSheetTitle(), ok:'Save',
     hint:'Shown at the top of the page and on the printed sheet, for every store.',
     onOk:t=>tcOps([{op:'title.set', title:t}], '✓ Title updated') });
 }
@@ -262,6 +288,22 @@ function tcRestore(){
   if(!confirm('Restore the original butcher sheet?\n\nThe title, the three checks (8:00 AM, 12:30 PM, 5:30 PM) and the three displays come back. Readings already written down are kept.')) return;
   tcOps([{op:'doc.restore'}], '↩ Original sheet restored');
 }
+function tcSheetAdd(){
+  tcDialog({ title:'Add a department sheet', label:'Department', value:'', placeholder:'e.g. Deli, Seafood', ok:'Add sheet',
+    hint:'It starts with one check time and one line \u2014 add the rest from the sheet itself.',
+    onOk:name=>tcOps([{op:'sheet.add', name}], '\u2713 Sheet added') });
+}
+function tcSheetRename(){
+  const sh=tcSheet();
+  tcDialog({ title:'Rename this sheet', label:'Department', value:sh.name||'', ok:'Save',
+    onOk:name=>tcOps([{op:'sheet.rename', name}]) });
+}
+function tcSheetDel(){
+  const sh=tcSheet();
+  if(!confirm('Delete the "'+sh.name+'" sheet and all of its lines?\n\nThis changes it for EVERY store. Readings already written down are kept.')) return;
+  tcOps([{op:'sheet.del'}], '\ud83d\uddd1\ufe0f Sheet deleted').then(()=>{ const s=tcState(); s.sheet=(tcSheets()[0]||{}).id; renderTempCheck(); });
+}
+window.tcSheetAdd=tcSheetAdd; window.tcSheetRename=tcSheetRename; window.tcSheetDel=tcSheetDel;
 function tcToggleEdit(){ const s=tcState(); s.edit=!s.edit; renderTempCheck(); }
 window.tcTitleEdit=tcTitleEdit; window.tcRoundAdd=tcRoundAdd; window.tcRoundEdit=tcRoundEdit;
 window.tcRoundMove=tcRoundMove; window.tcRoundDel=tcRoundDel; window.tcItemAdd=tcItemAdd;
@@ -279,7 +321,9 @@ function tcRecvRow(id){ const s=tcState(); return (s.recv||[]).find(r=>r.id===id
 function tcRecvAdd(catId){
   const s=tcState(); if(!tcCanRecord()) return;
   s.recv=s.recv||[];
+  const last=(s.recv||[]).filter(r=>r.cat===catId).slice(-1)[0]||{};
   s.recv.push({id:'rr'+Date.now().toString(36)+Math.random().toString(36).slice(2,5), cat:catId,
+               supplier:last.supplier||'',   // a delivery is usually several lines from one supplier
                product:'', temp:'', quality:'', time:perthTimeHM(),
                by:(State.account&&(State.account.staffName||State.account.name))||''});
   renderTempCheck(); tcQueueSave();
@@ -287,7 +331,7 @@ function tcRecvAdd(catId){
 }
 function tcRecvSet(id, field, v){
   const r=tcRecvRow(id); if(!r) return;
-  r[field]=String(v||'').slice(0, field==='product'?80:40);
+  r[field]=String(v||'').slice(0, field==='product'?80:60);
   if(field==='temp') tcPaintRecvRow(id);
   tcQueueSave();
 }
@@ -307,7 +351,10 @@ function tcPaintRecvRow(id){
 window.tcRecvAdd=tcRecvAdd; window.tcRecvSet=tcRecvSet; window.tcRecvDel=tcRecvDel;
 
 /* a photo of the paper form, kept with the day's record */
-async function tcPhoto(input){
+/* Each sheet keeps its own photos, so a picture of the temperature round and a
+   picture of the delivery paperwork do not end up in one pile. */
+function tcPhotoList(which){ const s=tcState(); const k=(which==='temp')?'tempPhotos':'photos'; s[k]=s[k]||[]; return s[k]; }
+async function tcPhoto(input, which){
   const f=input&&input.files&&input.files[0]; if(!f) return;
   const s=tcState();
   if(!tcCanRecord()){ toast('Read-only account'); return; }
@@ -315,16 +362,30 @@ async function tcPhoto(input){
   try{
     const d=await compressImage(f, 1600, .82);
     const ref=(window.MCQDB&&MCQDB.savePhoto)?MCQDB.savePhoto(d):d;
-    s.photos=s.photos||[]; s.photos.push(ref);
+    tcPhotoList(which).push(ref);
     renderTempCheck(); tcSaveLog();
     toast('\u2713 Photo attached to '+s.day);
   }catch(e){ toast('Could not read that photo'); }
 }
-function tcPhotoDel(ref){
+function tcPhotoDel(ref, which){
   const s=tcState();
   if(!confirm('Remove this photo from the record?')) return;
-  s.photos=(s.photos||[]).filter(p=>p!==ref);
+  const k=(which==='temp')?'tempPhotos':'photos';
+  s[k]=(s[k]||[]).filter(p=>p!==ref);
   renderTempCheck(); tcSaveLog();
+}
+/* the photo strip, shared by both sheets */
+function tcPhotoCard(which, label){
+  const list=tcPhotoList(which);
+  const thumbs=list.map(ref=>`<span class="tc-ph">
+      <img src="${imgSrc(ref)}" data-pref="${esc(ref)}" alt="" onclick="openLightbox(this.src)">
+      ${tcCanRecord()?`<button class="tc-ph-x" title="Remove" onclick="event.stopPropagation();tcPhotoDel('${ckJS(ref)}','${which}')">\u2715</button>`:''}
+    </span>`).join('');
+  return `<div class="card tc-ph-card"><div class="card-pad">
+      <label class="tc-note-lbl">${esc(label)} <span>(filled in on paper? photograph it here and it is kept with this day)</span></label>
+      <div class="tc-ph-row">${thumbs}
+        ${tcCanRecord()?`<label class="tc-ph-add"><input type="file" accept="image/*" capture="environment" onchange="tcPhoto(this,'${which}')"><i class="fas fa-camera"></i><span>Add photo</span></label>`:''}
+      </div></div></div>`;
 }
 window.tcPhoto=tcPhoto; window.tcPhotoDel=tcPhotoDel;
 
@@ -478,11 +539,13 @@ function tcDayTable(s){
     </th>`).join('');
   const rows = items.map((it,ri)=>`<tr>
       <td class="tc-unit">${tcUnitLabel(it,ri,items.length,s)}</td>
+      <td class="tc-prodcell"><input class="tc-prod" value="${esc(tcProduct(it.id))}" placeholder="write what you probed"
+        ${tcCanRecord()?'':'disabled'} oninput="tcSetProduct('${ckJS(it.id)}',this.value)"></td>
       ${rounds.map(r=>`<td id="tc-cell-${esc(r.id)}-${esc(it.id)}" class="tc-cell ${tcCellClass(r,it,s)}">${tcCellHTML(r,it,s,true)}</td>`).join('')}
     </tr>`).join('');
   return `<div class="table-wrap"><table class="tc-tbl">
-      <thead><tr><th class="tc-unit-h">UNIT</th>${head}</tr></thead>
-      <tbody>${rows||`<tr><td colspan="${rounds.length+1}"><div class="empty compact">No units on this sheet yet.</div></td></tr>`}</tbody>
+      <thead><tr><th class="tc-unit-h">UNIT</th><th class="tc-unit-h">PRODUCT CHECKED</th>${head}</tr></thead>
+      <tbody>${rows||`<tr><td colspan="${rounds.length+2}"><div class="empty compact">No units on this sheet yet.</div></td></tr>`}</tbody>
     </table></div>`;
 }
 
@@ -502,7 +565,10 @@ function tcDayCards(s){
       </header>
       <div class="tc-card-body">${items.map((it,ri)=>`
         <div id="tc-cell-${esc(r.id)}-${esc(it.id)}" class="tc-cell tc-line ${tcCellClass(r,it,s)}">
-          <div class="tc-line-name">${tcUnitLabel(it,ri,items.length,s)}</div>
+          <div class="tc-line-name">${tcUnitLabel(it,ri,items.length,s)}
+            ${i===0?`<input class="tc-prod" value="${esc(tcProduct(it.id))}" placeholder="write what you probed"
+              ${tcCanRecord()?'':'disabled'} oninput="tcSetProduct('${ckJS(it.id)}',this.value)">`
+             :`<span class="tc-prod-echo">${esc(tcProduct(it.id)||'\u2014')}</span>`}</div>
           <div class="tc-line-in">${tcCellHTML(r,it,s,false)}</div>
         </div>`).join('')}</div>
     </section>`;
@@ -550,16 +616,18 @@ function tcRecvHTML(s){
     const body = rows.map(r=>{
       const vd=tcVerdict(r.temp,c.type);
       return `<div id="tc-rv-${esc(r.id)}" class="tc-rv ${vd.state==='ok'?'ok':vd.state==='bad'?'bad':''}">
+        <input class="tc-rv-sup" value="${esc(r.supplier||'')}" placeholder="Supplier\u2026"
+          ${tcCanRecord()?'':'disabled'} oninput="tcRecvSet('${ckJS(r.id)}','supplier',this.value)">
         <input class="tc-rv-prod" list="tc-list-${esc(c.id)}" value="${esc(r.product||'')}" placeholder="Product\u2026"
           ${tcCanRecord()?'':'disabled'} oninput="tcRecvSet('${ckJS(r.id)}','product',this.value)">
-        <span class="tc-rv-t"><input class="tc-rv-temp" value="${esc(r.temp||'')}" inputmode="decimal" placeholder="\u2014"
-          ${tcCanRecord()?'':'disabled'} oninput="tcRecvSet('${ckJS(r.id)}','temp',this.value)"><i>\u00b0C</i></span>
         <select class="tc-rv-q" ${tcCanRecord()?'':'disabled'} onchange="tcRecvSet('${ckJS(r.id)}','quality',this.value)">
           <option value="">Quality\u2026</option>
           ${quals.map(q=>`<option ${q===r.quality?'selected':''}>${esc(q)}</option>`).join('')}
         </select>
         <input class="tc-rv-time" type="time" value="${esc(r.time||'')}" ${tcCanRecord()?'':'disabled'}
           onchange="tcRecvSet('${ckJS(r.id)}','time',this.value)">
+        <span class="tc-rv-t"><input class="tc-rv-temp" value="${esc(r.temp||'')}" inputmode="decimal" placeholder="\u2014"
+          ${tcCanRecord()?'':'disabled'} oninput="tcRecvSet('${ckJS(r.id)}','temp',this.value)"><i>\u00b0C</i></span>
         <input class="tc-rv-by" value="${esc(r.by||'')}" placeholder="Received by"
           ${tcCanRecord()?'':'disabled'} oninput="tcRecvSet('${ckJS(r.id)}','by',this.value)">
         ${tcCanRecord()?`<button class="tc-ic danger" title="Remove this line" onclick="tcRecvDel('${ckJS(r.id)}')"><i class="fas fa-trash"></i></button>`:''}
@@ -578,16 +646,11 @@ function tcRecvHTML(s){
           <button class="tc-ic danger" title="Delete category" onclick="tcRecvCatDel('${ckJS(c.id)}')"><i class="fas fa-trash"></i></button>
         </span>`:''}
       </header>
-      ${!narrow&&rows.length?`<div class="tc-rv tc-rv-head"><span>PRODUCT</span><span>TEMP</span><span>QUALITY</span><span>TIME IN</span><span>RECEIVED BY</span><span></span></div>`:''}
+      ${!narrow&&rows.length?`<div class="tc-rv tc-rv-head"><span>SUPPLIER</span><span>PRODUCT</span><span>QUALITY</span><span>TIME IN</span><span>TEMP</span><span>RECEIVED BY</span><span></span></div>`:''}
       <div class="tc-rv-body">${body||'<div class="tc-rv-empty">Nothing received in this category yet.</div>'}</div>
       ${tcCanRecord()?`<button class="tc-add-line" onclick="tcRecvAdd('${ckJS(c.id)}')"><i class="fas fa-plus"></i> Add a line to ${esc(c.name)}</button>`:''}
     </section>`;
   }).join('');
-
-  const photos=(s.photos||[]).map(ref=>`<span class="tc-ph">
-      <img src="${imgSrc(ref)}" data-pref="${esc(ref)}" alt="" onclick="openLightbox(this.src)">
-      ${tcCanRecord()?`<button class="tc-ph-x" title="Remove" onclick="event.stopPropagation();tcPhotoDel('${ckJS(ref)}')">\u2715</button>`:''}
-    </span>`).join('');
 
   return `${lists}
     <div class="tc-rv-top">
@@ -598,13 +661,7 @@ function tcRecvHTML(s){
       <button class="btn xs" onclick="tcRecvCatAdd()"><i class="fas fa-plus"></i> Add category</button>
       <button class="btn xs" onclick="tcRecvBlankRows()"><i class="fas fa-print"></i> Blank lines: ${tcBlankRows()}</button></div>`:''}
     <div class="tc-rv-wrap">${blocks}</div>
-    <div class="card tc-ph-card"><div class="card-pad">
-      <label class="tc-note-lbl">Photo of the paper sheet <span>(filled in by hand? photograph it here and it is kept with this day)</span></label>
-      <div class="tc-ph-row">
-        ${photos}
-        ${tcCanRecord()?`<label class="tc-ph-add"><input type="file" accept="image/*" capture="environment" onchange="tcPhoto(this)"><i class="fas fa-camera"></i><span>Add photo</span></label>`:''}
-      </div>
-    </div></div>`;
+    ${tcPhotoCard('recv','Photo of the delivery paperwork')}`;
 }
 
 function renderTempCheck(){
@@ -641,6 +698,15 @@ function renderTempCheck(){
     ? `<select class="login-input tc-store" onchange="tcSetStore(this.value)">${(DB.stores||[]).map(st=>`<option ${st===s.store?'selected':''}>${esc(st)}</option>`).join('')}</select>`
     : `<span class="tc-store-fixed"><i class="fas fa-store"></i> ${esc(s.store)}</span>`;
 
+  const sheets=tcSheets(), cur=tcSheet();
+  const sheetBar = (hist||recvView) ? '' : `<div class="tc-sheets">
+      ${sheets.map(sh=>`<button class="${sh.id===cur.id?'on':''}" onclick="tcSetSheet('${ckJS(sh.id)}')">${esc(sh.name)}</button>`).join('')}
+      ${(tcCanEdit()&&s.edit)?`<span class="tc-sheet-ops">
+        <button class="tc-ic" title="Rename this sheet" onclick="tcSheetRename()"><i class="fas fa-pen"></i></button>
+        <button class="tc-ic danger" title="Delete this sheet" ${sheets.length<2?'disabled':''} onclick="tcSheetDel()"><i class="fas fa-trash"></i></button>
+        <button class="btn xs" onclick="tcSheetAdd()"><i class="fas fa-plus"></i> Department</button>
+      </span>`:''}
+    </div>`;
   const tabs = `<div class="tc-tabs">
       <button class="${(!hist&&!recvView)?'on':''}" onclick="tcShowView('day')"><i class="fas fa-temperature-half"></i> Display check</button>
       <button class="${recvView?'on':''}" onclick="tcShowView('recv')"><i class="fas fa-truck-ramp-box"></i> Goods received</button>
@@ -650,7 +716,7 @@ function renderTempCheck(){
   $('#content').innerHTML=`
     <div class="page-head">
       <div class="ph-ic">\ud83c\udf21\ufe0f</div>
-      <div><h2>${esc(s.doc.title||'Temperature Check')}${(tcCanEdit()&&!hist&&!recvView)?` <button class="tc-ic title-ed" title="Rename the sheet" onclick="tcTitleEdit()"><i class="fas fa-pen"></i></button>`:''}</h2>
+      <div><h2>${esc(hist?'Temperature Check':recvView?(s.doc.recvTitle||'Goods received'):tcSheetTitle())}${(tcCanEdit()&&!hist&&!recvView)?` <button class="tc-ic title-ed" title="Rename the sheet" onclick="tcTitleEdit()"><i class="fas fa-pen"></i></button>`:''}</h2>
         <p>${hist?'Every day that has been recorded for this store. Tap a day to open its sheet.'
                  :recvView?'Log every delivery as it comes in. Print the blank form if the team fills it in on paper.'
                  :'Probe two representative products at each counter. A reading outside the safe range turns red straight away.'}</p></div>
@@ -671,6 +737,7 @@ function renderTempCheck(){
     </div>
 
     ${tabs}
+    ${sheetBar}
 
     ${hist ? tcHistoryHTML(s) : recvView ? tcRecvHTML(s) : `
       ${bad?`<div class="tc-alert"><i class="fas fa-triangle-exclamation"></i> <b>${bad} reading${bad>1?'s are':' is'} outside the safe range.</b> Move the stock, check the unit and tell the manager.</div>`:''}
@@ -685,9 +752,11 @@ function renderTempCheck(){
         </div>`:''}
       </div>
 
+      ${tcPhotoCard('temp','Photo of the temperature sheet')}
+
       <div class="card tc-note"><div class="card-pad">
         <label class="tc-note-lbl">Notes for ${esc(s.day)} <span>(corrective action, unit faults, who was told\u2026)</span></label>
-        <textarea class="tc-note-in" rows="2" ${tcCanRecord()?'':'disabled'} placeholder="e.g. Beef display read 7 \u00b0C at 12:30 \u2014 stock moved to cool room, fridge serviced."
+        <textarea class="tc-note-in" rows="2" ${tcCanRecord()?'':'disabled'} placeholder="e.g. a reading was over range \u2014 what was done about it, and who was told."
           oninput="tcSetNote(this.value)">${esc(s.note||'')}</textarea>
         <div class="tc-foot">
           <span id="tc-status" class="tc-status">${s.savedAt?`<i class="fas fa-circle-check"></i> Saved \u00b7 ${esc(String(s.savedAt).slice(0,16))}`:'<i class="fas fa-pen-to-square"></i> Nothing recorded for this day yet'}</span>
@@ -700,7 +769,7 @@ window.renderTempCheck = renderTempCheck;
 /* ---------------------------------------------------------------- exporting */
 /* Two kinds of print: what is filled in, and a BLANK form the team writes on by
    hand and photographs back into the day's record. */
-const TC_PRINT_CSS = `@page{size:A4 portrait;margin:10mm}
+const TC_PRINT_CSS = (land)=>`@page{size:A4 ${land?'landscape':'portrait'};margin:10mm}
   *{box-sizing:border-box}
   body{font-family:Inter,Arial,Helvetica,sans-serif;margin:0;color:#000;font-size:14px}
   .hd{display:flex;align-items:flex-end;gap:16px;border-bottom:3px solid #000;padding-bottom:9px;margin-bottom:6px}
@@ -712,7 +781,10 @@ const TC_PRINT_CSS = `@page{size:A4 portrait;margin:10mm}
   th{background:#000;color:#fff;font-size:12.5px;letter-spacing:.4px;padding:9px 7px;border:1.5px solid #000}
   th .rng{color:#dfe7ee;display:block;margin-top:2px;font-size:11px}
   td{border:1.5px solid #555;padding:0 8px;height:36px;font-size:16px;vertical-align:middle}
-  td.u{width:34%;font-weight:700;font-size:15px}
+  td.u{font-weight:700;font-size:15px}
+  td.time{font-weight:900;font-size:16px;white-space:nowrap;background:#f1f4f7}
+  col.c-time{width:13%} col.c-staff{width:13%}
+  col.c-sup{width:17%} col.c-prod{width:32%} col.c-qual{width:11%} col.c-tin{width:8%} col.c-temp{width:12%} col.c-by{width:20%}
   td.c{text-align:center;font-weight:700}
   tr.cat td{background:#dde4ea;font-weight:900;font-size:15px;letter-spacing:.5px;height:28px}
   .rng{font-weight:600;font-size:11px;color:#222}
@@ -726,10 +798,10 @@ function tcPrintHead(title, s, blank){
       <span class="f">STORE: <u>${esc(blank?'':s.store)}</u></span>
       <span class="f">DATE: <u>${esc(blank?'':s.day)}</u></span></div>`;
 }
-function tcPrintWindow(title, inner){
+function tcPrintWindow(title, inner, land){
   const w=window.open('','_blank'); if(!w){ toast('Allow pop-ups to print'); return; }
   w.document.write(`<!doctype html><html><head><meta charset="utf-8"><title>${esc(title)}</title>
-    <style>${TC_PRINT_CSS}</style></head><body>${inner}
+    <style>${TC_PRINT_CSS(!!land)}</style></head><body>${inner}
     <script>window.onload=function(){setTimeout(function(){window.print();},400);};<\/script></body></html>`);
   w.document.close();
 }
@@ -737,14 +809,27 @@ function tcPrintWindow(title, inner){
 /* ---- display check ---- */
 function tcSheetTable(blank){
   const s=tcState(), rounds=tcRounds(), items=tcItems();
-  const head='<thead><tr><th style="text-align:left">UNIT / SAMPLE</th>'+rounds.map(r=>
-    `<th>${esc(r.name)}<br>${esc(tcTimeLabel(r.time))}<span class="rng">${esc(tcRange(r.type).text||'')}</span></th>`).join('')+'</tr></thead>';
-  const body='<tbody>'+items.map(it=>'<tr><td class="u">'+esc(it.name)+'</td>'+rounds.map(r=>{
-    if(blank) return '<td class="c"></td>';
-    const rec=s.values[tcKey(r.id,it.id)]||{}, vd=tcVerdict(rec.v,r.type);
-    return `<td class="c${vd.state==='bad'?' bad':''}">${esc(rec.v?rec.v+' \u00b0C':'')}${rec.at?`<br><span class="rng">${esc(rec.at)}</span>`:''}</td>`;
-  }).join('')+'</tr>').join('')+'</tbody>';
-  return head+body;
+  const cols='<colgroup><col class="c-time">'+items.map(()=>'<col>').join('')+'<col class="c-staff"></colgroup>';
+  const head='<thead><tr><th style="text-align:left">TIME</th>'
+    +items.map(it=>`<th>${esc(it.name)}</th>`).join('')
+    +'<th>STAFF</th></tr></thead>';
+  // one line to write WHICH product was probed in each column
+  let body='<tbody><tr><td class="u">Product checked</td>'
+    +items.map(it=>`<td class="p">${esc(blank?'':tcProduct(it.id))}</td>`).join('')
+    +'<td></td></tr>';
+  rounds.forEach(r=>{
+    let staff='';
+    body+=`<tr><td class="time">${esc(tcTimeLabel(r.time))}<div class="rng">${esc(tcRange(r.type).text||'')}</div></td>`;
+    body+=items.map(it=>{
+      if(blank) return '<td class="c"></td>';
+      const rec=s.values[tcKey(r.id,it.id)]||{}, vd=tcVerdict(rec.v,r.type);
+      if(rec.by && !staff) staff=String(rec.by).split(' ')[0];
+      return `<td class="c${vd.state==='bad'?' bad':''}">${esc(rec.v?rec.v+' \u00b0C':'')}</td>`;
+    }).join('');
+    body+=`<td class="c">${esc(staff)}</td></tr>`;
+  });
+  body+='</tbody>';
+  return cols+head+body;
 }
 /* ---- goods received ---- */
 /* How many lines a category prints: the ones actually added. A BLANK form keeps
@@ -758,19 +843,21 @@ function tcRecvTable(blank){
   const s=tcState(), cats=tcRecvCats();
   let body='<tbody>';
   cats.forEach(c=>{
-    body+=`<tr class="cat"><td colspan="5">${esc(c.name)} <span class="rng">\u00b7 ${esc(tcRange(c.type).text||'')}</span></td></tr>`;
+    body+=`<tr class="cat"><td colspan="6">${esc(c.name)} <span class="rng">\u00b7 ${esc(tcRange(c.type).text||'')}</span></td></tr>`;
     const have=tcRecvOf(c.id), n=tcRecvLineCount(c.id, blank);
     for(let i=0;i<n;i++){
       const r = blank ? null : have[i];
-      if(!r){ body+='<tr><td></td><td class="c"></td><td class="c"></td><td class="c"></td><td></td></tr>'; continue; }
+      if(!r){ body+='<tr><td></td><td></td><td class="c"></td><td class="c"></td><td class="c"></td><td></td></tr>'; continue; }
       const vd=tcVerdict(r.temp,c.type);
-      body+=`<tr><td>${esc(r.product||'')}</td><td class="c${vd.state==='bad'?' bad':''}">${esc(r.temp?r.temp+' \u00b0C':'')}</td>`
-          + `<td class="c">${esc(r.quality||'')}</td><td class="c">${esc(r.time||'')}</td><td>${esc(r.by||'')}</td></tr>`;
+      body+=`<tr><td>${esc(r.supplier||'')}</td><td>${esc(r.product||'')}</td>`
+          + `<td class="c">${esc(r.quality||'')}</td><td class="c">${esc(r.time||'')}</td>`
+          + `<td class="c${vd.state==='bad'?' bad':''}">${esc(r.temp?r.temp+' \u00b0C':'')}</td><td>${esc(r.by||'')}</td></tr>`;
     }
-    if(!n) body+='<tr><td colspan="5" style="color:#777">\u2014 nothing received \u2014</td></tr>';
+    if(!n) body+='<tr><td colspan="6" style="color:#777">\u2014 nothing received \u2014</td></tr>';
   });
   body+='</tbody>';
-  return '<thead><tr><th style="text-align:left">PRODUCT</th><th>TEMPERATURE</th><th>QUALITY</th><th>TIME RECEIVED</th><th>RECEIVED BY</th></tr></thead>'+body;
+  const cols='<colgroup><col class="c-sup"><col class="c-prod"><col class="c-qual"><col class="c-tin"><col class="c-temp"><col class="c-by"></colgroup>';
+  return cols+'<thead><tr><th style="text-align:left">SUPPLIER</th><th style="text-align:left">PRODUCT</th><th>QUALITY</th><th>TIME</th><th>TEMP</th><th>RECEIVED BY</th></tr></thead>'+body;
 }
 
 /* ---- PDF, drawn with jsPDF so it downloads as a file ---- */
@@ -781,35 +868,44 @@ function tcPdfSpec(blank){
       const have=tcRecvOf(c.id), n=tcRecvLineCount(c.id, blank), rows=[];
       for(let i=0;i<n;i++){
         const r = blank ? null : have[i];
-        if(!r){ rows.push({cells:['','','','',''] }); continue; }
-        rows.push({cells:[r.product||'', r.temp?(r.temp+' \u00b0C'):'', r.quality||'', r.time||'', r.by||''],
+        if(!r){ rows.push({cells:['','','','','',''] }); continue; }
+        rows.push({cells:[r.supplier||'', r.product||'', r.quality||'', r.time||'', r.temp?(r.temp+' \u00b0C'):'', r.by||''],
                    bad:tcVerdict(r.temp,c.type).state==='bad'});
       }
-      if(!n) rows.push({cells:['\u2014 nothing received \u2014','','','','']});
+      if(!n) rows.push({cells:['\u2014 nothing received \u2014','','','','','']});
       return {head:c.name+'   \u00b7   '+(tcRange(c.type).text||''), rows};
     });
-    return { title:s.doc.recvTitle||'Goods received temperature log',
-             cols:[{label:'PRODUCT',w:0.34},{label:'TEMPERATURE',w:0.16,c:1},{label:'QUALITY',w:0.15,c:1},
-                   {label:'TIME RECEIVED',w:0.16,c:1},{label:'RECEIVED BY',w:0.19}],
+    return { title:s.doc.recvTitle||'Goods received temperature log', land:false,
+             cols:[{label:'SUPPLIER',w:0.17},{label:'PRODUCT',w:0.32},{label:'QUALITY',w:0.11,c:1},
+                   {label:'TIME',w:0.08,c:1},{label:'TEMP',w:0.12,c:1},{label:'RECEIVED BY',w:0.20}],
              blocks };
   }
-  const rounds=tcRounds();
-  const rows=tcItems().map(it=>({cells:[it.name].concat(rounds.map(r=>{
+  const rounds=tcRounds(), items=tcItems();
+  // the record the team fills in: time down the side, each line across the top
+  const rows=[{cells:['Product checked'].concat(items.map(it=>blank?'':tcProduct(it.id))).concat(['']), head:1}];
+  rounds.forEach(r=>{
+    let staff='';
+    const cells=[tcTimeLabel(r.time)].concat(items.map(it=>{
       if(blank) return '';
       const rec=s.values[tcKey(r.id,it.id)]||{};
+      if(rec.by && !staff) staff=String(rec.by).split(' ')[0];
       return rec.v?(rec.v+' \u00b0C'):'';
-    })),
-    bad:!blank && rounds.some(r=>tcVerdict((s.values[tcKey(r.id,it.id)]||{}).v, r.type).state==='bad')}));
-  const w=(1-0.34)/Math.max(1,rounds.length);
-  return { title:s.doc.title||'Temperature check',
-           cols:[{label:'UNIT / SAMPLE',w:0.34}].concat(rounds.map(r=>({label:r.name+'  '+tcTimeLabel(r.time),sub:tcRange(r.type).text||'',w,c:1}))),
+    }));
+    cells.push(staff);
+    rows.push({cells, bad:!blank && items.some(it=>tcVerdict((s.values[tcKey(r.id,it.id)]||{}).v, r.type).state==='bad')});
+  });
+  const w=(1-0.13-0.11)/Math.max(1,items.length);
+  return { title:tcSheetTitle(), land:items.length>4,
+           cols:[{label:'TIME',w:0.13}]
+                 .concat(items.map(it=>({label:it.name,w,c:1})))
+                 .concat([{label:'STAFF',w:0.11,c:1}]),
            blocks:[{head:null, rows}] };
 }
 async function tcPdf(blank){
   const ok = await (window.ensureJsPDF?ensureJsPDF():Promise.resolve(false));
   if(!ok || !(window.jspdf&&window.jspdf.jsPDF)){ toast('PDF engine not ready \u2014 using the print window'); return tcExport(blank?'blank':'print'); }
   const s=tcState(), spec=tcPdfSpec(blank);
-  const { jsPDF }=window.jspdf, doc=new jsPDF({unit:'pt',format:'a4'});
+  const { jsPDF }=window.jspdf, doc=new jsPDF({unit:'pt',format:'a4',orientation:spec.land?'landscape':'portrait'});
   const PW=doc.internal.pageSize.getWidth(), PH=doc.internal.pageSize.getHeight(), M=34;
   const TW=PW-2*M; let y=0;
   function header(){
@@ -847,7 +943,8 @@ async function tcPdf(blank){
     b.rows.forEach(r=>{
       room(36);
       const h=34;
-      if(r.bad){ doc.setFillColor(254,226,226); doc.rect(M,y,TW,h,'F'); }
+      if(r.head){ doc.setFillColor(241,244,247); doc.rect(M,y,TW,h,'F'); }
+      else if(r.bad){ doc.setFillColor(254,226,226); doc.rect(M,y,TW,h,'F'); }
       doc.setDrawColor(85,92,100); doc.setLineWidth(.9);
       doc.rect(M,y,TW,h);
       spec.cols.forEach((c,i)=>{ if(i) doc.line(xs[i],y,xs[i],y+h); });
@@ -892,8 +989,7 @@ function tcExport(fmt){
   if(fmt==='pdf') return tcPdf(false);
   if(fmt==='pdfblank') return tcPdf(true);
   const s=tcState(), recvView=(s.view==='recv'), blank=(fmt==='blank');
-  const title = recvView ? (s.doc.recvTitle||'Goods received temperature log')
-                         : (s.doc.title||'Temperature check');
+  const title = recvView ? (s.doc.recvTitle||'Goods received temperature log') : tcSheetTitle();
   const table = recvView ? tcRecvTable(blank) : tcSheetTable(blank);
   if(fmt==='excel'){
     const meta=`<b>Store:</b> ${esc(s.store)} &nbsp; <b>Date:</b> ${esc(s.day)}${(!recvView&&s.note)?` &nbsp; <b>Notes:</b> ${esc(s.note)}`:''}`;
@@ -908,6 +1004,7 @@ function tcExport(fmt){
     ${(!recvView && !blank && s.note)?`<p class="sub"><b>Notes:</b> ${esc(s.note)}</p>`:''}
     ${blank?'<p class="sub"><b>Notes / corrective action:</b></p><table><tbody><tr><td style="height:42px"></td></tr><tr><td style="height:42px"></td></tr></tbody></table>':''}
     <div class="sign"><div>Checked by (print &amp; sign)</div><div>Manager verified</div></div>
-    <div class="ft"><span>MCQ Supermarket \u00b7 butcher temperature record</span><span>${esc(blank?'Blank form':perthStamp())}</span></div>`);
+    <div class="ft"><span>MCQ Supermarket \u00b7 temperature record</span><span>${esc(blank?'Blank form':perthStamp())}</span></div>`,
+    !recvView && tcItems().length>4);
 }
 window.tcExport=tcExport;

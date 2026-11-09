@@ -2288,3 +2288,29 @@ html,body{max-width:100%}
   .tc-rv .tc-ic.danger{grid-column:2;justify-self:end;width:34px;height:34px}
   .tc-rv input,.tc-rv select{padding:11px 10px;font-size:14px}
 }
+
+/* ---- write-in product column on the temperature sheet ---- */
+.tc-prodcell{width:24%}
+.tc-prod{width:100%;border:1px dashed var(--line,#cbd5e1);border-radius:9px;padding:9px 10px;font:inherit;
+  font-size:13px;font-weight:600;background:#fff;color:var(--ink,#0f172a);min-width:0}
+.tc-prod::placeholder{font-weight:500;color:var(--muted,#b6c0cb)}
+.tc-prod:focus{outline:0;border-style:solid;border-color:var(--accent,#0369a1);box-shadow:0 0 0 3px rgba(3,105,161,.12)}
+.tc-prod:disabled{background:var(--surface-2,#f8fafc)}
+.tc-line-name .tc-prod{margin-top:5px;font-size:12.5px;padding:7px 9px}
+.tc-prod-echo{display:block;margin-top:3px;font-size:11.5px;font-weight:600;color:var(--muted,#94a3b8)}
+.tc-tbl th.tc-unit-h+th.tc-unit-h{width:24%}
+/* printed: the product column is a ruled blank on the empty form */
+.tc-rv{grid-template-columns:minmax(0,1.3fr) minmax(0,1.9fr) 120px 96px 92px minmax(0,1.1fr) 34px}
+@media(max-width:760px){
+  .tc-rv{grid-template-columns:1fr 1fr}
+  .tc-rv-sup{grid-column:1/-1}
+}
+
+/* ---- department sheet picker (Butcher / Dairy / …) ---- */
+.tc-sheets{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:-4px 0 14px}
+.tc-sheets button{border:1px solid var(--line,#e2e8f0);background:#fff;color:var(--muted,#64748b);font:inherit;
+  font-size:13px;font-weight:700;padding:7px 15px;border-radius:999px;cursor:pointer}
+.tc-sheets button.on{background:var(--accent,#0369a1);border-color:var(--accent,#0369a1);color:#fff}
+.tc-sheets button:hover:not(.on){border-color:var(--accent,#0369a1);color:var(--accent,#0369a1)}
+.tc-sheet-ops{display:flex;align-items:center;gap:6px;margin-left:6px;padding-left:10px;border-left:1px solid var(--line,#e2e8f0)}
+.tc-sheet-ops button.tc-ic{background:#fff}

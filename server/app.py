@@ -1436,13 +1436,36 @@ def _temp_doc():
         names = [i.get('name') for i in doc.get('items') or []]
         if names in temp_seed.LEGACY_ITEM_NAMES:
             doc['items'] = fresh['items']        # untouched sheet -> bring it up to date
+            doc['rounds'] = fresh['rounds']
+        # Beef FZ was dropped; only touch a received list nobody has reshaped
+        rnames = [c.get('name') for c in doc.get('recvCategories') or []]
+        if rnames in temp_seed.LEGACY_RECV_NAMES:
+            doc['recvCategories'] = fresh['recvCategories']
         doc['seed'] = temp_seed.SEED_VERSION
         dirty = True
+    # the sheet used to be one department. Fold it in as the first sheet and add
+    # the ones shipped since, without disturbing what anyone has already shaped.
+    if not isinstance(doc.get('sheets'), list) or not doc.get('sheets'):
+        first = {'id': 'sh_butcher', 'name': 'Butcher',
+                 'title': doc.get('title') or fresh['sheets'][0]['title'],
+                 'rounds': doc.get('rounds') or fresh['sheets'][0]['rounds'],
+                 'items': doc.get('items') or fresh['sheets'][0]['items']}
+        doc['sheets'] = [first] + [sh for sh in fresh['sheets'] if sh['id'] != 'sh_butcher']
+        dirty = True
+    else:
+        have = {sh.get('id') for sh in doc['sheets']}
+        for sh in fresh['sheets']:
+            if sh['id'] not in have:
+                doc['sheets'].append(sh)         # a department added in a later release
+                dirty = True
     # the goods-received half was added later; give an existing sheet its defaults
     for key in ('recvTitle', 'recvCategories', 'qualities', 'recvBlankRows'):
         if doc.get(key) in (None, '', [], {}):
             doc[key] = fresh[key]
             dirty = True
+    first = (doc.get('sheets') or [{}])[0]
+    if doc.get('title') != first.get('title') or doc.get('rounds') is not first.get('rounds'):
+        doc['title'] = first.get('title'); doc['rounds'] = first.get('rounds'); doc['items'] = first.get('items')
     if dirty:
         db.set_setting(TEMP_DOC_KEY, doc)
     return doc
@@ -1476,9 +1499,19 @@ def require_temp_edit(au):
 
 def _apply_temp_op(doc, op):
     """Apply ONE edit. Returns (ok, message). Ids are never reused, so readings
-    already recorded stay attached to the right unit and round."""
-    rounds = doc.setdefault('rounds', [])
-    items = doc.setdefault('items', [])
+    already recorded stay attached to the right line and check."""
+    sheets = doc.setdefault('sheets', [])
+    sheet = None
+    for sh in sheets:
+        if sh.get('id') == op.get('sheet'):
+            sheet = sh; break
+    if sheet is None and sheets:
+        sheet = sheets[0]
+    if sheet is None:
+        sheet = {'id': 'sh1', 'name': 'Sheet', 'title': 'Temperature check', 'rounds': [], 'items': []}
+        sheets.append(sheet)
+    rounds = sheet.setdefault('rounds', [])
+    items = sheet.setdefault('items', [])
     kind = op.get('op') or ''
 
     def find(lst, oid):
@@ -1497,7 +1530,34 @@ def _apply_temp_op(doc, op):
     if kind == 'title.set':
         t = _temp_clean(op.get('title'), 90)
         if not t: return False, 'a title is required'
-        doc['title'] = t
+        sheet['title'] = t
+        return True, ''
+
+    # ---- sheets: one per department ----
+    if kind == 'sheet.add':
+        name = _temp_clean(op.get('name'), 40) or 'New department'
+        sh = {'id': 'sh' + secrets.token_hex(5), 'name': name,
+              'title': name.upper() + ' \u2014 TEMPERATURE CHECK',
+              'rounds': [dict(r, id='tr' + secrets.token_hex(5)) for r in temp_seed.SHEETS[0]['rounds'][:1]],
+              'items': [{'id': 'ti' + secrets.token_hex(5), 'name': 'Sample 1'}]}
+        sheets.append(sh)
+        return True, sh['id']
+
+    if kind == 'sheet.rename':
+        n = _temp_clean(op.get('name'), 40)
+        if not n: return False, 'a name is required'
+        sheet['name'] = n
+        return True, ''
+
+    if kind == 'sheet.move':
+        i = sheets.index(sheet)
+        to = max(0, min(len(sheets) - 1, i + (1 if op.get('dir') == 'down' else -1)))
+        sheets.insert(to, sheets.pop(i))
+        return True, ''
+
+    if kind == 'sheet.del':
+        if len(sheets) <= 1: return False, 'there must be at least one sheet'
+        sheets.remove(sheet)
         return True, ''
 
     if kind == 'round.add':
@@ -1613,6 +1673,7 @@ def _apply_temp_op(doc, op):
 
     if kind == 'doc.restore':
         fresh = temp_seed.default_doc()
+        doc['sheets'] = fresh['sheets']
         doc['title'] = fresh['title']; doc['rounds'] = fresh['rounds']; doc['items'] = fresh['items']
         doc['seed'] = fresh['seed']
         doc['recvTitle'] = fresh['recvTitle']; doc['recvCategories'] = fresh['recvCategories']
@@ -1665,6 +1726,7 @@ def get_temp_log(store_id):
     day = _temp_day(request.args.get('day'))
     log = db.temp_log_get(store_id, day) or {'values': {}, 'note': '', 'recv': [], 'photos': []}
     log.setdefault('recv', []); log.setdefault('photos', [])
+    log.setdefault('tempPhotos', []); log.setdefault('products', {})
     return jsonify(ok=True, day=day, log=log)
 
 
@@ -1690,16 +1752,26 @@ def post_temp_log(store_id):
             continue
         row = {'id': _temp_clean(r.get('id'), 24) or ('rr' + secrets.token_hex(4)),
                'cat': _temp_clean(r.get('cat'), 24),
+               'supplier': _temp_clean(r.get('supplier'), 60),
                'product': _temp_clean(r.get('product'), 80),
                'temp': _temp_clean(r.get('temp'), 12),
                'quality': _temp_clean(r.get('quality'), 24),
                'time': _temp_time(r.get('time')) or _temp_clean(r.get('time'), 8),
                'by': _temp_clean(r.get('by'), 40)}
-        if row['product'] or row['temp'] or row['quality'] or row['by']:
+        if row['supplier'] or row['product'] or row['temp'] or row['quality'] or row['by']:
             rows.append(row)
     photos = [_temp_clean(x, 48) for x in (d.get('photos') if isinstance(d.get('photos'), list) else [])[:24]]
+    tphotos = [_temp_clean(x, 48) for x in (d.get('tempPhotos') if isinstance(d.get('tempPhotos'), list) else [])[:24]]
+    # what was actually probed on each line that day — the sheet leaves it blank on purpose
+    products = {}
+    src = d.get('products') if isinstance(d.get('products'), dict) else {}
+    for k, v in list(src.items())[:200]:
+        name = _temp_clean(v, 60)
+        if name:
+            products[_temp_clean(k, 32)] = name
     log = {'values': clean, 'note': _temp_clean(d.get('note'), 400),
-           'recv': rows, 'photos': [x for x in photos if x]}
+           'products': products, 'recv': rows,
+           'photos': [x for x in photos if x], 'tempPhotos': [x for x in tphotos if x]}
     db.temp_log_save(store_id, day, log, who(au))
     return jsonify(ok=True, day=day, log=db.temp_log_get(store_id, day))
 
