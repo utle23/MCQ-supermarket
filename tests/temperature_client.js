@@ -137,6 +137,7 @@ const html=()=>painted.content?painted.content.innerHTML:'';
   check('the product column is the widest', w('c-prod')>=30, w('c-prod'));
   check('the time column is narrow', w('c-tin')<=9, w('c-tin'));
   check('product is much wider than time', w('c-prod') > w('c-tin')*3, [w('c-prod'),w('c-tin')]);
+  check('the temperature sheet does not steal that width', w('c-pchk')!==w('c-prod'), [w('c-prod'),w('c-pchk')]);
   check('the heading is shortened to TIME', /<th>TIME<\/th>/.test(rp) && !/TIME RECEIVED/.test(rp));
 
   console.log('\n6b. everything prints PORTRAIT, never sideways');
@@ -153,6 +154,23 @@ const html=()=>painted.content?painted.content.innerHTML:'';
   const rvp=capturePrint(()=>tcExport('blank'));
   check('the received form is portrait', /size:A4 portrait/.test(rvp) && !/landscape/.test(rvp));
   tcShowView('day'); tcSetSheet('sh_butcher');
+
+  console.log('\n6c. a sheet with many lines stands up so portrait stays big');
+  tcSetSheet('sh_butcher');   // 3 lines in the fixture -> the Time-row record
+  const few=capturePrint(()=>tcExport('blank'));
+  check('a short sheet keeps the Time-down-the-side record', /<th style="text-align:left">TIME<\/th>/.test(few));
+  // grow it past the limit
+  const sh=State.temp.doc.sheets[0];
+  ['A','B','C','D'].forEach((n,i)=>sh.items.push({id:'tiX'+i,name:'Extra line '+n}));
+  const many=capturePrint(()=>tcExport('blank'));
+  check('a long sheet runs the lines DOWN the page instead', /<th style="text-align:left">UNIT \/ SAMPLE<\/th>/.test(many) && !/<th style="text-align:left">TIME<\/th>/.test(many));
+  check('the check times become the columns', ['8:00 AM','12:30 PM','5:30 PM'].every(t=>many.includes(t)));
+  check('staff is a row along the bottom', /<td class="u">STAFF<\/td>/.test(many));
+  check('it is still portrait', /size:A4 portrait/.test(many) && !/landscape/.test(many));
+  const thOf=(h)=>{ const m=/\n  th\{[^}]*font-size:([\d.]+)px/.exec(h); return m?parseFloat(m[1]):0; };
+  check('and the type stays large instead of shrinking', thOf(many)>=12, thOf(many));
+  check('every line still appears', ['Beef Display — Sample 1','Extra line D'].every(n=>many.includes(esc(n))));
+  sh.items.length=3;
 
   console.log('\n7. PDF');
   tcShowView('day'); pdfOut=null; await tcPdf(true); await sleep(20);

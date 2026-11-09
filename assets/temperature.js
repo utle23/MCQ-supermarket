@@ -791,6 +791,7 @@ const TC_PRINT_CSS = (cols)=>{
   td.p{font-size:${Math.max(11,td-3)}px}
   td.time{font-weight:900;font-size:${td}px;white-space:nowrap;background:#f1f4f7}
   col.c-time{width:${tight?11:13}%} col.c-staff{width:${tight?10:13}%}
+  col.c-unit{width:34%} col.c-pchk{width:24%}
   col.c-sup{width:17%} col.c-prod{width:32%} col.c-qual{width:11%} col.c-tin{width:8%} col.c-temp{width:12%} col.c-by{width:20%}
   td.c{text-align:center;font-weight:700}
   tr.cat td{background:#dde4ea;font-weight:900;font-size:15px;letter-spacing:.5px;height:28px}
@@ -815,13 +816,39 @@ function tcPrintWindow(title, inner, cols){
 }
 
 /* ---- display check ---- */
+/* On A4 PORTRAIT the number of columns is what decides whether a form is
+   readable. Up to five lines the record reads best the way the team wrote it
+   out — time down the side, a column per line. Past that it is stood up
+   instead: the lines run DOWN the page and the check times become the columns,
+   which keeps any number of lines on one portrait page in large type. */
+function tcTallPrint(){ return tcItems().length > 5; }
+
 function tcSheetTable(blank){
   const s=tcState(), rounds=tcRounds(), items=tcItems();
+  if(tcTallPrint()){
+    const cols='<colgroup><col class="c-unit"><col class="c-pchk">'+rounds.map(()=>'<col>').join('')+'</colgroup>';
+    const head='<thead><tr><th style="text-align:left">UNIT / SAMPLE</th><th style="text-align:left">PRODUCT CHECKED</th>'
+      +rounds.map(r=>`<th>${esc(tcTimeLabel(r.time))}<span class="rng">${esc(tcRange(r.type).text||'')}</span></th>`).join('')
+      +'</tr></thead>';
+    let body='<tbody>'+items.map(it=>'<tr><td class="u">'+esc(it.name)+'</td>'
+      +`<td class="p">${esc(blank?'':tcProduct(it.id))}</td>`
+      +rounds.map(r=>{
+          if(blank) return '<td class="c"></td>';
+          const rec=s.values[tcKey(r.id,it.id)]||{}, vd=tcVerdict(rec.v,r.type);
+          return `<td class="c${vd.state==='bad'?' bad':''}">${esc(rec.v?rec.v+' \u00b0C':'')}</td>`;
+        }).join('')+'</tr>').join('');
+    // who did each round, along the bottom
+    body+='<tr class="cat"><td class="u">STAFF</td><td></td>'+rounds.map(r=>{
+      let staff='';
+      if(!blank) items.some(it=>{ const rec=s.values[tcKey(r.id,it.id)]||{}; if(rec.by){ staff=String(rec.by).split(' ')[0]; return true; } return false; });
+      return `<td class="c">${esc(staff)}</td>`;
+    }).join('')+'</tr></tbody>';
+    return cols+head+body;
+  }
   const cols='<colgroup><col class="c-time">'+items.map(()=>'<col>').join('')+'<col class="c-staff"></colgroup>';
   const head='<thead><tr><th style="text-align:left">TIME</th>'
     +items.map(it=>`<th>${esc(it.name)}</th>`).join('')
     +'<th>STAFF</th></tr></thead>';
-  // one line to write WHICH product was probed in each column
   let body='<tbody><tr><td class="u">Product checked</td>'
     +items.map(it=>`<td class="p">${esc(blank?'':tcProduct(it.id))}</td>`).join('')
     +'<td></td></tr>';
@@ -889,6 +916,25 @@ function tcPdfSpec(blank){
              blocks };
   }
   const rounds=tcRounds(), items=tcItems();
+  if(tcTallPrint()){
+    // stood up: the lines run down the page, the check times are the columns
+    const w=(1-0.30-0.24)/Math.max(1,rounds.length);
+    const rows=items.map(it=>({cells:[it.name, blank?'':tcProduct(it.id)].concat(rounds.map(r=>{
+        if(blank) return '';
+        const rec=s.values[tcKey(r.id,it.id)]||{};
+        return rec.v?(rec.v+' \u00b0C'):'';
+      })),
+      bad:!blank && rounds.some(r=>tcVerdict((s.values[tcKey(r.id,it.id)]||{}).v, r.type).state==='bad')}));
+    rows.push({head:1, cells:['STAFF',''].concat(rounds.map(r=>{
+      let staff='';
+      if(!blank) items.some(it=>{ const rec=s.values[tcKey(r.id,it.id)]||{}; if(rec.by){ staff=String(rec.by).split(' ')[0]; return true; } return false; });
+      return staff;
+    }))});
+    return { title:tcSheetTitle(), land:false,
+             cols:[{label:'UNIT / SAMPLE',w:0.30},{label:'PRODUCT CHECKED',w:0.24}]
+                   .concat(rounds.map(r=>({label:tcTimeLabel(r.time),sub:tcRange(r.type).text||'',w,c:1}))),
+             blocks:[{head:null, rows}] };
+  }
   // the record the team fills in: time down the side, each line across the top
   const rows=[{cells:['Product checked'].concat(items.map(it=>blank?'':tcProduct(it.id))).concat(['']), head:1}];
   rounds.forEach(r=>{
@@ -1025,6 +1071,6 @@ function tcExport(fmt){
     ${blank?'<p class="sub"><b>Notes / corrective action:</b></p><table><tbody><tr><td style="height:42px"></td></tr><tr><td style="height:42px"></td></tr></tbody></table>':''}
     <div class="sign"><div>Checked by (print &amp; sign)</div><div>Manager verified</div></div>
     <div class="ft"><span>MCQ Supermarket \u00b7 temperature record</span><span>${esc(blank?'Blank form':perthStamp())}</span></div>`,
-    recvView ? 6 : (tcItems().length + 2));
+    recvView ? 6 : (tcTallPrint() ? (tcRounds().length + 2) : (tcItems().length + 2)));
 }
 window.tcExport=tcExport;
