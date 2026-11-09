@@ -119,13 +119,13 @@ const html=()=>painted.content?painted.content.innerHTML:'';
   tcRecvAdd('rc2'); await sleep(20);
   check('the next line keeps the same supplier', State.temp.recv[1].supplier==='Harvey Beef');
 
-  console.log('\n5. the printed record: time down the side, staff at the end');
+  console.log('\n5. the printed record: units down, temperatures across');
   tcShowView('day');
   const blank=capturePrint(()=>tcExport('blank'));
-  check('TIME is the first column and STAFF the last', /<th style="text-align:left">TIME<\/th>/.test(blank) && /<th>STAFF<\/th>/.test(blank));
-  check('each line is a column', blank.includes('Beef Display — Sample 1') && blank.includes('Cool Room — Room temperature'));
-  check('a row for the product probed', /Product checked/.test(blank));
-  check('one row per check time', ['8:00 AM','12:30 PM','5:30 PM'].every(t=>blank.includes(t)));
+  check('the units are the rows', blank.includes('Beef Display — Sample 1') && blank.includes('Cool Room — Room temperature'));
+  check('the check times are the columns', ['8:00 AM','12:30 PM','5:30 PM'].every(t=>blank.includes(t)));
+  check('a column for the product probed', /PRODUCT CHECKED/.test(blank));
+  check('staff signs off along the bottom', /<td class="u">STAFF<\/td>/.test(blank));
   check('the boxes are empty on a blank form', !/2\.5 °C/.test(blank));
   const filled=capturePrint(()=>tcExport('print'));
   check('a filled print carries the reading and who took it', /2\.5 °C/.test(filled) && /Minh/.test(filled));
@@ -155,15 +155,14 @@ const html=()=>painted.content?painted.content.innerHTML:'';
   check('the received form is portrait', /size:A4 portrait/.test(rvp) && !/landscape/.test(rvp));
   tcShowView('day'); tcSetSheet('sh_butcher');
 
-  console.log('\n6c. a sheet with many lines stands up so portrait stays big');
-  tcSetSheet('sh_butcher');   // 3 lines in the fixture -> the Time-row record
+  console.log('\n6c. units run DOWN the page, the check times ACROSS');
+  tcSetSheet('sh_butcher');
   const few=capturePrint(()=>tcExport('blank'));
-  check('a short sheet keeps the Time-down-the-side record', /<th style="text-align:left">TIME<\/th>/.test(few));
-  // grow it past the limit
+  check('even a short sheet runs the units down the page', /<th style="text-align:left">UNIT \/ SAMPLE<\/th>/.test(few) && !/<th style="text-align:left">TIME<\/th>/.test(few));
   const sh=State.temp.doc.sheets[0];
   ['A','B','C','D'].forEach((n,i)=>sh.items.push({id:'tiX'+i,name:'Extra line '+n}));
   const many=capturePrint(()=>tcExport('blank'));
-  check('a long sheet runs the lines DOWN the page instead', /<th style="text-align:left">UNIT \/ SAMPLE<\/th>/.test(many) && !/<th style="text-align:left">TIME<\/th>/.test(many));
+  check('a long sheet does the same', /<th style="text-align:left">UNIT \/ SAMPLE<\/th>/.test(many) && !/<th style="text-align:left">TIME<\/th>/.test(many));
   check('the check times become the columns', ['8:00 AM','12:30 PM','5:30 PM'].every(t=>many.includes(t)));
   check('staff is a row along the bottom', /<td class="u">STAFF<\/td>/.test(many));
   check('it is still portrait', /size:A4 portrait/.test(many) && !/landscape/.test(many));
@@ -176,7 +175,7 @@ const html=()=>painted.content?painted.content.innerHTML:'';
   tcShowView('day'); pdfOut=null; await tcPdf(true); await sleep(20);
   check('a blank PDF is produced', /BLANK/.test(pdfOut.saved||''), pdfOut.saved);
   check('the PDF is portrait', (pdfOut.opts||{}).orientation===undefined, pdfOut.opts);
-  check('it uses the time-row record', pdfOut.texts.includes('TIME') && pdfOut.texts.includes('STAFF'));
+  check('the PDF is laid out the same way', pdfOut.texts.includes('UNIT / SAMPLE') && pdfOut.texts.includes('STAFF'));
   check('each line is a column heading', pdfOut.texts.some(t=>/Beef Display/.test(t)));
   tcSetSheet('sh_dairy'); pdfOut=null; await tcPdf(false); await sleep(20);
   check('the dairy sheet makes its own PDF', /DAIRY/i.test(pdfOut.saved||'') && pdfOut.texts.some(t=>/Fresh Milk/.test(t)), pdfOut.saved);

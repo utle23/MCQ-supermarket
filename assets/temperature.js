@@ -816,12 +816,12 @@ function tcPrintWindow(title, inner, cols){
 }
 
 /* ---- display check ---- */
-/* On A4 PORTRAIT the number of columns is what decides whether a form is
-   readable. Up to five lines the record reads best the way the team wrote it
-   out — time down the side, a column per line. Past that it is stood up
-   instead: the lines run DOWN the page and the check times become the columns,
-   which keeps any number of lines on one portrait page in large type. */
-function tcTallPrint(){ return tcItems().length > 5; }
+/* Every temperature sheet prints the same way up, on A4 portrait: the units run
+   DOWN the page (Beef Display, Chicken Display, ...) and the check times run
+   ACROSS as columns, with a STAFF row along the bottom. That keeps the column
+   count at three or four however many lines a department grows to, so the type
+   stays large and it never needs turning sideways. */
+function tcTallPrint(){ return true; }
 
 function tcSheetTable(blank){
   const s=tcState(), rounds=tcRounds(), items=tcItems();
