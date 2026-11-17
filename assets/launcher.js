@@ -16,7 +16,7 @@
    ============================================================================ */
 
 const MCQ_DEVOPS_URL = 'https://mcqtask.onrender.com';
-const MCQ_DEVOPS_HREF = MCQ_DEVOPS_URL;   // becomes '/go/devops' once SSO is wired
+const MCQ_DEVOPS_HREF = '/go/devops';     // mints a signed ticket, then posts it to MCQ DevOps
 
 /* Everyone signed in sees both tiles. MCQ DevOps decides for itself who may go
    in and shows its own "You need access" page to anyone who may not. */

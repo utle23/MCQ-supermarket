@@ -15,6 +15,7 @@ Design notes
   change `AUTOINC`/types; all SQL is kept simple and portable.
 """
 import os, sqlite3, json, time, hashlib, secrets, re as _re, unicodedata
+import hmac, base64, threading, urllib.request   # Master App -> MCQ DevOps (ticket, webhook)
 
 BASE   = os.path.dirname(os.path.abspath(__file__))
 # DATA_DIR lets a host (e.g. a Render persistent disk) place the DB file + uploads on durable
@@ -279,6 +280,12 @@ def init_db():
     conn.commit()
     try: seed_named_supers()   # 6 ready-made Super Admin accounts (7001-7006)
     except Exception: pass
+    # one-off: 7006 was seeded as "Kelvin"; the person's name is Kevin Pham. Only renames
+    # the untouched seed value, so a later edit in Account Management is never overwritten.
+    try:
+        conn.execute("UPDATE accounts SET name='Kevin Pham' WHERE id='7006' AND name='Kelvin'")
+        conn.commit()
+    except Exception: pass
     # one-time purge of retired stores (Beechboro Fresh, Market West) — data permanently removed
     for rs in RETIRED_STORES:
         for tbl in ('records', 'staff', 'checklist_submissions', 'bin_records',
@@ -362,14 +369,31 @@ def _staff_archived(conn, store, staff_id):
 
 def _revoke_person_tokens(conn, store, staff_id):
     """Log an archived person out everywhere — their staff-numeric session AND any linked account
-    session — so archiving takes effect immediately, not just on their next login attempt."""
+    session — so archiving takes effect immediately, not just on their next login attempt.
+    This is the ONE place a person actually loses access, whichever screen archived them, so
+    MCQ DevOps is told from here rather than from any single caller."""
     sid = str(staff_id)
+    person = None
+    try:
+        r = conn.execute('SELECT data_json FROM staff WHERE store_id=? AND id=?', (store, sid)).fetchone()
+        if r:
+            person = person_from_staff(store, sid, json.loads(r['data_json']))
+        a = conn.execute('SELECT id,name,email,role,store_id,staff_id,activated,updated_at FROM accounts '
+                         'WHERE store_id=? AND staff_id=?', (store, sid)).fetchone()
+        if a:
+            person = person_from_account(a)      # an account speaks for them if they have one
+            person['active'] = False
+    except Exception:
+        person = None
     try:
         conn.execute('DELETE FROM tokens WHERE store_id=? AND staff_id=?', (store, sid))
         for a in conn.execute('SELECT id FROM accounts WHERE store_id=? AND staff_id=?', (store, sid)).fetchall():
             conn.execute('DELETE FROM tokens WHERE account_id=?', (a['id'],))
     except Exception:
         pass
+    if person:
+        person['active'] = False
+        notify_devops(person, 'deactivated')
 
 def verify_login(mode, store, pw, login_id=None):
     """Returns (role, store_id[, meta]) on success or None. store_id is 'ALL' for super.
@@ -2637,6 +2661,144 @@ def temp_log_range(store_id, start, end):
             data['day'] = r['day']; data['updatedAt'] = r['updated_at']; data['updatedBy'] = r['updated_by']
             out.append(data)
         return out
+    finally:
+        conn.close()
+
+
+# ============================================================================
+# MCQ Master App -> MCQ DevOps
+#
+# Two shared secrets, both set in the Render dashboard on BOTH services and
+# never written here (this repository is public):
+#   MCQ_SSO_SECRET  signs the sign-in ticket and the webhook below
+#   MASTER_API_KEY  the key MCQ DevOps sends to /api/v1/people
+# With neither set, every one of these paths fails closed: no ticket is issued,
+# the directory answers 401 and the webhook simply does not fire.
+# ============================================================================
+SSO_SECRET = os.environ.get('MCQ_SSO_SECRET', '')
+MASTER_API_KEY = os.environ.get('MASTER_API_KEY', '')
+DEVOPS_URL = (os.environ.get('DEVOPS_URL') or 'https://mcqtask.onrender.com').rstrip('/')
+
+
+def sso_ready():
+    return bool(SSO_SECRET)
+
+
+def _b64u(raw: bytes) -> str:
+    return base64.urlsafe_b64encode(raw).decode('ascii').rstrip('=')
+
+
+def sso_sign(payload: dict) -> str:
+    """base64url(payload) + '.' + base64url(HMAC-SHA256 over that), no padding."""
+    body = _b64u(json.dumps(payload, separators=(',', ':'), sort_keys=True).encode('utf-8'))
+    sig = hmac.new(SSO_SECRET.encode('utf-8'), body.encode('ascii'), hashlib.sha256).digest()
+    return body + '.' + _b64u(sig)
+
+
+def notify_devops(person: dict, event: str):
+    """Tell MCQ DevOps a person was switched off, back on, or changed. Fire and forget:
+    a failure here must never break the action that caused it, and the other side runs a
+    daily sweep that catches anything missed."""
+    if not SSO_SECRET or not isinstance(person, dict) or not person.get('id'):
+        return
+    def _send():
+        try:
+            body = json.dumps(dict(person, event=event), separators=(',', ':')).encode('utf-8')
+            ts = str(int(time.time()))
+            sig = hmac.new(SSO_SECRET.encode('utf-8'),
+                           (ts + '.').encode('ascii') + body, hashlib.sha256).hexdigest()
+            req = urllib.request.Request(
+                DEVOPS_URL + '/api/master/staff-changed', data=body, method='POST',
+                headers={'Content-Type': 'application/json',
+                         'X-MCQ-Timestamp': ts, 'X-MCQ-Signature': sig})
+            urllib.request.urlopen(req, timeout=6).read()
+        except Exception:
+            pass          # the daily sweep on the DevOps side is the safety net
+    try:
+        threading.Thread(target=_send, daemon=True).start()
+    except Exception:
+        _send()
+
+
+def person_from_account(row) -> dict:
+    """One row of /api/v1/people. sub-style id: accounts are 'acct:<id>'."""
+    return {'id': 'acct:' + str(row['id']), 'kind': 'account',
+            'staff_id': (str(row['staff_id']) if row['staff_id'] else ''),
+            'name': row['name'] or '', 'email': row['email'] or '',
+            'store': row['store_id'] or '', 'position': row['role'] or '',
+            'active': bool(row['activated']),
+            'updated_at': row['updated_at'] or ''}
+
+
+def person_from_staff(store_id, staff_id, d: dict) -> dict:
+    """Staff without an account sign in with their own number, so they get
+    'staff:<store>:<id>' — staff ids repeat between stores."""
+    archived = bool(d.get('archived') or d.get('active') == 0)
+    return {'id': 'staff:%s:%s' % (store_id, staff_id), 'kind': 'staff',
+            'staff_id': str(staff_id),
+            'name': d.get('name') or '', 'email': d.get('email') or '',
+            'store': store_id or '', 'position': d.get('role') or d.get('classification') or '',
+            'active': not archived,
+            'updated_at': d.get('updated_at') or ''}
+
+
+def people_directory(include_inactive=True, updated_since=None):
+    """Accounts first, then staff who have no account (an account already speaks for them)."""
+    conn = connect()
+    try:
+        out, linked = [], set()
+        for r in conn.execute('SELECT id,name,email,role,store_id,staff_id,activated,updated_at FROM accounts').fetchall():
+            if r['staff_id']:
+                linked.add((r['store_id'] or '', str(r['staff_id'])))
+            p = person_from_account(r)
+            if include_inactive or p['active']:
+                out.append(p)
+        for r in conn.execute('SELECT store_id,id,data_json FROM staff').fetchall():
+            if (r['store_id'] or '', str(r['id'])) in linked:
+                continue
+            try: d = json.loads(r['data_json'])
+            except Exception: continue
+            p = person_from_staff(r['store_id'], r['id'], d)
+            if include_inactive or p['active']:
+                out.append(p)
+        if updated_since:
+            out = [p for p in out if (p.get('updated_at') or '') >= updated_since]
+        return out
+    finally:
+        conn.close()
+
+
+def person_by_account(acct_id) -> dict:
+    """One account as a directory row, or None."""
+    conn = connect()
+    try:
+        r = conn.execute('SELECT id,name,email,role,store_id,staff_id,activated,updated_at FROM accounts WHERE id=?',
+                         (str(acct_id),)).fetchone()
+        return person_from_account(r) if r else None
+    finally:
+        conn.close()
+
+
+def person_for_login(au) -> dict:
+    """Who the signed-in person is, in the shape the sign-in ticket carries."""
+    conn = connect()
+    try:
+        acct = au.get('account_id')
+        if acct:
+            r = conn.execute('SELECT id,name,email,role,store_id,staff_id,activated,updated_at FROM accounts WHERE id=?',
+                             (str(acct),)).fetchone()
+            if r:
+                return person_from_account(r)
+        sid, store = au.get('staff_id'), au.get('store_id') or ''
+        if sid:
+            r = conn.execute('SELECT data_json FROM staff WHERE store_id=? AND id=?', (store, str(sid))).fetchone()
+            if r:
+                try: return person_from_staff(store, sid, json.loads(r['data_json']))
+                except Exception: pass
+        # Not an account and not a staff row we can find: there is no stable identity to
+        # put in a ticket. A role+store id would be shared by everyone holding that role,
+        # so MCQ DevOps would see several people as one. Refuse instead.
+        return None
     finally:
         conn.close()
 

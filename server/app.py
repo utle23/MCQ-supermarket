@@ -763,18 +763,36 @@ def account_create():
 def account_update():
     au = require_acct_admin()
     d = request.get_json(force=True, silent=True) or {}
-    ok = db.update_account(d.get('id'), d.get('patch') or {})
+    patch = d.get('patch') or {}
+    ok = db.update_account(d.get('id'), patch)
     if isinstance(ok, dict) and ok.get('error'):
         return jsonify(ok=False, error=ok['error']), 400
-    db.write_audit(who(au), '', 'update', 'account', str(d.get('id')), None, {'fields': list((d.get('patch') or {}).keys())})
+    db.write_audit(who(au), '', 'update', 'account', str(d.get('id')), None, {'fields': list(patch.keys())})
+    # switching an account off/on, or renaming it, is news MCQ DevOps needs
+    try:
+        if ok:
+            person = db.person_by_account(d.get('id'))
+            if person:
+                if 'activated' in patch:
+                    db.notify_devops(person, 'reactivated' if person.get('active') else 'deactivated')
+                elif {'name', 'email', 'store_id', 'role'} & set(patch.keys()):
+                    db.notify_devops(person, 'updated')
+    except Exception:
+        pass
     return jsonify(ok=bool(ok))
 
 @api.route('/api/account/delete', methods=['POST'])
 def account_delete():
     au = require_acct_admin()
     d = request.get_json(force=True, silent=True) or {}
+    gone = None
+    try: gone = db.person_by_account(d.get('id'))
+    except Exception: gone = None
     db.delete_account(d.get('id'))
     db.write_audit(uid(au), '', 'delete', 'account', str(d.get('id')), None, None)
+    if gone:
+        gone['active'] = False
+        db.notify_devops(gone, 'deactivated')
     return jsonify(ok=True)
 
 @api.route('/api/accounts/staff-sync', methods=['POST'])
@@ -1790,6 +1808,76 @@ def get_temp_log_range(store_id):
 def _temp_day(v):
     v = str(v or '').strip()[:10]
     return v if re.match(r'^\d{4}-\d{2}-\d{2}$', v) else db.today_str()
+
+
+# ============================================================================
+# MASTER APP -> MCQ DevOps
+#
+# Three interfaces, per docs/Master App integration (SSO + API).md:
+#   1. the sign-in ticket, minted here and posted to {DEVOPS_URL}/sso
+#   2. GET /api/v1/people   the directory MCQ DevOps links its accounts against
+#   3. the staff-changed webhook, fired from db._revoke_person_tokens and the
+#      account activate / delete paths
+#
+# Both secrets live only in the Render dashboard. Without them every path here
+# fails closed: no ticket, 401 on the directory, no webhook.
+# ============================================================================
+
+
+@api.route('/api/sso/devops-ticket', methods=['POST'])
+def sso_devops_ticket():
+    """Mint a 60-second sign-in ticket for whoever is signed in.
+
+    The browser cannot build this: the secret never leaves the server. /go/devops
+    calls this with the person's own token, then auto-submits the ticket to MCQ
+    DevOps as a form POST (a GET link would leave the ticket in history and in
+    the referrer)."""
+    au = require_auth()
+    if not db.sso_ready():
+        return jsonify(ok=False, error='Single sign-on is not configured yet'), 503
+    person = db.person_for_login(au)
+    if not person:
+        return jsonify(ok=False,
+                       error='This sign-in is not linked to a person yet — ask Head Office '
+                             'to set up your account, then try again'), 409
+    if not person.get('active'):
+        return jsonify(ok=False, error='This account is switched off'), 403
+    now_s = int(time.time())
+    payload = {
+        'aud': 'mcq-tasks',
+        'sub': person['id'],
+        'staff_id': person.get('staff_id') or '',
+        'name': person.get('name') or '',
+        'email': person.get('email') or '',
+        'store': person.get('store') or '',
+        'position': person.get('position') or '',
+        'active': True,
+        'iat': now_s,
+        'exp': now_s + 60,
+        'nonce': secrets.token_hex(16),
+    }
+    nxt = str((request.get_json(force=True, silent=True) or {}).get('next') or '')
+    # only a path on MCQ DevOps, never an absolute URL -> nothing to redirect away with
+    if not nxt.startswith('/') or nxt.startswith('//'):
+        nxt = ''
+    return jsonify(ok=True, url=db.DEVOPS_URL + '/sso', ticket=db.sso_sign(payload), next=nxt[:200])
+
+
+@api.route('/api/v1/people', methods=['GET'])
+def api_v1_people():
+    """The staff directory MCQ DevOps reads to link its own accounts.
+
+    Accounts and staff in one list, each with `kind` and an `id` in the same
+    shape as the ticket's `sub`, so a person linked here matches the person who
+    signs in. Returns only the agreed fields: no passwords, nothing else."""
+    want = db.MASTER_API_KEY
+    sent = (request.headers.get('Authorization') or '')
+    sent = sent[7:].strip() if sent.startswith('Bearer ') else ''
+    if not want or not sent or not hmac.compare_digest(sent, want):
+        return jsonify(ok=False, error='unauthorized'), 401
+    inc = request.args.get('include_inactive') in ('1', 'true', 'yes')
+    since = (request.args.get('updated_since') or '').strip() or None
+    return jsonify(people=db.people_directory(include_inactive=inc, updated_since=since))
 
 
 # ---- global "all-stores" notification recipients (one place, applies to every store) ----

@@ -28,7 +28,7 @@ check('both tiles are there', html().includes('Store Checklist') && html().inclu
 check('each has its one-line description',
   html().includes('Daily store checks, by store') && html().includes('IT work items, issues and fixes'));
 check('it is called MCQ DevOps, not Azure DevOps', !/Azure/i.test(html()));
-check('the DevOps tile points at the DevOps site', html().includes("mcqOpenApp('devops')"));
+check('the DevOps tile goes through the sign-in page', html().includes("mcqOpenApp('devops')"));
 check('the checklist tile opens this app\'s home', html().includes("go('home')"));
 check('all the text is English', !/[àáâãèéêìíòóôõùúăđĩũơưăạảấầẩẫậắằẳẵặẹẻẽềềểễệỉịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹ]/i.test(html().replace(/Khoi|Minh Tran/g,'')));
 
@@ -53,7 +53,10 @@ renderLauncher();
 went=null; mcqOpenApp('checklist');
 check('the checklist tile stays inside this app', went==='home' && !location.href);
 location.href=''; mcqOpenApp('devops');
-check('the DevOps tile leaves for MCQ DevOps', location.href==='https://mcqtask.onrender.com', location.href);
+check('the DevOps tile goes to /go/devops, which mints the ticket', location.href==='/go/devops', location.href);
+{ // the ticket is minted server-side; no signing material may sit in client code
+  const code=fs.readFileSync(path.join(ROOT,'assets/launcher.js'),'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g,'');
+  check('no signing material in the browser bundle', !/SSO_SECRET|MASTER_API_KEY|hmac|createHmac|sha256/i.test(code)); }
 check('and says so while it goes', toasts.some(t=>/Opening MCQ DevOps/.test(t)));
 mcqOpenApp('nonsense');
 check('an unknown tile does nothing', true);

@@ -115,6 +115,63 @@ def _serve_index():
 def index():
     return _serve_index()
 
+# ---------------------------------------------------------------------------
+# /go/devops — the MCQ DevOps tile on the launcher.
+#
+# The person is identified by the token the app keeps in this browser, not by a
+# cookie, so the server cannot mint the ticket from a plain GET. This page asks
+# the API for a ticket with that token and auto-submits it to MCQ DevOps as a
+# form POST — the ticket never appears in the address bar, in history, or in a
+# referrer header. With single sign-on not configured yet it simply opens MCQ
+# DevOps, which is what the agreed plan says to do until the secrets exist.
+# ---------------------------------------------------------------------------
+_GO_DEVOPS = """<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>Opening MCQ DevOps\u2026</title><meta name="referrer" content="no-referrer">
+<style>
+ body{margin:0;min-height:100vh;display:grid;place-items:center;background:#f3f2ed;
+   font-family:'Plus Jakarta Sans',Inter,system-ui,sans-serif;color:#0a4250}
+ .b{text-align:center;padding:30px}
+ .s{width:34px;height:34px;margin:0 auto 16px;border-radius:50%;
+   border:3px solid #d7e0dc;border-top-color:#0c4f6b;animation:sp .8s linear infinite}
+ @keyframes sp{to{transform:rotate(360deg)}}
+ h1{font-size:17px;margin:0 0 6px;font-weight:800}
+ p{margin:0;font-size:13px;color:#5d6b66}
+ a{color:#0c4f6b;font-weight:700}
+</style></head><body>
+<div class="b"><div class="s"></div><h1>Opening MCQ DevOps</h1>
+<p id="m">Signing you in\u2026</p>
+<p id="f" style="margin-top:14px;display:none"><a href="__DEVOPS__">Continue to MCQ DevOps</a></p></div>
+<form id="go" method="POST" action="" style="display:none">
+  <input type="hidden" name="ticket" id="t"><input type="hidden" name="next" id="n"></form>
+<script>
+(function(){
+  var DEVOPS="__DEVOPS__";
+  function plain(msg){ document.getElementById('m').textContent=msg||'Opening MCQ DevOps\u2026';
+    document.getElementById('f').style.display=''; setTimeout(function(){ location.href=DEVOPS; },1200); }
+  var tok=null; try{ tok=localStorage.getItem('mcq_token'); }catch(e){}
+  if(!tok){ plain('Please sign in to MCQ Supermarket first.'); return; }
+  var next=''; try{ next=new URLSearchParams(location.search).get('next')||''; }catch(e){}
+  fetch('/api/sso/devops-ticket',{method:'POST',
+      headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},
+      body:JSON.stringify({next:next})})
+    .then(function(r){ return r.json().catch(function(){return {};}); })
+    .then(function(j){
+      if(!j||!j.ok||!j.ticket){ plain(j&&j.error?j.error:'Opening MCQ DevOps\u2026'); return; }
+      var f=document.getElementById('go');
+      f.action=j.url; document.getElementById('t').value=j.ticket;
+      document.getElementById('n').value=j.next||'';
+      f.submit();
+    })
+    .catch(function(){ plain(); });
+})();
+</script></body></html>"""
+
+
+@app.route('/go/devops')
+def go_devops():
+    url = (os.environ.get('DEVOPS_URL') or 'https://mcqtask.onrender.com').rstrip('/')
+    return Response(_GO_DEVOPS.replace('__DEVOPS__', url), mimetype='text/html')
+
 @app.route('/<path:p>')
 def files(p):
     # index.html must ALWAYS go through the flag-injecting path, never the raw file —
