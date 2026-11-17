@@ -1,0 +1,140 @@
+/* ============================================================================
+   MCQ MASTER APP — launcher + app switcher.
+   Matches the MCQ DevOps sign-in look so the two apps read as one product:
+   radial lights over a lagoon gradient, a drifting square mosaic, glass cards,
+   lime accent. Everything is scoped to .mcqL / .mcq-sw so the Store Checklist
+   app's own styling is untouched.
+   ============================================================================ */
+:root{
+  --mcqL-lime:#c6f24e; --mcqL-lime-ink:#1a2405;
+}
+
+/* the launcher takes the whole window: no sidebar, no topbar, no breadcrumbs */
+body.on-launcher .sidebar,
+body.on-launcher .topbar,
+body.on-launcher #store-scope-bar{display:none!important}
+body.on-launcher .app{display:block}
+body.on-launcher .main{display:block}
+body.on-launcher .content{padding:0;margin:0;max-width:none;background:transparent}
+
+.mcqL{
+  position:relative;min-height:100vh;min-height:100dvh;overflow:hidden;
+  padding:26px clamp(18px,5vw,64px) 44px;
+  display:flex;flex-direction:column;
+  font-family:'Plus Jakarta Sans',Inter,system-ui,sans-serif;color:#fff;
+  background:
+    radial-gradient(60% 55% at 0% 0%, rgba(56,189,248,.78), transparent 65%),
+    radial-gradient(55% 55% at 100% 100%, rgba(16,185,129,.62), transparent 65%),
+    radial-gradient(40% 40% at 100% 0%, rgba(45,212,191,.38), transparent 70%),
+    linear-gradient(155deg,#075985 0%,#0b4f6c 28%,#0a3f4a 52%,#053b33 76%,#03241f 100%);
+}
+/* a faint square mosaic, strongest at the edges, drifting very slowly */
+.mcqL::before{
+  content:"";position:absolute;inset:-10%;pointer-events:none;opacity:.5;
+  background-image:url("assets/auth-pattern.svg");background-size:612px 612px;
+  -webkit-mask-image:radial-gradient(70% 60% at 50% 50%, transparent 0%, #000 100%);
+          mask-image:radial-gradient(70% 60% at 50% 50%, transparent 0%, #000 100%);
+  animation:mcqL-drift 90s linear infinite}
+@keyframes mcqL-drift{to{transform:translate3d(-612px,-306px,0)}}
+.mcqL-bg{position:absolute;inset:0;pointer-events:none;overflow:hidden}
+.mcqL-orb{position:absolute;border-radius:50%;filter:blur(70px);opacity:.42}
+.mcqL-orb.o1{width:46vw;height:46vw;left:-10vw;top:-14vw;background:#38bdf8;animation:mcqL-f1 26s ease-in-out infinite alternate}
+.mcqL-orb.o2{width:40vw;height:40vw;right:-12vw;bottom:-16vw;background:#10b981;animation:mcqL-f2 31s ease-in-out infinite alternate}
+@keyframes mcqL-f1{to{transform:translate3d(7vw,5vh,0) scale(1.12)}}
+@keyframes mcqL-f2{to{transform:translate3d(-6vw,-5vh,0) scale(1.08)}}
+
+.mcqL>*{position:relative;z-index:1}
+
+/* ---- top bar on the glass ---- */
+.mcqL-top{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.mcqL-brand{display:flex;align-items:center;gap:12px}
+.mcqL-logo{display:grid;place-items:center;background:#fff;border-radius:14px;padding:7px 11px;
+  box-shadow:0 8px 20px -10px rgba(3,36,31,.6)}
+.mcqL-logo img{height:24px;width:auto;object-fit:contain;display:block}
+.mcqL-title{font-size:15.5px;font-weight:800;letter-spacing:.2px}
+.mcqL-user{margin-left:auto;display:flex;align-items:center;gap:11px}
+.mcqL-av{width:36px;height:36px;border-radius:50%;display:grid;place-items:center;font-size:12.5px;font-weight:800;
+  background:rgba(255,255,255,.16);border:1px solid rgba(255,255,255,.28)}
+.mcqL-uname{font-size:14px;font-weight:700}
+.mcqL-out{border:1px solid rgba(255,255,255,.3);background:rgba(255,255,255,.1);color:#fff;
+  border-radius:999px;padding:8px 16px;font:inherit;font-size:13px;font-weight:700;cursor:pointer}
+.mcqL-out:hover{background:rgba(255,255,255,.2)}
+.mcqL-out:focus-visible{outline:3px solid var(--mcqL-lime);outline-offset:2px}
+
+/* ---- hero ---- */
+.mcqL-hero{margin:clamp(34px,7vh,78px) 0 clamp(26px,4vh,40px);max-width:960px}
+.mcqL-eyebrow{margin:0 0 12px;font-size:12px;font-weight:800;letter-spacing:2.2px;color:var(--mcqL-lime)}
+.mcqL-h1{margin:0;font-size:clamp(34px,6.4vw,62px);font-weight:800;letter-spacing:-1.6px;line-height:1.02}
+.mcqL-sub{margin:14px 0 0;font-size:clamp(14px,1.5vw,17px);font-weight:500;color:rgba(255,255,255,.76)}
+
+/* ---- the two app cards ---- */
+.mcqL-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:20px;max-width:980px}
+.mcqL-card{
+  position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:9px;text-align:left;
+  padding:28px 26px 24px;border-radius:28px;cursor:pointer;font:inherit;color:#fff;
+  background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);
+  -webkit-backdrop-filter:blur(18px);backdrop-filter:blur(18px);
+  box-shadow:0 26px 60px -30px rgba(3,36,31,.85);
+  opacity:0;transform:translateY(16px);animation:mcqL-up .55s cubic-bezier(.22,.9,.3,1) forwards;animation-delay:var(--d,0ms);
+  transition:transform .18s ease, box-shadow .18s ease, border-color .18s ease, background .18s ease}
+@keyframes mcqL-up{to{opacity:1;transform:none}}
+.mcqL-card:hover{transform:translateY(-4px);border-color:rgba(198,242,78,.7);
+  background:rgba(255,255,255,.17);box-shadow:0 34px 70px -30px rgba(3,36,31,.9), 0 0 0 4px rgba(198,242,78,.22)}
+.mcqL-card:active{transform:scale(.98)}
+.mcqL-card:focus-visible{outline:3px solid var(--mcqL-lime);outline-offset:3px}
+.mcqL-ic{width:64px;height:64px;border-radius:19px;display:grid;place-items:center;font-size:26px;color:#fff;
+  margin-bottom:6px;box-shadow:0 14px 28px -14px rgba(0,0,0,.6)}
+.mcqL-checklist .mcqL-ic{background:linear-gradient(145deg,#10b981,#0f5a3c)}
+.mcqL-devops  .mcqL-ic{background:linear-gradient(145deg,#0c4f6b,#073a31);box-shadow:0 0 0 2px rgba(198,242,78,.55),0 14px 28px -14px rgba(0,0,0,.6)}
+.mcqL-name{font-size:26px;font-weight:800;letter-spacing:-.5px}
+.mcqL-desc{font-size:14px;font-weight:500;color:rgba(255,255,255,.78);line-height:1.4}
+.mcqL-open{margin-top:14px;display:inline-flex;align-items:center;gap:8px;font-size:13.5px;font-weight:800;
+  background:var(--mcqL-lime);color:var(--mcqL-lime-ink);border-radius:999px;padding:9px 18px}
+.mcqL-open i{transition:transform .18s ease}
+.mcqL-card:hover .mcqL-open i{transform:translateX(4px)}
+.mcqL-foot{margin:auto 0 0;padding-top:34px;font-size:12px;font-weight:500;color:rgba(255,255,255,.45)}
+
+@media(max-width:700px){
+  .mcqL{padding:18px 16px 32px}
+  .mcqL-hero{margin:28px 0 22px}
+  .mcqL-h1{letter-spacing:-1px}
+  .mcqL-cards{grid-template-columns:1fr;gap:14px}
+  .mcqL-card{padding:22px 20px 20px;border-radius:22px}
+  .mcqL-uname{display:none}
+}
+@media(prefers-reduced-motion:reduce){
+  .mcqL::before,.mcqL-orb{animation:none}
+  .mcqL-card{animation:none;opacity:1;transform:none}
+  .mcqL-card:hover{transform:none}
+}
+
+/* ============================ the 9-dot app switcher ======================= */
+.mcq-waffle{display:grid;grid-template-columns:repeat(3,4px);gap:3px;justify-content:center;align-content:center;
+  width:40px;height:40px;border-radius:12px;cursor:pointer;flex:none;
+  background:rgba(12,79,107,.08);border:1px solid rgba(12,79,107,.18)}
+.mcq-waffle span{width:4px;height:4px;border-radius:1px;background:#0c4f6b}
+.mcq-waffle:hover{background:rgba(12,79,107,.16)}
+.mcq-waffle:focus-visible{outline:3px solid var(--mcqL-lime);outline-offset:2px}
+
+.mcq-switcher{position:fixed;z-index:9000;width:290px;padding:9px;border-radius:18px;background:#fff;
+  border:1px solid #e3e7e5;box-shadow:0 26px 60px -24px rgba(3,36,31,.5);
+  font-family:'Plus Jakarta Sans',Inter,system-ui,sans-serif;animation:mcqL-up .16s ease forwards;opacity:0}
+.mcq-sw-h{font-size:10.5px;font-weight:800;letter-spacing:1.6px;color:#7b8783;padding:7px 10px 9px}
+.mcq-sw-row{display:flex;align-items:center;gap:11px;width:100%;text-align:left;cursor:pointer;font:inherit;
+  border:0;background:transparent;border-radius:13px;padding:10px;color:#10241f}
+.mcq-sw-row:hover{background:#f3f2ed}
+.mcq-sw-row.cur{background:#f2fbd9}
+.mcq-sw-row:focus-visible{outline:3px solid var(--mcqL-lime);outline-offset:-2px}
+.mcq-sw-ic{flex:none;width:42px;height:42px;border-radius:13px;display:grid;place-items:center;font-size:17px;color:#fff}
+.mcq-sw-row.mcqL-checklist .mcq-sw-ic{background:linear-gradient(145deg,#10b981,#0f5a3c)}
+.mcq-sw-row.mcqL-devops  .mcq-sw-ic{background:linear-gradient(145deg,#0c4f6b,#073a31);box-shadow:0 0 0 2px rgba(198,242,78,.6)}
+.mcq-sw-body{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.mcq-sw-body b{font-size:14px;font-weight:800}
+.mcq-sw-body small{font-size:11.5px;color:#5d6b66}
+.mcq-sw-here{flex:none;font-size:9.5px;font-weight:800;letter-spacing:.4px;background:var(--mcqL-lime);
+  color:var(--mcqL-lime-ink);border-radius:999px;padding:3px 8px}
+.mcq-sw-all{display:flex;align-items:center;gap:9px;width:100%;margin-top:4px;cursor:pointer;font:inherit;
+  border:0;border-top:1px solid #eef1ef;background:transparent;color:#0c4f6b;
+  font-size:13px;font-weight:800;padding:12px 10px 8px;border-radius:0 0 13px 13px}
+.mcq-sw-all:hover{background:#f3f2ed}
+@media(max-width:700px){ .mcq-switcher{width:min(290px,calc(100vw - 20px))} }

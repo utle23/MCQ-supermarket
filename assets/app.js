@@ -912,6 +912,8 @@ function buildTopbar(){
   const scopeBar=$('#store-scope-bar');
   if(scopeBar) scopeBar.innerHTML='';
   const superStoreSel = `<span class="tb-badge"><i class="fas fa-store"></i> ${esc(scopeLabel)}</span>`;
+  const waffle = (window.mcqWaffleHTML && State.route && State.route.mod!=='apps') ? mcqWaffleHTML() : '';
+  try{ const host=document.getElementById('mcq-waffle-host'); if(host) host.innerHTML=waffle; }catch(e){}
   $('#topbar-right').innerHTML = `
     ${superStoreSel}
     <span class="tb-badge"><i class="fas fa-clock"></i> idle <b id="idle-ind">30m</b></span>
@@ -946,6 +948,7 @@ function render(){
   buildSidebar();
   refreshBell();
   // the Master App launcher: every signed-in role lands here and can come back to it
+  if(mod!=='apps'){ try{ document.body.classList.remove('on-launcher'); }catch(e){} }
   if(mod==='apps'){
     if(typeof renderLauncher!=='function'){
       const c=$('#content'); if(c) c.innerHTML='<div class="empty"><div class="e-ic">⏳</div>Loading…</div>';
