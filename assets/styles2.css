@@ -2314,3 +2314,59 @@ html,body{max-width:100%}
 .tc-sheets button:hover:not(.on){border-color:var(--accent,#0369a1);color:var(--accent,#0369a1)}
 .tc-sheet-ops{display:flex;align-items:center;gap:6px;margin-left:6px;padding-left:10px;border-left:1px solid var(--line,#e2e8f0)}
 .tc-sheet-ops button.tc-ic{background:#fff}
+
+/* ============================================================
+   MCQ MASTER APP LAUNCHER
+   Colours are MCQ DevOps's so the two apps read as one family:
+   lagoon gradient, lime accent, warm paper background.
+   Scoped under .mcq-launcher so nothing else in the app shifts.
+   ============================================================ */
+.mcq-launcher{
+  --lagoon-1:#0c4f6b; --lagoon-2:#0a4250; --lagoon-3:#073a31;
+  --lime:#c6f24e; --lime-ink:#1a2405; --paper:#f3f2ed;
+  font-family:'Plus Jakarta Sans',Inter,system-ui,sans-serif;
+  margin:-4px 0 0;
+}
+.mcq-hero{
+  position:relative;overflow:hidden;border-radius:22px;padding:34px 34px 38px;
+  background:linear-gradient(135deg,var(--lagoon-1) 0%,var(--lagoon-2) 52%,var(--lagoon-3) 100%);
+  color:#fff;box-shadow:0 18px 40px -22px rgba(7,58,49,.55)}
+.mcq-hero::after{content:"";position:absolute;right:-90px;top:-110px;width:320px;height:320px;border-radius:50%;
+  background:radial-gradient(circle,rgba(198,242,78,.20) 0%,rgba(198,242,78,0) 68%);pointer-events:none}
+.mcq-hero-brand{display:flex;align-items:center;gap:11px;margin-bottom:20px}
+.mcq-hero-logo{height:30px;width:auto;object-fit:contain;filter:brightness(0) invert(1);opacity:.95}
+.mcq-hero-sub{font-size:11.5px;font-weight:700;letter-spacing:1.4px;text-transform:uppercase;opacity:.72}
+.mcq-hero-h{margin:0;font-size:31px;font-weight:800;letter-spacing:-.6px;line-height:1.1}
+.mcq-hero-p{margin:9px 0 0;font-size:14.5px;font-weight:500;opacity:.8}
+
+.mcq-tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(290px,1fr));gap:16px;margin-top:-26px;
+  padding:0 10px;position:relative;z-index:2}
+.mcq-tile{
+  display:flex;align-items:center;gap:16px;width:100%;text-align:left;cursor:pointer;
+  background:#fff;border:1px solid #e6e4dc;border-radius:18px;padding:20px 20px;
+  box-shadow:0 10px 26px -18px rgba(7,58,49,.42);
+  transition:transform .16s ease, box-shadow .16s ease, border-color .16s ease;font:inherit;color:inherit}
+.mcq-tile:hover,.mcq-tile:focus-visible{
+  transform:translateY(-4px);border-color:var(--lagoon-1);
+  box-shadow:0 20px 38px -18px rgba(7,58,49,.5), 0 0 0 4px rgba(198,242,78,.3);outline:0}
+.mcq-tile:active{transform:translateY(-1px)}
+.mcq-tile-ic{flex:none;width:54px;height:54px;border-radius:15px;display:grid;place-items:center;font-size:22px;
+  background:linear-gradient(140deg,var(--lagoon-1),var(--lagoon-3));color:var(--lime)}
+.mcq-tile-devops .mcq-tile-ic{background:var(--lime);color:var(--lime-ink)}
+.mcq-tile-body{display:flex;flex-direction:column;gap:3px;min-width:0;flex:1}
+.mcq-tile-name{font-size:17.5px;font-weight:800;letter-spacing:-.2px;color:#10241f}
+.mcq-tile-desc{font-size:13px;font-weight:500;color:#5d6b66;line-height:1.35}
+.mcq-tile-go{flex:none;width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font-size:12px;
+  background:var(--paper);color:var(--lagoon-1);transition:background .16s ease,color .16s ease}
+.mcq-tile:hover .mcq-tile-go{background:var(--lime);color:var(--lime-ink)}
+.mcq-foot{margin:22px 4px 4px;font-size:12.5px;font-weight:500;color:#7b8783;text-align:center}
+
+@media(max-width:700px){
+  .mcq-hero{border-radius:18px;padding:26px 20px 34px}
+  .mcq-hero-h{font-size:25px}
+  .mcq-hero-p{font-size:13.5px}
+  .mcq-tiles{grid-template-columns:1fr;gap:13px;padding:0 4px;margin-top:-22px}
+  .mcq-tile{padding:18px 16px;gap:14px;border-radius:16px}
+  .mcq-tile-ic{width:50px;height:50px;font-size:20px}
+  .mcq-tile-name{font-size:16.5px}
+}

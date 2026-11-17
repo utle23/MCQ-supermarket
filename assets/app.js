@@ -533,7 +533,7 @@ function enterApp(){
   document.body.className = 'role-'+State.role;
   $('#login-root').style.display='none';
   $('#app').style.display='';   // let CSS decide (grid on desktop, block flow on mobile) — avoids inline override
-  if(!location.hash || location.hash==='#') location.hash='#/home'; else render();
+  if(!location.hash || location.hash==='#') location.hash='#/apps'; else render();   // Master App launcher first
   buildTopbar(); buildSidebar(); render();
   startIdleWatch();
   // warm the rarely-used modules AND the rich-text editor in the background so deep pages and
@@ -818,6 +818,7 @@ function buildSidebar(){
   if(isEmployee()){   // individual staff — personal workspace only
     const ub=(window.inboxUnread?inboxUnread():0);
     $('#nav').innerHTML =
+      navLink('apps','fa-table-cells-large','Apps','',true)+
       navLink('home','fa-house','My Home','',true)+
       navLink('inbox','fa-inbox','My Inbox',ub?`<span class="count">${ub}</span>`:'',true)+
       navLink('announcements','fa-bullhorn','Announcements','',true)+
@@ -843,6 +844,7 @@ function buildSidebar(){
     html += navLink('violation','fa-gavel','Report Violation','',true);
     html += navLink('myrewards','fa-gift','My Rewards','',true);
   }
+  html += navLink('apps','fa-table-cells-large','Apps','',true);
   { const ub=(window.inboxUnread?inboxUnread():0);
     html += navLink('inbox','fa-inbox',isSuper()?'Inbox':'Store Inbox', ub?`<span class="count">${ub}</span>`:'', true); }
   html += navLink('announcements','fa-bullhorn','Announcements','',true);
@@ -943,6 +945,15 @@ function render(){
   const mod=State.route.mod;
   buildSidebar();
   refreshBell();
+  // the Master App launcher: every signed-in role lands here and can come back to it
+  if(mod==='apps'){
+    if(typeof renderLauncher!=='function'){
+      const c=$('#content'); if(c) c.innerHTML='<div class="empty"><div class="e-ic">⏳</div>Loading…</div>';
+      ensureLazyModules().then(()=>{ if(typeof renderLauncher==='function') renderLauncher(); }).catch(()=>{});
+      return;
+    }
+    return renderLauncher();
+  }
   if(isBa()) return renderBaView();   // Chú Ba only ever sees the read-only checklist viewer
   if(isEmployee()){   // individual staff — personal workspace only
     const own={home:renderEmployeeHome, profile:renderEmployeeProfile, myvios:renderMyViolations, myrewards:renderMyPerks};
