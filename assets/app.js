@@ -508,6 +508,7 @@ function mcqSessionExpired(){
   try{ localStorage.removeItem('mcq_token'); }catch(e){}
   try{ stopLiveRefresh(); if(window.wsStop) wsStop(); stopIdleWatch(); }catch(e){}
   dataSyncRun++; State.account=null;
+  try{ history.replaceState(null,'','#/apps'); }catch(e){}   // same reason as in logout()
   try{ sessionStorage.removeItem('mcq_acct'); }catch(e){}
   showLogin('Your session has expired — please sign in again.');
 }
@@ -653,6 +654,11 @@ async function logout(reason){
   State.superRouteSyncMark=0;
   State.account=null; try{ sessionStorage.removeItem('mcq_acct'); }catch(e){}
   stopIdleWatch();
+  // Drop whatever page they were on. Otherwise that hash is still in the address bar
+  // when they sign back in, and enterApp() renders it instead of the launcher — which
+  // is why signing out from the checklist used to drop you straight back into it.
+  // A real deep link (arriving at a hash while signed OUT) is untouched by this.
+  try{ history.replaceState(null,'','#/apps'); }catch(e){}
   showLogin(reason);
 }
 
@@ -937,7 +943,7 @@ function render(){
   // the other app. The hash is dropped first so signing back in lands on the
   // launcher, and so a reload cannot sign them out a second time.
   if(/^#\/?signout(\b|$)/.test(location.hash||'')){
-    try{ history.replaceState(null,'','#'); }catch(e){}
+    try{ history.replaceState(null,'','#/apps'); }catch(e){}
     if(State.account) logout('You have been signed out of MCQ DevOps and MCQ Supermarket.');
     else showLogin('You have been signed out.');
     return;

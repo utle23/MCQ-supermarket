@@ -94,7 +94,30 @@ console.log('\n6. the 9-dot app switcher');
   State.route={mod:'apps'};
 }
 
-console.log('\n7. phone-friendly markup');
+console.log('\n7. the hero carries the time and the context');
+check('a Perth clock sits beside the date', /id="mcqL-clock"/.test(html()));
+check('the name is underlined for emphasis', /class="mcqL-nm"/.test(html()));
+check('it says how many apps and who is signed in', /2 apps \u00b7 signed in as/.test(html()), (html().match(/\d+ apps[^<]*/)||[])[0]);
+check('each card carries a watermark of its own icon', (html().match(/class="mcqL-mark"/g)||[]).length===2);
+check('the footer is quiet and names the build', /mcqL-foot/.test(html()) && /Master App/.test(html()));
+
+console.log('\n7b. the backdrop is actually visible');
+{
+  const css=fs.readFileSync(path.join(ROOT,'assets/launcher.css'),'utf8');
+  const orb=/\.mcqL-orb\{[^}]*opacity:([\d.]+)/.exec(css);
+  check('the orbs are bright enough to see', orb && parseFloat(orb[1])>=.55, orb&&orb[1]);
+  check('the mosaic is not masked away to nothing', /mask-image:radial-gradient[^;]*rgba\(0,0,0,\.55\)/.test(css));
+  check('cards are tall', /min-height:260px/.test(css));
+  check('they have an inner top highlight', /inset 0 1px 0 rgba\(255,255,255,\.35\)/.test(css));
+  check('the icon has a coloured glow behind it', /\.mcqL-ic::before/.test(css));
+  check('hover adds a lime ring', /0 0 0 2px rgba\(198,242,78,\.45\)/.test(css));
+  check('reduced motion still stops everything', /prefers-reduced-motion/.test(css));
+  const svg=fs.readFileSync(path.join(ROOT,'assets/auth-pattern.svg'),'utf8');
+  const ops=(svg.match(/opacity="([\d.]+)"/g)||[]).map(x=>parseFloat(x.slice(9)));
+  check('the pattern squares are visible', Math.max.apply(null,ops)>=.15, Math.max.apply(null,ops));
+}
+
+console.log('\n8. phone-friendly markup');
 check('tiles are real buttons, big tap targets', (html().match(/<button class="mcqL-card/g)||[]).length===2);
 check('each tile is labelled for screen readers', (html().match(/aria-label="Open /g)||[]).length===2);
 

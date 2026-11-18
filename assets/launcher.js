@@ -41,6 +41,22 @@ function mcqToday(){
     return d.toLocaleDateString('en-AU',{weekday:'long',day:'numeric',month:'long',year:'numeric'});
   }catch(e){ return ''; }
 }
+function mcqClock(){
+  try{
+    const d=(typeof perthNow==='function'?perthNow():new Date());
+    return d.toLocaleTimeString('en-AU',{hour:'numeric',minute:'2-digit'});
+  }catch(e){ return ''; }
+}
+/* the clock ticks while the launcher is open, and stops the moment it is not */
+let _mcqClockT=null;
+function mcqClockStart(){
+  clearInterval(_mcqClockT);
+  _mcqClockT=setInterval(()=>{
+    const el=document.getElementById('mcqL-clock');
+    if(!el){ clearInterval(_mcqClockT); _mcqClockT=null; return; }
+    el.textContent=mcqClock();
+  }, 30000);
+}
 function mcqWho(){
   const a=(window.State&&State.account)||{};
   const name=String(a.staffName||a.name||'').trim();
@@ -60,6 +76,7 @@ function renderLauncher(){
   const cards = apps.map((a,i)=>`
     <button class="mcqL-card mcqL-${a.id}" style="--d:${i*90}ms"
             onclick="mcqOpenApp('${a.id}')" aria-label="Open ${esc(a.name)}">
+      <span class="mcqL-mark" aria-hidden="true">${a.icon}</span>
       <span class="mcqL-ic">${a.icon}</span>
       <span class="mcqL-name">${esc(a.name)}</span>
       <span class="mcqL-desc">${esc(a.desc)}</span>
@@ -84,15 +101,18 @@ function renderLauncher(){
 
       <section class="mcqL-hero">
         <p class="mcqL-eyebrow">MCQ SUPERMARKET${who.where?(' · '+esc(who.where)):''}</p>
-        <h1 class="mcqL-h1">${esc(mcqGreeting())}${who.first?(', '+esc(who.first)):''}</h1>
-        <p class="mcqL-sub">${esc(mcqToday())}</p>
+        <h1 class="mcqL-h1">${esc(mcqGreeting())}${who.first?(', <span class="mcqL-nm">'+esc(who.first)+'</span>'):''}</h1>
+        <p class="mcqL-sub"><span id="mcqL-clock" class="mcqL-clock">${esc(mcqClock())}</span>
+          <span class="mcqL-dot">\u00b7</span>${esc(mcqToday())}</p>
+        <p class="mcqL-meta">${apps.length} app${apps.length===1?'':'s'} \u00b7 signed in as ${esc(who.where||who.full)}</p>
       </section>
 
       <section class="mcqL-cards">${cards}</section>
 
-      <p class="mcqL-foot">MCQ Supermarket · All apps</p>
+      <p class="mcqL-foot">MCQ Supermarket · Master App${window.MCQ_APP_VER?(' \u00b7 '+esc(MCQ_APP_VER)):''}</p>
     </div>`;
   try{ window.scrollTo(0,0); }catch(e){}
+  mcqClockStart();
 }
 window.renderLauncher = renderLauncher;
 

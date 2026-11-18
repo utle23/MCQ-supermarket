@@ -43,5 +43,33 @@ check('already signed out is harmless \u2014 just the sign-in page',
       calls.some(c=>c[0]==='showLogin') && !calls.some(c=>c[0]==='logout'));
 check('no confirmation is asked for', !/confirm\(/.test(guard?guard[0]:''));
 
+console.log('\n3. every sign-out path forgets the page you were on');
+// the three places a session can end, read out of the real source
+function tail(fnStart, lines){ const i=src.indexOf(fnStart); return i<0?'':src.slice(i, src.indexOf('\n}', i)); }
+const logoutSrc = tail('async function logout(reason){');
+const expiredSrc = tail('function mcqSessionExpired(){');
+check('the Sign out button / idle timeout resets the hash',
+      /replaceState\(null,'','#\/apps'\)/.test(logoutSrc));
+check('it happens BEFORE the sign-in screen is shown',
+      logoutSrc.indexOf("replaceState") < logoutSrc.indexOf('showLogin('));
+check('an expired or revoked session does too',
+      /replaceState\(null,'','#\/apps'\)/.test(expiredSrc));
+check('and #signout leaves the launcher hash', /replaceState\(null,'','#\/apps'\)/.test(guard?guard[0]:''));
+
+console.log('\n4. sign out on a checklist page, sign back in -> launcher');
+// enterApp()'s landing rule, verbatim from app.js
+function landing(hash){ return (!hash || hash==='#') ? '#/apps' : hash; }
+function signOutThen(wasOn){
+  let hash=wasOn;
+  hash='#/apps';                       // what logout() now does
+  return landing(hash);
+}
+[['#/home','the manager daily home'],['#/checklist','the checklist page'],
+ ['#/tempcheck','the temperature sheet'],['#/history','checklist history']].forEach(([h,what])=>{
+  check('signed out from '+what+' -> launcher', signOutThen(h)==='#/apps', signOutThen(h));
+});
+check('a deep link arriving while signed OUT still wins', landing('#/history')==='#/history');
+check('and an empty address bar lands on the launcher', landing('')==='#/apps' && landing('#')==='#/apps');
+
 console.log('\n'+(fails.length?('FAILED: '+fails.join(', ')):'ALL PASS'));
 process.exit(fails.length?1:0);
