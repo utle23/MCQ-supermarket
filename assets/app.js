@@ -931,6 +931,17 @@ function go(mod,tab){ location.hash = mod==='home'?'#/home':`#/${mod}${tab?'/'+t
 function defaultTab(){ return isAdmin()?'overview':'records'; }
 function parseHash(){ const p=(location.hash.replace(/^#\/?/,'')||'home').split('/'); return {mod:p[0]||'home',tab:p[1]||null}; }
 function render(){
+  // #signout — MCQ DevOps sends people here when they sign out there, so one press
+  // ends both sessions and they land on this app's own sign-in page. Harmless when
+  // already signed out, and never asks for confirmation: the decision was made in
+  // the other app. The hash is dropped first so signing back in lands on the
+  // launcher, and so a reload cannot sign them out a second time.
+  if(/^#\/?signout(\b|$)/.test(location.hash||'')){
+    try{ history.replaceState(null,'','#'); }catch(e){}
+    if(State.account) logout('You have been signed out of MCQ DevOps and MCQ Supermarket.');
+    else showLogin('You have been signed out.');
+    return;
+  }
   if(!State.account){ showLogin(); return; }
   State.route=parseHash();
   maybeStartRouteSync();
