@@ -63,7 +63,12 @@ def health():
     # cloud: which photo backend is live (no secrets) — lets the ImageKit migration be confirmed
     cloud = 'imagekit' if cloudstore.IK_ENABLED else 'local'
     # rev: which commit is live (Render sets RENDER_GIT_COMMIT) — lets deploys be confirmed
+    # sso / people: whether the two MCQ DevOps secrets have landed on THIS service.
+    # Booleans only — never the values — so a deploy can be confirmed from outside
+    # without signing in, which is otherwise impossible: the ticket endpoint checks
+    # the caller's login first and so always answers 401 to an anonymous probe.
     return jsonify(ok=True, time=db.now(), db_bytes=size, stores=len(db.STORES), cloud=cloud,
+                   sso=bool(db.SSO_SECRET), people_api=bool(db.MASTER_API_KEY),
                    rev=(os.environ.get('RENDER_GIT_COMMIT') or '')[:8] or None)
 
 # ---------- 9:30 PM daily digest, triggerable by an external cron (cron-job.org) ----------

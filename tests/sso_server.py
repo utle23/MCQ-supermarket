@@ -123,6 +123,14 @@ try:
     mine = hmac.new(SECRET.encode(), (ts + '.').encode() + body, hashlib.sha256).hexdigest()
     check('HMAC-SHA256 over timestamp + "." + body', len(mine) == 64 and mine.isalnum())
 
+    print('\n7b. health says whether the secrets landed, without revealing them')
+    h = cl.get('/api/health').get_json()
+    check('it reports both as set', h.get('sso') is True and h.get('people_api') is True, h)
+    check('neither value is exposed', SECRET not in json.dumps(h) and APIKEY not in json.dumps(h))
+    db.SSO_SECRET = ''
+    check('and flips when one is missing', cl.get('/api/health').get_json().get('sso') is False)
+    db.SSO_SECRET = SECRET
+
     print('\n8. with no secret configured, everything fails closed')
     db.SSO_SECRET = ''
     r = cl.post('/api/sso/devops-ticket', headers=H(sup), json={})
