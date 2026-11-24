@@ -47,7 +47,7 @@
   }
   // server-side email relay (Brevo key lives on the server, never in the frontend/repo)
   window.MCQ_EMAIL_RELAY = (BASE||'') + '/api/send-email';
-  // server-side AI Vision (OpenAI/ChatGPT key lives on the server)
+  // server-side AI Vision (Claude; the key lives on the server)
   window.MCQ_AI_VISION_ENDPOINT = (BASE||'') + '/api/vision-temp';
   window.MCQ_VISION_TEXT_ENDPOINT = (BASE||'') + '/api/vision-text';
   // server-side settings (super-admin only): digest recipient emails, etc.
@@ -106,6 +106,36 @@
       } return n; }).catch(function(){ return window.__inboxUnread; }); };
   // ---- AI Assistant (parse only; execution stays on the normal store-scoped endpoints) ----
   window.mcqAiCommand=function(text,roster,stores,rules){ return _authFetch('/api/ai-command',{method:'POST',body:JSON.stringify({text:text,roster:roster||[],stores:stores||[],rules:rules||[]})}); };
+  // ---- RESTAURANT STATEMENTS: delivery-note photos -> monthly statement ----
+  window.mcqStmtConfig=function(){ return _authFetch('/api/stmt/config'); };
+  window.mcqStmtConfigSave=function(patch){ return _authFetch('/api/stmt/config',{method:'POST',body:JSON.stringify(patch||{})}); };
+  window.mcqStmtNotes=function(customer,month){ return _authFetch('/api/stmt/notes?customer='+encodeURIComponent(customer||'')+'&month='+encodeURIComponent(month||'')); };
+  window.mcqStmtRead=function(id,again){ return _authFetch('/api/stmt/notes/'+encodeURIComponent(id)+'/read',{method:'POST',body:JSON.stringify({again:!!again})}); };
+  window.mcqStmtSave=function(id,payload){ return _authFetch('/api/stmt/notes/'+encodeURIComponent(id),{method:'POST',body:JSON.stringify(payload||{})}); };
+  window.mcqStmtDelete=function(id){ return _authFetch('/api/stmt/notes/'+encodeURIComponent(id)+'/delete',{method:'POST',body:'{}'}); };
+  // a photo goes up as a real file part (a form field caps at 500 KB)
+  window.mcqStmtUpload=function(customer,month,blob){
+    return new Promise(function(res){
+      var fd=new FormData(); fd.append('customer',customer); fd.append('month',month); fd.append('image',blob,'note.jpg');
+      var tok=(window.localStorage&&localStorage.getItem('mcq_token'))||'';
+      var x=new XMLHttpRequest(); x.open('POST',(BASE||'')+'/api/stmt/notes');
+      x.setRequestHeader('Authorization','Bearer '+tok);
+      x.onload=function(){ var j={}; try{ j=JSON.parse(x.responseText||'{}'); }catch(e){} if(x.status>=300&&j.ok!==false) j={ok:false,error:'upload failed ('+x.status+')'}; res(j); };
+      x.onerror=function(){ res({ok:false,error:'network'}); };
+      x.send(fd);
+    });
+  };
+  // photos need the sign-in header, so they come down as blobs (cached for the session)
+  var _stmtPh={};
+  window.mcqStmtPhoto=function(id,thumb){
+    var k=id+(thumb?':t':''); if(_stmtPh[k]) return _stmtPh[k];
+    var tok=(window.localStorage&&localStorage.getItem('mcq_token'))||'';
+    _stmtPh[k]=fetch((BASE||'')+'/api/stmt/photo/'+encodeURIComponent(id)+(thumb?'?thumb=1':''),{headers:{Authorization:'Bearer '+tok}})
+      .then(function(r){ if(!r.ok) throw new Error('photo '+r.status); return r.blob(); })
+      .then(function(b){ return URL.createObjectURL(b); })
+      .catch(function(e){ delete _stmtPh[k]; throw e; });
+    return _stmtPh[k];
+  };
   // ---- TEMPERATURE CHECK: one shared sheet + each store's own daily readings ----
   window.mcqTempDoc=function(){ return _authFetch('/api/temp-check'); };
   window.mcqTempOps=function(ops){ return _authFetch('/api/temp-check/op',{method:'POST',body:JSON.stringify({ops:ops||[]})}); };

@@ -129,6 +129,12 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE TABLE IF NOT EXISTS temp_logs (
   store_id TEXT, day TEXT, data_json TEXT, updated_at TEXT, updated_by TEXT,
   PRIMARY KEY (store_id, day));
+-- restaurant statements: one row per photographed DELIVERY NOTE. The photo lives in
+-- ImageKit (one folder per customer); what the AI read and any hand correction is data_json.
+CREATE TABLE IF NOT EXISTS delivery_notes (
+  id TEXT PRIMARY KEY, customer_id TEXT, month TEXT, cloud_id TEXT, filename TEXT, sha TEXT,
+  status TEXT, data_json TEXT, created_at TEXT, created_by TEXT, updated_at TEXT, updated_by TEXT);
+CREATE INDEX IF NOT EXISTS idx_dnotes_cm ON delivery_notes(customer_id, month);
 -- inbox / messaging (scales with employee count; kept OUT of the per-store state blob)
 CREATE TABLE IF NOT EXISTS messages (
   id INTEGER PRIMARY KEY AUTOINCREMENT, store_id TEXT,
@@ -2811,3 +2817,111 @@ def write_audit(user, store_id, action, entity_type, entity_id, before, after):
                   json.dumps(before) if before is not None else None,
                   json.dumps(after) if after is not None else None, now()))
     conn.commit(); conn.close()
+
+
+# ---------- restaurant statements: photographed delivery notes ----------
+def _dnote_row(r):
+    try: data = json.loads(r['data_json']) if r['data_json'] else None
+    except Exception: data = None
+    return {'id': r['id'], 'customer': r['customer_id'], 'month': r['month'],
+            'status': r['status'], 'data': data, 'hasPhoto': bool(r['cloud_id'] or r['filename']),
+            'createdAt': r['created_at'], 'createdBy': r['created_by'],
+            'updatedAt': r['updated_at'], 'updatedBy': r['updated_by']}
+
+
+def dnote_find_sha(customer_id, sha):
+    """The note already holding this exact photo, if any — the same picture sent twice
+    must not be paid for twice, nor counted twice on the statement."""
+    conn = connect()
+    try:
+        r = conn.execute('SELECT * FROM delivery_notes WHERE customer_id=? AND sha=?', (customer_id, sha)).fetchone()
+        return _dnote_row(r) if r else None
+    finally:
+        conn.close()
+
+
+def dnote_add(note_id, customer_id, month, cloud_id, filename, sha, user):
+    conn = connect()
+    try:
+        t = now()
+        conn.execute('INSERT INTO delivery_notes(id,customer_id,month,cloud_id,filename,sha,status,data_json,'
+                     'created_at,created_by,updated_at,updated_by) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
+                     (note_id, customer_id, month, cloud_id or '', filename or '', sha or '', 'pending', None, t, user, t, user))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def dnote_get(note_id, with_storage=False):
+    conn = connect()
+    try:
+        r = conn.execute('SELECT * FROM delivery_notes WHERE id=?', (note_id,)).fetchone()
+        if not r: return None
+        out = _dnote_row(r)
+        if with_storage:
+            out['_cloud_id'] = r['cloud_id']; out['_filename'] = r['filename']
+        return out
+    finally:
+        conn.close()
+
+
+def dnote_list(customer_id, month):
+    conn = connect()
+    try:
+        rows = conn.execute('SELECT * FROM delivery_notes WHERE customer_id=? AND month=? ORDER BY created_at, id',
+                            (customer_id, month)).fetchall()
+        return [_dnote_row(r) for r in rows]
+    finally:
+        conn.close()
+
+
+def dnote_months(customer_id):
+    """Months that have notes, newest first, with a count — the month picker."""
+    conn = connect()
+    try:
+        rows = conn.execute('SELECT month, COUNT(*) AS n FROM delivery_notes WHERE customer_id=? '
+                            'GROUP BY month ORDER BY month DESC', (customer_id,)).fetchall()
+        return [{'month': r['month'], 'count': int(r['n'])} for r in rows]
+    finally:
+        conn.close()
+
+
+def dnote_save(note_id, status, data, user, month=None):
+    conn = connect()
+    try:
+        if month:
+            conn.execute('UPDATE delivery_notes SET status=?, data_json=?, month=?, updated_at=?, updated_by=? WHERE id=?',
+                         (status, json.dumps(data) if data is not None else None, month, now(), user, note_id))
+        else:
+            conn.execute('UPDATE delivery_notes SET status=?, data_json=?, updated_at=?, updated_by=? WHERE id=?',
+                         (status, json.dumps(data) if data is not None else None, now(), user, note_id))
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def dnote_claim(note_id, user, again=False):
+    """Mark a note as being read, but only if nobody else already is — two people pressing
+    Create at once must not pay for the same photo twice. True when this caller won.
+    A read that died half way (server restart) is free to claim again after 3 minutes;
+    `again` re-reads a note that was already read (the "Read again" button)."""
+    stale = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(time.time() + 8 * 3600 - 180))
+    ok = "('pending','error','read')" if again else "('pending','error')"
+    conn = connect()
+    try:
+        cur = conn.execute("UPDATE delivery_notes SET status='reading', updated_at=?, updated_by=? "
+                           "WHERE id=? AND (status IN " + ok + " OR (status='reading' AND updated_at<?))",
+                           (now(), user, note_id, stale))
+        conn.commit()
+        return (cur.rowcount or 0) > 0
+    finally:
+        conn.close()
+
+
+def dnote_delete(note_id):
+    conn = connect()
+    try:
+        conn.execute('DELETE FROM delivery_notes WHERE id=?', (note_id,))
+        conn.commit()
+    finally:
+        conn.close()

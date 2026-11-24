@@ -9,10 +9,12 @@ Run standalone (local API only):
   cd server && python3 -m pip install -r requirements.txt
   python3 app.py            # http://localhost:8001
 """
-import os, sys, json, time, secrets, base64, re, hmac, hashlib, urllib.request, urllib.error
+import os, io, sys, json, time, secrets, base64, re, hmac, hashlib, urllib.request, urllib.error
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))   # so `import db` works when imported as server.app too
 import db
 import cloudstore
+import ai
+import statements
 import temp_seed
 import meat_catalog
 import ssl as _ssl
@@ -69,6 +71,7 @@ def health():
     # the caller's login first and so always answers 401 to an anonymous probe.
     return jsonify(ok=True, time=db.now(), db_bytes=size, stores=len(db.STORES), cloud=cloud,
                    sso=bool(db.SSO_SECRET), people_api=bool(db.MASTER_API_KEY),
+                   ai=(ai.MODEL if ai.configured() else None),
                    rev=(os.environ.get('RENDER_GIT_COMMIT') or '')[:8] or None)
 
 # ---------- 9:30 PM daily digest, triggerable by an external cron (cron-job.org) ----------
@@ -2031,47 +2034,14 @@ def password_reset():
     if res.get('error'): return jsonify(ok=False, error=res['error']), 400
     return jsonify(ok=True, **res)
 
-# ---------- AI Vision (OpenAI / ChatGPT) — API key stays on the SERVER (OPENAI_API_KEY) ----------
-def _openai_vision(image_bytes, mime, prompt, max_tokens=220):
-    key = os.environ.get('OPENAI_API_KEY', '')
-    if not key: return None, 'OPENAI_API_KEY not set on the server'
-    b64 = base64.b64encode(image_bytes).decode('ascii')
-    payload = {
-        'model': os.environ.get('OPENAI_VISION_MODEL', 'gpt-4o-mini'),
-        'temperature': 0, 'max_tokens': max_tokens,
-        'messages': [{'role': 'user', 'content': [
-            {'type': 'text', 'text': prompt},
-            {'type': 'image_url', 'image_url': {'url': 'data:' + (mime or 'image/jpeg') + ';base64,' + b64, 'detail': 'high'}}
-        ]}],
-    }
-    req = urllib.request.Request('https://api.openai.com/v1/chat/completions',
-        data=json.dumps(payload).encode('utf-8'),
-        headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'}, method='POST')
-    try:
-        with urllib.request.urlopen(req, timeout=40, context=_TLS) as resp:
-            out = json.loads(resp.read().decode('utf-8'))
-        return out['choices'][0]['message']['content'], None
-    except urllib.error.HTTPError as e:
-        return None, 'openai ' + str(e.code) + ' ' + e.read().decode('utf-8', 'ignore')[:160]
-    except Exception as e:
-        return None, str(e)
+# ---------- AI (Claude Haiku 5.5) — key stays on the SERVER (ANTHROPIC_API_KEY) ----------
+# All model calls go through server/ai.py; these two names are kept so every caller reads
+# the same as before.
+def _ai_vision(image_bytes, mime, prompt, effort='low'):
+    return ai.vision(image_bytes, mime, prompt, effort=effort)
 
-def _openai_chat(messages, max_tokens=700):
-    key = os.environ.get('OPENAI_API_KEY', '')
-    if not key: return None, 'OPENAI_API_KEY not set on the server'
-    payload = {'model': os.environ.get('OPENAI_CHAT_MODEL', 'gpt-4o-mini'),
-               'temperature': 0, 'max_tokens': max_tokens, 'messages': messages}
-    req = urllib.request.Request('https://api.openai.com/v1/chat/completions',
-        data=json.dumps(payload).encode('utf-8'),
-        headers={'Authorization': 'Bearer ' + key, 'Content-Type': 'application/json'}, method='POST')
-    try:
-        with urllib.request.urlopen(req, timeout=40, context=_TLS) as resp:
-            out = json.loads(resp.read().decode('utf-8'))
-        return out['choices'][0]['message']['content'], None
-    except urllib.error.HTTPError as e:
-        return None, 'openai ' + str(e.code) + ' ' + e.read().decode('utf-8', 'ignore')[:160]
-    except Exception as e:
-        return None, str(e)
+def _ai_chat(messages, effort='low'):
+    return ai.chat(messages, effort=effort)
 
 def _extract_json(s):
     if not s: return None
@@ -2093,13 +2063,13 @@ def vision_temp():
               "Read the MAIN temperature number exactly as shown, including any minus sign and decimal point. "
               "If no temperature number is legible, set readable=false."
               % (typ, (' — ' + equip) if equip else ''))
-    content, err = _openai_vision(f.read(), f.mimetype, prompt)
+    content, err = _ai_vision(f.read(), f.mimetype, prompt)
     if err is not None: return jsonify(readable=False, fallback=True, error=err), 200
     d = _extract_json(content) or {}
     return jsonify(temperature=d.get('temperature'), displayText=d.get('displayText'),
                    text=str(d.get('displayText') or ''), confidence=d.get('confidence'),
                    readable=bool(d.get('readable', d.get('temperature') is not None)),
-                   source='ChatGPT Vision', model=os.environ.get('OPENAI_VISION_MODEL', 'gpt-4o-mini'))
+                   source='Claude Vision', model=ai.MODEL)
 
 @api.route('/api/vision-text', methods=['POST'])
 def vision_text():
@@ -2108,9 +2078,9 @@ def vision_text():
     if not f: return jsonify(text='', error='no image'), 400
     prompt = request.form.get('prompt') or ("Read all visible text and numbers in this photo (product labels, "
              "expiry / use-by dates, prices, weights). Return them as plain text, one item per line. No commentary.")
-    content, err = _openai_vision(f.read(), f.mimetype, prompt, max_tokens=400)
+    content, err = _ai_vision(f.read(), f.mimetype, prompt)
     if err is not None: return jsonify(text='', error=err), 200
-    return jsonify(text=content or '', source='ChatGPT Vision')
+    return jsonify(text=content or '', source='Claude Vision')
 
 # ---------- AI Assistant — parse a manager's instruction into ONE structured action ----------
 # PARSE ONLY: the browser then confirms + executes via the normal store-scoped endpoints,
@@ -2147,7 +2117,7 @@ def ai_command():
         "Stores: " + ', '.join(stores) + "\n"
         "Employees (name @ store): " + '; '.join(
             '%s @ %s' % (r.get('name', ''), r.get('store', '')) for r in roster if r.get('name')))
-    content, err = _openai_chat([{'role': 'system', 'content': sys_prompt},
+    content, err = _ai_chat([{'role': 'system', 'content': sys_prompt},
                                  {'role': 'user', 'content': text}])
     if err is not None:
         return jsonify(ok=False, fallback=True, error=err), 200   # → browser uses its local parser
@@ -2237,6 +2207,285 @@ def _auto_clean_loop():
         except Exception:
             pass
         _time.sleep(3600)
+
+# ============================================================================
+# RESTAURANT STATEMENTS — photographed delivery notes -> a monthly statement.
+#
+# A month's carbon-copy delivery notes are photographed, Claude reads each one,
+# every line is re-priced from the price list, and the month is added up day by
+# day. The pure logic is in statements.py; this is storage, access and the AI call.
+#
+# Who: Super, plus managers of the stores a customer lists (none by default).
+# Photos: ONE ImageKit folder per customer (/mcq/invoices/<customer>), chosen here
+# from the customer's own config, never from anything the browser sends.
+# ============================================================================
+STMT_KEY = 'stmt_config'
+_STMT_MONTH = re.compile(r'^\d{4}-(0[1-9]|1[0-2])$')
+
+
+def _stmt_config():
+    cfg = db.get_setting(STMT_KEY)
+    if not isinstance(cfg, dict) or not cfg.get('products') or not cfg.get('customers'):
+        cfg = json.loads(json.dumps(statements.DEFAULT_CONFIG))
+    return cfg
+
+
+def _stmt_level(au, cust):
+    role = au.get('role')
+    if role == 'super':
+        return 'edit'
+    if role == 'admin' and au.get('store_id') and au.get('store_id') in (cust.get('stores') or []):
+        return 'edit'
+    return None
+
+
+def _stmt_customer(au, cfg, cid, need='edit'):
+    cust = next((c for c in cfg.get('customers') or [] if c.get('id') == cid), None)
+    if not cust: abort(404)
+    if not _stmt_level(au, cust): abort(403)
+    if need == 'edit': require_write(au)
+    return cust
+
+
+def _stmt_month(v):
+    v = str(v or '').strip()
+    if not _STMT_MONTH.match(v): abort(400)
+    return v
+
+
+def _stmt_note_out(n, cfg):
+    """A note as the page needs it: what was read plus what needs checking."""
+    if n.get('status') == 'read' and n.get('data'):
+        n['warnings'] = statements.note_warnings(n['data'], cfg, n['month'])
+    else:
+        n['warnings'] = []
+    return n
+
+
+@api.route('/api/stmt/config', methods=['GET'])
+def stmt_config_get():
+    au = require_auth()
+    cfg = _stmt_config()
+    custs = [c for c in cfg.get('customers') or [] if _stmt_level(au, c)]
+    if not custs: abort(403)
+    return jsonify(ok=True, supplier=cfg.get('supplier') or '', abn=cfg.get('abn') or '',
+                   customers=custs, products=cfg.get('products') or [],
+                   canConfig=(au.get('role') == 'super'), ai=bool(ai.configured()), today=db.today_str())
+
+
+@api.route('/api/stmt/config', methods=['POST'])
+def stmt_config_save():
+    """Super edits the price list and names. Product ids are kept (never reused), so a
+    price change re-prices every statement built after it, and nothing else moves."""
+    au = require_auth(); require_write(au)
+    if au.get('role') != 'super': abort(403)
+    d = request.get_json(force=True, silent=True) or {}
+    cfg = _stmt_config()
+    if 'supplier' in d: cfg['supplier'] = str(d.get('supplier') or '').strip()[:80] or cfg.get('supplier')
+    if 'abn' in d: cfg['abn'] = re.sub(r'[^0-9 ]', '', str(d.get('abn') or ''))[:20].strip()
+    if isinstance(d.get('customers'), list):
+        known = {c['id']: c for c in cfg.get('customers') or []}
+        for c in d['customers']:
+            k = known.get(str((c or {}).get('id') or ''))
+            if not k: continue
+            nm = str(c.get('name') or '').strip()[:80]
+            if nm: k['name'] = nm
+            if isinstance(c.get('stores'), list):
+                k['stores'] = [x for x in c['stores'] if x in db.STORES]
+    if isinstance(d.get('products'), list):
+        known = {p['id']: p for p in cfg.get('products') or []}
+        for p in d['products']:
+            k = known.get(str((p or {}).get('id') or ''))
+            if not k: continue
+            nm = str(p.get('name') or '').strip()[:60]
+            if nm: k['name'] = nm
+            price = statements.to_number(p.get('price'))
+            if price is not None and 0 <= price <= 1000: k['price'] = round(price, 2)
+            if isinstance(p.get('aliases'), list):
+                k['aliases'] = [str(a).strip()[:30] for a in p['aliases'] if str(a).strip()][:12]
+    db.set_setting(STMT_KEY, cfg)
+    try: db.write_audit(who(au), 'ALL', 'update', 'stmt-config', 'prices', None, {'products': cfg.get('products')})
+    except Exception: pass
+    return jsonify(ok=True, products=cfg.get('products'), customers=cfg.get('customers'), supplier=cfg.get('supplier'))
+
+
+@api.route('/api/stmt/notes', methods=['GET'])
+def stmt_notes():
+    """Everything the page shows for one customer and month: the notes, the month-wide
+    checks and the statement itself, built from the notes that have been read."""
+    au = require_auth()
+    cfg = _stmt_config()
+    cust = _stmt_customer(au, cfg, request.args.get('customer'), need='view')
+    month = _stmt_month(request.args.get('month'))
+    notes = [_stmt_note_out(n, cfg) for n in db.dnote_list(cust['id'], month)]
+    done = [n for n in notes if n['status'] == 'read' and n.get('data')]
+    return jsonify(ok=True, customer=cust['id'], month=month, notes=notes,
+                   checks=statements.set_warnings(done),
+                   statement=statements.build_statement(done, cfg, cust['id'], month),
+                   months=db.dnote_months(cust['id']))
+
+
+@api.route('/api/stmt/notes', methods=['POST'])
+def stmt_note_add():
+    """One photo in. Sent as a real file part (never base64 in a form field)."""
+    au = require_auth()
+    cfg = _stmt_config()
+    cust = _stmt_customer(au, cfg, request.form.get('customer'))
+    month = _stmt_month(request.form.get('month'))
+    f = request.files.get('image')
+    if not f: return jsonify(ok=False, error='no photo'), 400
+    raw = f.read()
+    if not raw or len(raw) > 15 * 1024 * 1024:
+        return jsonify(ok=False, error='photo is empty or larger than 15 MB'), 400
+    sha = hashlib.sha256(raw).hexdigest()
+    dup = db.dnote_find_sha(cust['id'], sha)
+    if dup:
+        return jsonify(ok=True, duplicate=True, note=_stmt_note_out(dup, cfg))
+    try:
+        data, mime = ai.prepare_image(raw, f.mimetype)
+    except ValueError:
+        return jsonify(ok=False, error='unsupported photo format — take it as JPEG or PNG'), 400
+    note_id = 'dn-' + secrets.token_hex(8)
+    folder = statements.folder_for(cust)
+    cloud_id, filename = '', ''
+    if cloudstore.ENABLED:
+        try:
+            cloud_id = cloudstore.put_photo(note_id + '.jpg', data, folder=folder)
+        except Exception as e:
+            return jsonify(ok=False, error='could not store the photo (%s)' % str(e)[:80]), 502
+    else:
+        rel = os.path.join('invoices', folder.rsplit('/', 1)[-1], note_id + '.jpg')
+        os.makedirs(os.path.join(db.UPLOADS, os.path.dirname(rel)), exist_ok=True)
+        with open(os.path.join(db.UPLOADS, rel), 'wb') as fh:
+            fh.write(data)
+        filename = rel
+    db.dnote_add(note_id, cust['id'], month, cloud_id, filename, sha, who(au))
+    return jsonify(ok=True, note=_stmt_note_out(db.dnote_get(note_id), cfg))
+
+
+def _stmt_photo_bytes(n):
+    if n.get('_cloud_id'):
+        return cloudstore.get_photo(n['_cloud_id'])
+    path = os.path.join(db.UPLOADS, n.get('_filename') or '')
+    if not n.get('_filename') or not os.path.isfile(path): raise FileNotFoundError
+    with open(path, 'rb') as fh:
+        return fh.read()
+
+
+def _stmt_note_for(au, note_id, need='edit'):
+    n = db.dnote_get(note_id, with_storage=True)
+    if not n: abort(404)
+    cfg = _stmt_config()
+    _stmt_customer(au, cfg, n['customer'], need=need)
+    return n, cfg
+
+
+@api.route('/api/stmt/notes/<note_id>/read', methods=['POST'])
+def stmt_note_read(note_id):
+    """Claude reads one note. One call per note so the page can show progress and a single
+    bad photo never holds up the other 29."""
+    au = require_auth()
+    n, cfg = _stmt_note_for(au, note_id)
+    again = bool((request.get_json(force=True, silent=True) or {}).get('again'))
+    if not db.dnote_claim(note_id, who(au), again=again):
+        return jsonify(ok=True, busy=True, note=_stmt_note_out(db.dnote_get(note_id), cfg))
+    try:
+        img = _stmt_photo_bytes(n)
+    except Exception:
+        db.dnote_save(note_id, 'error', {'error': 'photo could not be loaded'}, who(au))
+        return jsonify(ok=False, error='photo could not be loaded', note=_stmt_note_out(db.dnote_get(note_id), cfg))
+    content, err = ai.vision(img, 'image/jpeg', statements.ai_prompt(cfg, n['month']), effort='medium')
+    if err is not None:
+        db.dnote_save(note_id, 'error', {'error': err}, who(au))
+        return jsonify(ok=False, error=err, note=_stmt_note_out(db.dnote_get(note_id), cfg))
+    parsed = _extract_json(content)
+    if parsed is None:
+        db.dnote_save(note_id, 'error', {'error': 'the AI answer could not be understood'}, who(au))
+        return jsonify(ok=False, error='the AI answer could not be understood', note=_stmt_note_out(db.dnote_get(note_id), cfg))
+    data = statements.normalise(parsed, cfg, n['month'])
+    data['by'] = 'ai'; data['model'] = ai.MODEL
+    db.dnote_save(note_id, 'read', data, who(au))
+    return jsonify(ok=True, note=_stmt_note_out(db.dnote_get(note_id), cfg))
+
+
+@api.route('/api/stmt/notes/<note_id>', methods=['POST'])
+def stmt_note_edit(note_id):
+    """A person corrects what was read, or confirms it is right. Whatever they save is the
+    record; it is re-checked against the price list like anything the AI read."""
+    au = require_auth()
+    n, cfg = _stmt_note_for(au, note_id)
+    d = request.get_json(force=True, silent=True) or {}
+    src = d.get('data') if isinstance(d.get('data'), dict) else {}
+    prod_ids = {p['id'] for p in cfg.get('products') or []}
+    lines = []
+    for ln in (src.get('lines') or [])[:30]:
+        if not isinstance(ln, dict): continue
+        qty = statements.to_number(ln.get('qty')); amount = statements.to_number(ln.get('amount'))
+        pid = ln.get('product') if ln.get('product') in prod_ids else None
+        item = str(ln.get('item') or '').strip()[:60]
+        if qty is None and amount is None and not item and not pid: continue
+        if qty is not None and not (0 <= qty <= 10000): return jsonify(ok=False, error='quantity out of range'), 400
+        lines.append({'qty': qty, 'item': item, 'product': pid, 'amount': amount})
+    raw_date = str(src.get('date') or '').strip()[:20]
+    digits = re.sub(r'\D', '', str(src.get('number') or ''))[:10]
+    old = n.get('data') or {}
+    data = {'number': str(int(digits)) if digits else '', 'date': statements.parse_date(raw_date, n['month']),
+            'raw_date': raw_date, 'to': str(src.get('to') or old.get('to') or '').strip()[:60],
+            'from': str(src.get('from') or old.get('from') or '').strip()[:60],
+            'lines': lines, 'total': statements.to_number(src.get('total')), 'readable': True,
+            'checked': bool(d.get('checked', True)), 'by': 'person',
+            'readBy': old.get('by') or '', 'model': old.get('model') or ''}
+    if raw_date and not data['date']:
+        return jsonify(ok=False, error='date not understood — use DD/MM/YY'), 400
+    month = None
+    if d.get('move') and data['date'] and data['date'][:7] != n['month']:
+        month = data['date'][:7]          # dated in another month: file it under that month
+    db.dnote_save(note_id, 'read', data, who(au), month=month)
+    return jsonify(ok=True, moved=month, note=_stmt_note_out(db.dnote_get(note_id), cfg))
+
+
+@api.route('/api/stmt/notes/<note_id>/delete', methods=['POST'])
+def stmt_note_delete(note_id):
+    au = require_auth()
+    n, cfg = _stmt_note_for(au, note_id)
+    if n.get('_cloud_id'):
+        try: cloudstore.delete_photo(n['_cloud_id'])
+        except Exception: pass
+    elif n.get('_filename'):
+        try: os.remove(os.path.join(db.UPLOADS, n['_filename']))
+        except Exception: pass
+    db.dnote_delete(note_id)
+    try: db.write_audit(who(au), 'ALL', 'delete', 'delivery-note', note_id, None,
+                        {'customer': n['customer'], 'month': n['month'], 'number': (n.get('data') or {}).get('number')})
+    except Exception: pass
+    return jsonify(ok=True)
+
+
+@api.route('/api/stmt/photo/<note_id>', methods=['GET'])
+def stmt_photo(note_id):
+    au = require_auth()
+    n, _cfg = _stmt_note_for(au, note_id, need='view')
+    thumb = request.args.get('thumb') == '1'      # the grid of 30 photos: small copies
+    key = ('stmt:t:' if thumb else 'stmt:') + note_id
+    hit = _pc_get(key)
+    if hit is not None:
+        data = hit[0]
+    else:
+        try: data = _stmt_photo_bytes(n)
+        except Exception: abort(404)
+        if thumb:
+            try:
+                from PIL import Image
+                im = Image.open(io.BytesIO(data)); im.thumbnail((420, 420))
+                if im.mode not in ('RGB', 'L'): im = im.convert('RGB')
+                out = io.BytesIO(); im.save(out, 'JPEG', quality=72); data = out.getvalue()
+            except Exception:
+                pass
+        _pc_put(key, data, 'image/jpeg')
+    resp = Response(data, mimetype='image/jpeg')
+    resp.headers['Cache-Control'] = 'private, max-age=86400'
+    return resp
+
 
 if __name__ == '__main__':
     create_app().run(host='0.0.0.0', port=8001, debug=True)

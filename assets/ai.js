@@ -34,7 +34,7 @@
     img.onerror=()=>{ URL.revokeObjectURL(url); res({neat:75,full:75,pres:75,avg:75,risk:'Medium'}); };
     img.src=url; }); }
   function imgDims(file){ return new Promise((res)=>{ const i=new Image(),u=URL.createObjectURL(file); i.onload=()=>{URL.revokeObjectURL(u);res({w:i.naturalWidth||0,h:i.naturalHeight||0});}; i.onerror=()=>{URL.revokeObjectURL(u);res({w:0,h:0});}; i.src=u; }); }
-  // OCR via ChatGPT Vision (server endpoint, key on server). No on-device OCR.
+  // OCR via Claude Vision (server endpoint, key on server). No on-device OCR.
   async function aiOcr(file){
     const ep=window.MCQ_VISION_TEXT_ENDPOINT; if(!ep||!file) return '';
     try{ const up=(window.ckDownscaleBlob?await ckDownscaleBlob(file,1280,0.72).catch(()=>file):file);

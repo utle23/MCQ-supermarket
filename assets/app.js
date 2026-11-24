@@ -974,6 +974,16 @@ function render(){
     }
     return renderLauncher();
   }
+  // Restaurant Statements: its own app (full window). The server decides who may open it.
+  if(mod!=='statements'){ try{ document.body.classList.remove('on-stmt'); }catch(e){} }
+  if(mod==='statements'){
+    if(typeof renderStatements!=='function'){
+      const c=$('#content'); if(c) c.innerHTML='<div class="empty"><div class="e-ic">⏳</div>Loading…</div>';
+      ensureLazyModules().then(()=>{ if(typeof renderStatements==='function') renderStatements(); }).catch(()=>{});
+      return;
+    }
+    return renderStatements();
+  }
   if(isBa()) return renderBaView();   // Chú Ba only ever sees the read-only checklist viewer
   if(isEmployee()){   // individual staff — personal workspace only
     const own={home:renderEmployeeHome, profile:renderEmployeeProfile, myvios:renderMyViolations, myrewards:renderMyPerks};
@@ -1411,7 +1421,7 @@ function ensureJsPDF(){ return (window.jspdf&&window.jspdf.jsPDF)?Promise.resolv
 function _assetVer(){ try{ const s=[...document.scripts].find(x=>/assets\/app\.js/.test(x.src||'')); const m=s&&(s.src.match(/\?v=[\w.-]+/)); return m?m[0]:''; }catch(e){ return ''; } }
 let _lazyModsP;
 function ensureLazyModules(){ if(_lazyModsP) return _lazyModsP; const v=_assetVer();
-  _lazyModsP=Promise.all(['assets/pages2.js','assets/ai.js','assets/temperature.js'].map(a=>mcqLoadScript(a+v).catch(()=>false)));
+  _lazyModsP=Promise.all(['assets/pages2.js','assets/ai.js','assets/temperature.js','assets/statements.js'].map(a=>mcqLoadScript(a+v).catch(()=>false)));
   return _lazyModsP; }
 window.ensureJsPDF=ensureJsPDF; window.ensureChart=ensureChart; window.ensureLazyModules=ensureLazyModules;
 

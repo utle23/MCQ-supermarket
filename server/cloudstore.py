@@ -94,8 +94,9 @@ def _shrink_image(data):
     return out.getvalue()
 
 # ---------- photos (already client-compressed; always a single asset) ----------
-def put_photo(pid, data):
-    fid, url = _ik_upload(data, '/mcq/photos', pid)
+def put_photo(pid, data, folder='/mcq/photos'):
+    # folder is chosen by the SERVER (e.g. /mcq/invoices/beechboro), never by the browser
+    fid, url = _ik_upload(data, folder, pid)
     return 'ik|' + fid + '|' + url
 
 def get_photo(cloud_id):

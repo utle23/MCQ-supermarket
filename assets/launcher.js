@@ -17,16 +17,38 @@ const MCQ_DEVOPS_URL  = 'https://mcqtask.onrender.com';
 const MCQ_DEVOPS_HREF = '/go/devops';     // mints a signed ticket, then posts it to MCQ DevOps
 
 function mcqApps(){
-  return [
+  const apps=[
     { id:'checklist', name:'Store Checklist', desc:'Daily store checks, by store',
       icon:'<i class="fas fa-clipboard-check"></i>', kind:'here', go:'home' },
     { id:'devops', name:'MCQ DevOps', desc:'IT work items, issues and fixes',
       icon:'<i class="fas fa-screwdriver-wrench"></i>', kind:'away', href:MCQ_DEVOPS_HREF },
   ];
+  if(mcqStmtAllowed()) apps.push({ id:'statements', name:'Restaurant Statements', desc:'Delivery notes into a monthly statement',
+      icon:'<i class="fas fa-file-invoice-dollar"></i>', kind:'here', go:'statements' });
+  return apps;
+}
+/* Restaurant Statements is for Super, and for managers of the stores a Super has
+   granted. A manager's access is asked of the server once; the tile appears when
+   the answer comes back, so the launcher never waits on it. */
+function mcqStmtAllowed(){
+  try{
+    const a=(window.State&&State.account)||{};
+    if(a.role==='super') return true;
+    if(a.role!=='admin') return false;
+    if(window.__mcqStmtOk===undefined && typeof mcqStmtConfig==='function'){
+      window.__mcqStmtOk=null;
+      mcqStmtConfig().then(r=>{ window.__mcqStmtOk=!!(r&&r.ok);
+        if(window.__mcqStmtOk && State.route && State.route.mod==='apps') renderLauncher(); }).catch(()=>{ window.__mcqStmtOk=false; });
+    }
+    return window.__mcqStmtOk===true;
+  }catch(e){ return false; }
 }
 /* which app the person is looking at right now */
 function mcqCurrentApp(){
-  try{ return (State.route && State.route.mod==='apps') ? '' : 'checklist'; }catch(e){ return ''; }
+  try{
+    const m=State.route && State.route.mod;
+    return m==='apps' ? '' : (m==='statements' ? 'statements' : 'checklist');
+  }catch(e){ return ''; }
 }
 
 function mcqGreeting(){

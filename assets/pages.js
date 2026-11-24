@@ -2173,8 +2173,8 @@ function ckDownscaleBlob(file,max,q){ return new Promise(res=>{ const img=new Im
   try{ const c=document.createElement('canvas'); c.width=w; c.height=h; c.getContext('2d').drawImage(img,0,0,w,h);
     c.toBlob(b=>{ try{URL.revokeObjectURL(img.src);}catch(e){} res(b||file); },'image/jpeg',q||0.72); }
   catch(e){ res(file); } }; img.onerror=()=>res(file); img.src=URL.createObjectURL(file); }); }
-/* AI Vision temperature reader — ChatGPT (OpenAI) via the server endpoint.
-   The OpenAI key lives ONLY on the server (env OPENAI_API_KEY); nothing runs on-device. */
+/* AI Vision temperature reader — Claude via the server endpoint.
+   The Claude key lives ONLY on the server (env ANTHROPIC_API_KEY); nothing runs on-device. */
 async function ckVisionValue(fileName,file,r,i){
   const endpoint=window.MCQ_AI_VISION_ENDPOINT||localStorage.getItem('mcq_ai_vision_endpoint');
   if(!endpoint||!file) return {error:true,message:'AI Vision is not available here. Enter the temperature manually.',manualAllowed:true};
@@ -2193,10 +2193,10 @@ async function ckVisionValue(fileName,file,r,i){
     if(Number.isFinite(v)){
       const rawText=String(data.displayText||data.text||data.rawText||v);
       const implicit=ckImplicitTempSuggestion(v,r.meta.type,rawText);
-      if(implicit) return {error:true,suggestedValue:implicit.value,message:implicit.message,source:data.source||'ChatGPT Vision',text:rawText,rawReading:rawText,confidence,quality:{model:data.model||'',ambiguous:true},candidates:[v,implicit.value],manualAllowed:true};
-      return {value:v,source:data.source||'ChatGPT Vision',text:rawText,rawReading:rawText,confidence,quality:{model:data.model||''}};
+      if(implicit) return {error:true,suggestedValue:implicit.value,message:implicit.message,source:data.source||'Claude Vision',text:rawText,rawReading:rawText,confidence,quality:{model:data.model||'',ambiguous:true},candidates:[v,implicit.value],manualAllowed:true};
+      return {value:v,source:data.source||'Claude Vision',text:rawText,rawReading:rawText,confidence,quality:{model:data.model||''}};
     }
-    return {error:true,message:data.message||'AI Vision could not read a temperature. Retake a closer photo of the display, or enter it manually.',source:data.source||'ChatGPT Vision',text:data.displayText||data.text||'',confidence,manualAllowed:true};
+    return {error:true,message:data.message||'AI Vision could not read a temperature. Retake a closer photo of the display, or enter it manually.',source:data.source||'Claude Vision',text:data.displayText||data.text||'',confidence,manualAllowed:true};
   }catch(e){ console.warn('AI Vision failed',e); return {error:true,message:'AI Vision could not reach the server. Check the connection, then enter the temperature manually.',manualAllowed:true}; }
 }
 function ckImplicitTempSuggestion(value,type,rawText){

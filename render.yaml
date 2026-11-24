@@ -21,6 +21,8 @@ services:
         sync: false
       - key: DEPUTY_TOKEN
         sync: false
+      - key: ANTHROPIC_API_KEY    # Claude (Haiku 5.5) reads photos: temperatures, labels, delivery notes
+        sync: false
       - key: BREVO_API_KEY        # email (activation, forgot-password, alerts) — set in dashboard
         sync: false
       - key: MCQ_FROM_EMAIL
