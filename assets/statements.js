@@ -16,9 +16,10 @@ const ST_MON  = ['January','February','March','April','May','June','July','Augus
 
 function stState(){
   State.stmt = State.stmt || { cfg:null, customer:'', month:'', notes:[], checks:null, statement:null,
-    months:[], loading:false, failed:'', up:null, rd:null, showNums:true, created:false };
+    months:[], loading:false, failed:'', up:null, rd:null, showNums:true, created:false, view:stSavedView() };
   return State.stmt;
 }
+function stSavedView(){ try{ return localStorage.getItem('mcq_st_view')==='type'?'type':'photos'; }catch(e){ return 'photos'; } }
 function stMoney(v){ const n=Number(v)||0; return '$'+n.toLocaleString('en-AU',{minimumFractionDigits:2,maximumFractionDigits:2}); }
 function stQty(v){ const n=Number(v)||0; return (Math.round(n*100)/100).toString(); }
 function stMonthLabel(m){ if(!/^\d{4}-\d{2}$/.test(m||'')) return m||''; return ST_MON[+m.slice(5,7)-1]+' '+m.slice(0,4); }
@@ -173,8 +174,7 @@ function stPaintBusy(){
     ? `Uploading photo ${Math.min(b.done+1,b.total)} of ${b.total}…`
     : `Claude is reading note ${Math.min(b.done+1,b.total)} of ${b.total}…`;
   const grid=document.getElementById('st-grid');
-  if(grid && s.rd){ grid.outerHTML=stGridHTML(); stHydrate(); }
-  if(grid && s.up){ grid.outerHTML=stGridHTML(); stHydrate(); }
+  if(grid){ grid.outerHTML=(s.view==='type')?stTypeHTML():stGridHTML(); stHydrate(); }
 }
 
 /* ------------------------------------------------------------------ page */
@@ -230,48 +230,65 @@ function stShell(inner){
 }
 window.stShiftMonth=stShiftMonth; window.stState=stState;
 
-function stBodyHTML(){
-  const s=stState(), cust=stCustomer();
-  const counts={all:s.notes.length, pending:0, ok:0, issue:0, error:0, reading:0};
-  s.notes.forEach(n=>counts[stNoteState(n)]++);
-  const busy=s.up||s.rd;
-  const unread=counts.pending+counts.error+counts.reading;
-  const ready=s.notes.length && !unread;
-  const open=stOpenCount();
+function stCounts(){
+  const s=stState(), c={all:s.notes.length, pending:0, ok:0, issue:0, error:0, reading:0};
+  s.notes.forEach(n=>c[stNoteState(n)]++);
+  return c;
+}
+function stHeroHTML(){
+  const s=stState(), cust=stCustomer(), counts=stCounts();
+  const unread=counts.pending+counts.error+counts.reading, ready=s.notes.length && !unread, open=stOpenCount();
   const step=(k,t,on,done)=>`<div class="st-step ${on?'on':''} ${done?'done':''}"><span>${done?'<i class="fas fa-check"></i>':k}</span>${t}</div>`;
-  return `
-    <section class="st-hero">
+  return `<section class="st-hero" id="st-hero">
       <div>
-        <p class="st-kicker">STATEMENT · ${esc(stMonthLabel(s.month)).toUpperCase()}</p>
-        <h1>${esc((s.cfg&&s.cfg.supplier)||'')} <span>→</span> ${esc(cust.name||'')}</h1>
+        <p class="st-kicker">STATEMENT \u00b7 ${esc(stMonthLabel(s.month)).toUpperCase()}</p>
+        <h1>${esc((s.cfg&&s.cfg.supplier)||'')} <span>\u2192</span> ${esc(cust.name||'')}</h1>
         <div class="st-steps">
-          ${step(1,'Photograph the notes', !s.notes.length, s.notes.length>0)}
+          ${step(1,'Photograph or type in the notes', !s.notes.length, s.notes.length>0)}
           ${step(2,'Create statement', s.notes.length && unread, ready)}
           ${step(3,'Check & download', ready, ready && !open)}
         </div>
       </div>
       <div class="st-hero-r">
-        <div class="st-stat"><b>${counts.all}</b><span>photos</span></div>
-        <div class="st-stat"><b>${counts.ok}</b><span>read</span></div>
+        <div class="st-stat"><b>${counts.all}</b><span>notes</span></div>
+        <div class="st-stat"><b>${counts.ok}</b><span>done</span></div>
         <div class="st-stat ${open?'warn':''}"><b>${open}</b><span>to check</span></div>
         <div class="st-stat money"><b>${stMoney(s.statement?s.statement.grand_total:0)}</b><span>total so far</span></div>
       </div>
-    </section>
+    </section>`;
+}
+function stBodyHTML(){
+  const s=stState(), cust=stCustomer(), counts=stCounts();
+  const busy=s.up||s.rd;
+  const unread=counts.pending+counts.error+counts.reading;
+  const rer=stRereadable().length;
+  const dis=busy?'dis':'';
+  const typeView=s.view==='type';
+  return `
+    ${stHeroHTML()}
 
     <section class="st-card">
       <div class="st-card-h">
-        <div><h2>Delivery notes</h2><p>Every note from ${esc(stMonthLabel(s.month))}. Add them all at once from the camera roll, or one by one with the camera.</p></div>
+        <div><h2>Delivery notes</h2><p>Every note from ${esc(stMonthLabel(s.month))}. Add the photos and let Claude read them, or type them in yourself \u2014 either way the statement adds up the same.</p></div>
         <div class="st-actions">
-          <label class="st-btn ghost ${busy?'dis':''}"><input type="file" accept="image/*" multiple onchange="stAddFiles(this)" ${busy?'disabled':''}><i class="fas fa-images"></i> Add photos</label>
-          <label class="st-btn ghost ${busy?'dis':''}"><input type="file" accept="image/*" capture="environment" onchange="stAddFiles(this)" ${busy?'disabled':''}><i class="fas fa-camera"></i> Take photo</label>
+          <label class="st-btn ghost ${dis}"><input type="file" accept="image/*" multiple onchange="stAddFiles(this)" ${busy?'disabled':''}><i class="fas fa-images"></i> Add photos</label>
+          <label class="st-btn ghost ${dis}"><input type="file" accept="image/*" capture="environment" onchange="stAddFiles(this)" ${busy?'disabled':''}><i class="fas fa-camera"></i> Take photo</label>
+          <button class="st-btn ghost ${dis}" onclick="stOpenNew()"><i class="fas fa-keyboard"></i> Type in a note</button>
           <button class="st-btn go ${busy||!s.notes.length?'dis':''}" onclick="stCreate()" ${busy?'disabled':''}>
-            <i class="fas fa-wand-magic-sparkles"></i> ${unread?`Create statement <em>${unread} to read</em>`:(s.notes.length?'Create statement':'Create statement')}</button>
+            <i class="fas fa-wand-magic-sparkles"></i> Create statement${unread?` <em>${unread} to read</em>`:''}</button>
         </div>
       </div>
-      ${busy?`<div class="st-busy" id="st-busy"><div class="st-busy-txt">${s.up?'Uploading…':'Claude is reading…'}</div><div class="st-busy-bar"><i style="width:${Math.round(100*busy.done/Math.max(1,busy.total))}%"></i></div></div>`:''}
-      ${s.cfg&&s.cfg.ai===false?`<div class="st-note-warn"><i class="fas fa-circle-info"></i> AI reading is off: the server has no ANTHROPIC_API_KEY. Photos can still be added and typed in by hand.</div>`:''}
-      ${s.notes.length?stGridHTML():`<label class="st-drop ${busy?'dis':''}"><input type="file" accept="image/*" multiple onchange="stAddFiles(this)" ${busy?'disabled':''}>
-          <i class="fas fa-cloud-arrow-up"></i><b>Add this month’s delivery notes</b><span>Select all the photos at once — 30 is fine. They are kept in the ${esc(cust.name||'')} invoice folder.</span></label>`}
+      ${busy?`<div class="st-busy" id="st-busy"><div class="st-busy-txt">${s.up?'Uploading\u2026':'Claude is reading\u2026'}</div><div class="st-busy-bar"><i style="width:${Math.round(100*busy.done/Math.max(1,busy.total))}%"></i></div></div>`:''}
+      ${s.cfg&&s.cfg.ai===false?`<div class="st-note-warn"><i class="fas fa-circle-info"></i> AI reading is off: the server has no ANTHROPIC_API_KEY. Photos can still be added, and notes typed in.</div>`:''}
+      ${rer&&!busy?`<div class="st-reread"><span><i class="fas fa-bolt"></i> ${rer} note${rer===1?' was':'s were'} read by the older, cheaper AI.</span>
+          <button class="st-btn ghost" onclick="stRereadAll()"><i class="fas fa-rotate"></i> Read ${rer===1?'it':'them'} again with the stronger AI</button></div>`:''}
+      ${s.notes.length?`<div class="st-views" role="tablist">
+          <button class="${typeView?'':'on'}" onclick="stSetView('photos')" role="tab" aria-selected="${!typeView}"><i class="fas fa-images"></i> Photos</button>
+          <button class="${typeView?'on':''}" onclick="stSetView('type')" role="tab" aria-selected="${typeView}"><i class="fas fa-table"></i> Type in / correct</button>
+        </div>`:''}
+      ${s.notes.length?(typeView?stTypeHTML():stGridHTML()):`<label class="st-drop ${dis}"><input type="file" accept="image/*" multiple onchange="stAddFiles(this)" ${busy?'disabled':''}>
+          <i class="fas fa-cloud-arrow-up"></i><b>Add this month\u2019s delivery notes</b><span>Select all the photos at once \u2014 30 is fine. They are kept in the ${esc(cust.name||'')} invoice folder.</span></label>
+          <p class="st-or">or <button class="st-link" onclick="stOpenNew()"><i class="fas fa-keyboard"></i> type the notes in by hand</button></p>`}
     </section>
 
     ${stIssuesHTML()}
@@ -294,11 +311,11 @@ function stGridHTML(){
                 error:'<span class="st-chip bad"><i class="fas fa-triangle-exclamation"></i> Type it in</span>',
                 issue:'<span class="st-chip warn"><i class="fas fa-circle-exclamation"></i> Check</span>',
                 ok:`<span class="st-chip ok"><i class="fas fa-check"></i> ${d.checked?'Checked':'Read'}</span>`}[st];
-    const sub = (st==='ok'||st==='issue') && d.readable!==false
+    const sub = (st==='ok'||st==='issue') && d.readable!==false && (d.number||d.date||(d.lines||[]).length)
       ? `<b>#${esc(d.number||'?')}</b> · ${d.date?esc(stDayLabel(d.date)):'<span class="bad">no date</span>'} · ${stQty(rolls)} rolls`
       : (st==='error' ? esc(((n.data||{}).error)||'Could not be read') : 'Photo '+(i+1));
     return `<button class="st-tile ${st}" onclick="stOpen('${n.id}')">
-        <span class="st-thumb"><img data-st-photo="${n.id}" alt=""></span>
+        <span class="st-thumb">${n.hasPhoto?`<img data-st-photo="${n.id}" alt="">`:'<span class="st-hand">\u270d\ufe0f<small>Typed in</small></span>'}</span>
         ${chip}
         <span class="st-tile-sub">${sub}</span>
       </button>`;
@@ -319,7 +336,7 @@ function stIssuesHTML(){
   const items=[];
   s.notes.forEach(n=>{
     const st=stNoteState(n), d=n.data||{};
-    const tag=d.number?('Note #'+esc(d.number)):'A photo';
+    const tag=d.number?('Note #'+esc(d.number)):(n.hasPhoto?'A photo':'A typed-in note');
     if(st==='error') items.push({id:n.id,lvl:'bad',t:`${tag} could not be read — ${esc(d.error||'type it in')}`});
     if(st==='issue') (n.warnings||[]).forEach(w=>items.push({id:n.id,lvl:'warn',t:`${tag}${d.date?' ('+esc(stDayLabel(d.date))+')':''}: ${esc(w.text)}`}));
   });
@@ -394,66 +411,119 @@ function stStatementHTML(){
 function stIssued(){ const t=(typeof todayISO==='function')?todayISO():new Date().toISOString().slice(0,10); return +t.slice(8,10)+' '+ST_MON[+t.slice(5,7)-1]+' '+t.slice(0,4); }
 
 /* ------------------------------------------------------------ note editor */
-function stOpen(id){
-  const s=stState(), n=s.notes.find(x=>x.id===id); if(!n) return;
-  const d=n.data||{}, prods=stProducts();
-  const lines=(d.lines&&d.lines.length)?d.lines:[{qty:'',product:'',item:'',amount:''}];
-  const dateVal=d.date?(d.date.slice(8,10)+'/'+d.date.slice(5,7)+'/'+d.date.slice(2,4)):(d.raw_date||'');
-  const warn=(n.warnings||[]);
-  const ov=mcqModal(`${d.number?'Delivery note #'+esc(d.number):'Delivery note'}`, `
-    <div class="stn">
-      <div class="stn-ph"><div class="stn-ph-in"><span class="st-spin"></span><img id="stn-img" alt="Delivery note photo" onclick="openLightbox(this.src)"></div>
-        <small>Tap the photo to zoom</small></div>
-      <div class="stn-f">
-        ${n.status==='error'?`<div class="stn-msg bad"><i class="fas fa-triangle-exclamation"></i> ${esc(d.error||'Could not be read')} — type it in below, or read it again.</div>`:''}
-        ${d.readable===false?`<div class="stn-msg bad"><i class="fas fa-triangle-exclamation"></i> This did not look like a delivery note to Claude.</div>`:''}
-        ${warn.map(w=>`<div class="stn-msg ${d.checked?'done':'warn'}"><i class="fas ${d.checked?'fa-check':'fa-circle-exclamation'}"></i> ${esc(w.text)}</div>`).join('')}
-        <div class="stn-row">
-          <label>Note no.<input id="stn-num" inputmode="numeric" value="${esc(d.number||'')}"></label>
-          <label>Date <small>DD/MM/YY</small><input id="stn-date" value="${esc(dateVal)}" placeholder="30/10/26" oninput="stEdCalc()"></label>
-        </div>
-        <div class="stn-lines" id="stn-lines">
-          <div class="stn-lh"><span>Qty</span><span>Item</span><span>Amount on note</span><span></span></div>
-          ${lines.map(l=>stLineHTML(l,prods)).join('')}
-        </div>
-        <button class="st-link" onclick="stEdAddLine()"><i class="fas fa-plus"></i> Add a line</button>
-        <div class="stn-row">
-          <label>Total written on the note<input id="stn-total" inputmode="decimal" value="${d.total==null?'':esc(d.total)}" oninput="stEdCalc()"></label>
-          <div class="stn-calc" id="stn-calc"></div>
-        </div>
-        <label class="stn-move" id="stn-move-wrap" style="display:none"><input type="checkbox" id="stn-move" checked> <span id="stn-move-txt"></span></label>
-        ${d.by==='person'?`<div class="stn-by">Typed in / checked by a person</div>`:(d.model?`<div class="stn-by">Read by ${esc(d.model)}</div>`:'')}
-        <div class="stn-act">
-          <button class="st-btn danger ghost" onclick="stEdDelete('${n.id}')"><i class="fas fa-trash"></i></button>
-          <button class="st-btn ghost" onclick="stEdReread('${n.id}')"><i class="fas fa-rotate"></i> Read again</button>
-          <span class="sp"></span>
-          <button class="st-btn go" onclick="stEdSave('${n.id}')"><i class="fas fa-check"></i> ${warn.length&&!d.checked?'It’s right — save':'Save'}</button>
-        </div>
-      </div>
-    </div>`, {wide:true});
-  try{ ov.querySelector('.mcq-modal-panel').classList.add('stn-panel'); }catch(e){}
-  window._stEd={id, month:n.month};
-  mcqStmtPhoto(id,false).then(u=>{ const im=document.getElementById('stn-img'); if(im){ im.src=u; im.parentNode.classList.add('in'); } }).catch(()=>{});
-  stEdCalc();
+/* A note as one row per product — the way it is typed in. Lines for items not on the
+   price list stay as their own rows so nothing read off the paper is lost. */
+function stByProduct(d){
+  const by={}, others=[];
+  ((d&&d.lines)||[]).forEach(l=>{
+    if(l.product){ const b=by[l.product]||(by[l.product]={qty:null,amount:null,item:l.item||''});
+      if(l.qty!=null) b.qty=(b.qty||0)+Number(l.qty);
+      if(l.amount!=null) b.amount=Math.round(((b.amount||0)+Number(l.amount))*100)/100; }
+    else others.push(l);
+  });
+  return {by, others};
 }
-function stLineHTML(l,prods){
-  const opts=`<option value="">— not on the price list —</option>`+prods.map(p=>`<option value="${esc(p.id)}" ${p.id===l.product?'selected':''}>${esc(p.name)} · ${stMoney(p.price)}</option>`).join('');
-  return `<div class="stn-line">
+function stIsoToDmy(iso){ return iso?(iso.slice(8,10)+'/'+iso.slice(5,7)+'/'+iso.slice(2,4)):''; }
+function stOtherRowHTML(l,prods){
+  const opts=`<option value="">— not on the price list —</option>`+prods.map(p=>`<option value="${esc(p.id)}">${esc(p.name)}</option>`).join('');
+  return `<div class="stn-pr other">
+    <span class="nm"><select class="op" oninput="stEdCalc()" aria-label="Item">${opts}</select>${l.item?`<small>written “${esc(l.item)}”</small>`:''}<input type="hidden" class="raw" value="${esc(l.item||'')}"></span>
     <input class="q" inputmode="decimal" value="${l.qty==null?'':esc(l.qty)}" oninput="stEdCalc()" aria-label="Quantity">
-    <span class="it"><select oninput="stEdCalc()" aria-label="Item">${opts}</select>${l.item?`<small>written: “${esc(l.item)}”</small>`:''}<input type="hidden" class="raw" value="${esc(l.item||'')}"></span>
-    <input class="a" inputmode="decimal" value="${l.amount==null?'':esc(l.amount)}" oninput="stEdCalc()" aria-label="Amount">
-    <button class="x" onclick="this.parentNode.remove();stEdCalc()" aria-label="Remove line">✕</button>
+    <input class="a" inputmode="decimal" value="${l.amount==null?'':esc(l.amount)}" oninput="stEdCalc()" aria-label="Amount on the note">
+    <button class="x" onclick="this.parentNode.remove();stEdCalc()" aria-label="Remove">✕</button>
   </div>`;
 }
+function stEditorHTML(n, pre){
+  const d=(n&&n.data)||pre||{}, prods=stProducts(), {by,others}=stByProduct(d);
+  const photo=!!(n&&n.hasPhoto), warn=(n&&n.warnings)||[];
+  const rows=prods.map(p=>{ const b=by[p.id]||{};
+    return `<div class="stn-pr" data-pid="${esc(p.id)}" data-item="${esc(b.item||'')}">
+      <span class="nm">${esc(p.name)}<small>${stMoney(p.price)}${b.item?` · written “${esc(b.item)}”`:''}</small></span>
+      <input class="q" inputmode="decimal" value="${b.qty==null?'':esc(stQty(b.qty))}" oninput="stEdCalc()" onkeydown="stEdKey(event)" aria-label="${esc(p.name)} quantity" placeholder="0">
+      <input class="a" inputmode="decimal" value="${b.amount==null?'':esc(b.amount)}" oninput="stEdCalc()" onkeydown="stEdKey(event)" aria-label="${esc(p.name)} amount on the note" placeholder="—">
+      <span></span>
+    </div>`; }).join('');
+  return `<div class="stn ${photo?'':'nophoto'}">
+    ${photo?`<div class="stn-ph"><div class="stn-ph-in"><span class="st-spin"></span><img id="stn-img" alt="Delivery note photo" onclick="openLightbox(this.src)"></div>
+      <small>Tap the photo to zoom</small></div>`:''}
+    <div class="stn-f">
+      ${n&&n.status==='error'?`<div class="stn-msg bad"><i class="fas fa-triangle-exclamation"></i> ${esc(d.error||'Could not be read')} — type it in below, or read it again.</div>`:''}
+      ${d.readable===false?`<div class="stn-msg bad"><i class="fas fa-triangle-exclamation"></i> This did not look like a delivery note to Claude.</div>`:''}
+      ${warn.map(w=>`<div class="stn-msg ${d.checked?'done':'warn'}"><i class="fas ${d.checked?'fa-check':'fa-circle-exclamation'}"></i> ${esc(w.text)}</div>`).join('')}
+      <div class="stn-row">
+        <label>Note no.<input id="stn-num" inputmode="numeric" value="${esc(d.number||'')}" onkeydown="stEdKey(event)"></label>
+        <label>Date <small>DD/MM/YY</small><input id="stn-date" value="${esc(d.date?stIsoToDmy(d.date):(d.raw_date||''))}" placeholder="30/10/26" oninput="stEdCalc()" onkeydown="stEdKey(event)"></label>
+      </div>
+      <div class="stn-prods" id="stn-lines">
+        <div class="stn-ph2"><span>Item</span><span>Qty</span><span>$ on note</span><span></span></div>
+        ${rows}
+        ${others.map(l=>stOtherRowHTML(l,prods)).join('')}
+      </div>
+      <button class="st-link" onclick="stEdAddLine()"><i class="fas fa-plus"></i> Item not on the price list</button>
+      <div class="stn-row">
+        <label>Total written on the note <small>(optional)</small><input id="stn-total" inputmode="decimal" value="${d.total==null?'':esc(d.total)}" oninput="stEdCalc()" onkeydown="stEdKey(event)"></label>
+        <div class="stn-calc" id="stn-calc"></div>
+      </div>
+      <label class="stn-move" id="stn-move-wrap" style="display:none"><input type="checkbox" id="stn-move" checked> <span id="stn-move-txt"></span></label>
+      ${d.by==='person'?`<div class="stn-by">Typed in / checked by a person</div>`:(d.model?`<div class="stn-by">Read by ${esc(d.model)}</div>`:'')}
+      <div class="stn-act">
+        ${n?`<button class="st-btn danger ghost" onclick="stEdDelete('${n.id}')" title="Delete"><i class="fas fa-trash"></i></button>`:''}
+        ${photo?`<button class="st-btn ghost" onclick="stEdReread('${n.id}', this)"><i class="fas fa-rotate"></i> Read again</button>`:''}
+        <span class="sp"></span>
+        ${n?`<button class="st-btn go" onclick="stEdSave('${n.id}')"><i class="fas fa-check"></i> ${warn.length&&!d.checked?'It’s right — save':'Save'}</button>`
+           :`<button class="st-btn ghost" onclick="stEdSaveNew(false)">Save</button>
+             <button class="st-btn go" onclick="stEdSaveNew(true)"><i class="fas fa-check"></i> Save &amp; next note</button>`}
+      </div>
+    </div>
+  </div>`;
+}
+function stOpen(id){
+  const s=stState(), n=s.notes.find(x=>x.id===id); if(!n) return;
+  const d=n.data||{};
+  const ov=mcqModal(d.number?'Delivery note #'+esc(d.number):'Delivery note', stEditorHTML(n), {wide:true});
+  try{ ov.querySelector('.mcq-modal-panel').classList.add(n.hasPhoto?'stn-panel':'stn-panel-sm'); }catch(e){}
+  window._stEd={id, month:n.month};
+  if(n.hasPhoto) mcqStmtPhoto(id,false).then(u=>{ const im=document.getElementById('stn-img'); if(im){ im.src=u; im.parentNode.classList.add('in'); } }).catch(()=>{});
+  stEdCalc();
+  setTimeout(()=>{ try{ const q=document.querySelector('.stn-pr .q'); if(q && !n.hasPhoto) q.focus(); }catch(e){} }, 60);
+}
+/* typing a note in with no photo; after the first one the number and date step on by
+   one, since notes are usually typed in the order they were written */
+function stOpenNew(){
+  const s=stState(), last=window._stLastNew;
+  let pre={};
+  if(last && last.month===s.month){
+    const nx=last.number&&/^\d+$/.test(last.number)?String(+last.number+1):'';
+    let date=null;
+    if(last.date){ const t=new Date(last.date+'T12:00:00'); t.setDate(t.getDate()+1); const iso=t.toISOString().slice(0,10); if(iso.slice(0,7)===s.month) date=iso; }
+    pre={number:nx, date};
+  }
+  const ov=mcqModal('Type in a delivery note', stEditorHTML(null, pre), {wide:true});
+  try{ ov.querySelector('.mcq-modal-panel').classList.add('stn-panel-sm'); }catch(e){}
+  window._stEd={id:null, month:s.month};
+  stEdCalc();
+  setTimeout(()=>{ try{ const el=document.getElementById(pre.number?'stn-date':'stn-num'); if(el){ el.focus(); if(el.select) el.select(); } }catch(e){} }, 60);
+}
+/* Enter jumps to the next box, so a note can be typed without touching the mouse */
+function stEdKey(e){
+  if(e.key!=='Enter') return;
+  e.preventDefault();
+  const all=[...document.querySelectorAll('.stn input:not([type=hidden]):not([type=checkbox])')];
+  const i=all.indexOf(e.target);
+  if(i>=0 && i<all.length-1){ all[i+1].focus(); if(all[i+1].select) all[i+1].select(); }
+  else if(window._stEd && !window._stEd.id) stEdSaveNew(true);
+}
 function stEdAddLine(){ const box=document.getElementById('stn-lines'); if(!box) return;
-  box.insertAdjacentHTML('beforeend', stLineHTML({qty:'',product:'',item:'',amount:''}, stProducts())); }
+  box.insertAdjacentHTML('beforeend', stOtherRowHTML({qty:null,item:'',amount:null}, stProducts())); }
 function stNum(v){ const t=String(v==null?'':v).trim().replace('$','').replace(/\s/g,''); if(!t) return null;
   const x=/^\d+,\d{1,2}$/.test(t)?t.replace(',','.'):t.replace(/,/g,''); const n=parseFloat(x); return isNaN(n)?null:n; }
 function stEdLines(){
-  return [...document.querySelectorAll('#stn-lines .stn-line')].map(r=>({
-    qty:stNum(r.querySelector('.q').value), product:r.querySelector('select').value||null,
-    item:r.querySelector('.raw').value||'', amount:stNum(r.querySelector('.a').value)
-  })).filter(l=>l.qty!=null||l.amount!=null||l.product);
+  return [...document.querySelectorAll('#stn-lines .stn-pr')].map(r=>{
+    const other=r.classList.contains('other');
+    return { qty:stNum(r.querySelector('.q').value), amount:stNum(r.querySelector('.a').value),
+      product:(other?r.querySelector('.op').value:r.dataset.pid)||null,
+      item:(other?r.querySelector('.raw').value:r.dataset.item)||'' };
+  }).filter(l=>l.qty!=null||l.amount!=null||(l.item&&!l.product));
 }
 function stEdParseDate(v){
   const m=/^\s*(\d{1,2})\s*[\/.\-]\s*(\d{1,2})(?:\s*[\/.\-]\s*(\d{2,4}))?\s*$/.exec(v||''); if(!m) return null;
@@ -463,32 +533,34 @@ function stEdParseDate(v){
 }
 function stEdCalc(){
   const prods=stProducts(), price=id=>{ const p=prods.find(x=>x.id===id); return p?Number(p.price)||0:0; };
-  const lines=stEdLines();
   let calc=0, bad=0;
-  document.querySelectorAll('#stn-lines .stn-line').forEach(r=>{
-    const q=stNum(r.querySelector('.q').value), pid=r.querySelector('select').value, a=stNum(r.querySelector('.a').value);
+  document.querySelectorAll('#stn-lines .stn-pr').forEach(r=>{
+    const other=r.classList.contains('other');
+    const q=stNum(r.querySelector('.q').value), pid=other?r.querySelector('.op').value:r.dataset.pid, a=stNum(r.querySelector('.a').value);
     const exp=(q!=null&&pid)?Math.round(q*price(pid)*100)/100:null;
     const off=exp!=null&&a!=null&&Math.abs(exp-a)>0.01;
     r.classList.toggle('off', off); if(off) bad++;
+    if(exp!=null) calc+=exp;
   });
-  lines.forEach(l=>{ if(l.qty!=null&&l.product) calc+=l.qty*price(l.product); });
   const tot=stNum((document.getElementById('stn-total')||{}).value);
   const el=document.getElementById('stn-calc');
   if(el) el.innerHTML=`<small>From the price list</small><b>${stMoney(calc)}</b>`+
     (tot!=null&&Math.abs(tot-calc)>0.01?`<em>${stMoney(tot)} written on the note</em>`:'')+(bad?`<em>${bad} line${bad===1?'':'s'} don’t match the price</em>`:'');
   const iso=stEdParseDate((document.getElementById('stn-date')||{}).value);
   const mv=document.getElementById('stn-move-wrap'), ed=window._stEd||{};
-  if(mv){ const other=iso&&iso.slice(0,7)!==ed.month; mv.style.display=other?'':'none';
+  if(mv){ const other=ed.id && iso && iso.slice(0,7)!==ed.month; mv.style.display=other?'':'none';
     if(other) document.getElementById('stn-move-txt').textContent='Dated '+stMonthLabel(iso.slice(0,7))+' — move it to that month’s statement'; }
 }
-async function stEdSave(id){
-  const s=stState();
+function stEdCollect(){
   const date=(document.getElementById('stn-date')||{}).value||'';
-  if(date.trim() && !stEdParseDate(date)){ toast('Date not understood — use DD/MM/YY'); return; }
+  if(date.trim() && !stEdParseDate(date)){ toast('Date not understood — use DD/MM/YY'); return null; }
+  return {number:(document.getElementById('stn-num')||{}).value||'', date, lines:stEdLines(),
+          total:stNum((document.getElementById('stn-total')||{}).value)};
+}
+async function stEdSave(id){
+  const s=stState(), data=stEdCollect(); if(!data) return;
   const mv=document.getElementById('stn-move');
-  const payload={checked:true, move:!!(mv&&mv.checked&&document.getElementById('stn-move-wrap').style.display!=='none'),
-    data:{number:(document.getElementById('stn-num')||{}).value||'', date, lines:stEdLines(),
-          total:stNum((document.getElementById('stn-total')||{}).value)}};
+  const payload={checked:true, data, move:!!(mv&&mv.checked&&document.getElementById('stn-move-wrap').style.display!=='none')};
   const r=await mcqStmtSave(id,payload);
   if(!r || r.ok===false){ toast((r&&r.error)||'Could not save — try again'); return; }
   mcqModalClose();
@@ -498,23 +570,173 @@ async function stEdSave(id){
   const next=s.notes.find(n=>n.id!==id && ['issue','error'].includes(stNoteState(n)));
   if(next) setTimeout(()=>stOpen(next.id), 160);
 }
-async function stEdReread(id){
+async function stEdSaveNew(again){
+  const s=stState(), data=stEdCollect(); if(!data) return;
+  if(!data.lines.length){ toast('Type at least one quantity'); return; }
+  const iso=stEdParseDate(data.date);
+  const month=(iso&&iso.slice(0,7))||s.month;
+  const r=await mcqStmtManual(s.customer, month, data, true);
+  if(!r || r.ok===false){ toast((r&&r.error)||'Could not save — try again'); return; }
+  window._stLastNew={number:(r.note.data||{}).number||'', date:(r.note.data||{}).date||null, month:s.month};
+  mcqModalClose();
+  toast('✓ Note '+((r.note.data||{}).number?'#'+r.note.data.number+' ':'')+'saved'+(month!==s.month?(' to '+stMonthLabel(month)):''));
+  await stReload(true); renderStatements();
+  if(again) setTimeout(stOpenNew, 120);
+}
+async function stEdReread(id, btn){
   const s=stState();
   if(s.cfg && s.cfg.ai===false){ toast('AI reading is not switched on'); return; }
-  const b=event&&event.currentTarget; if(b){ b.disabled=true; b.innerHTML='<span class="st-spin sm"></span> Reading…'; }
+  if(btn){ btn.disabled=true; btn.innerHTML='<span class="st-spin sm"></span> Reading…'; }
   const r=await mcqStmtRead(id,true);
   if(!r || r.ok===false) toast((r&&r.error)||'Could not read it'); else toast('✓ Read again');
   await stReload(true); renderStatements(); stOpen(id);
 }
 async function stEdDelete(id){
-  if(!confirm('Delete this photo and what was read from it? It comes off the statement.')) return;
+  if(!confirm('Delete this note? It comes off the statement.')) return;
   const r=await mcqStmtDelete(id);
   if(!r || r.ok===false){ toast('Could not delete'); return; }
   mcqModalClose(); toast('Deleted');
   await stReload(true); renderStatements();
 }
-window.stOpen=stOpen; window.stEdAddLine=stEdAddLine; window.stEdCalc=stEdCalc;
-window.stEdSave=stEdSave; window.stEdReread=stEdReread; window.stEdDelete=stEdDelete;
+window.stOpen=stOpen; window.stOpenNew=stOpenNew; window.stEdKey=stEdKey; window.stEdAddLine=stEdAddLine; window.stEdCalc=stEdCalc;
+window.stEdSave=stEdSave; window.stEdSaveNew=stEdSaveNew; window.stEdReread=stEdReread; window.stEdDelete=stEdDelete;
+
+/* --------------------------------------------------------- type-in table */
+/* The whole month on one screen, one row per note, saved as you type. The fastest way
+   to put right what the AI misread, or to skip the AI altogether. */
+function stSortedNotes(){
+  const s=stState();
+  return [...s.notes].sort((a,b)=>{
+    const da=(a.data||{}).date||'9999', db=(b.data||{}).date||'9999';
+    if(da!==db) return da<db?-1:1;
+    const na=+((a.data||{}).number)||1e9, nb=+((b.data||{}).number)||1e9;
+    if(na!==nb) return na-nb;
+    return (a.createdAt||'')<(b.createdAt||'')?-1:1;
+  });
+}
+function stTypeHTML(){
+  const prods=stProducts();
+  const rows=stSortedNotes().map(n=>{
+    const d=n.data||{}, {by}=stByProduct(d), st=stNoteState(n);
+    return `<tr data-id="${n.id}" class="${st}">
+      <td class="t-ph">${n.hasPhoto?`<button class="t-thumb" onclick="stOpen('${n.id}')" title="Open the photo"><img data-st-photo="${n.id}" alt=""></button>`:`<button class="t-thumb hand" onclick="stOpen('${n.id}')" title="Typed in by hand">✍️</button>`}</td>
+      <td><input class="t-num" inputmode="numeric" value="${esc(d.number||'')}" oninput="stRowDirty(this)" onchange="stRowSave(this)" onkeydown="stRowKey(event)" aria-label="Note number"></td>
+      <td><input class="t-date" value="${esc(d.date?stIsoToDmy(d.date):(d.raw_date||''))}" placeholder="DD/MM/YY" oninput="stRowDirty(this)" onchange="stRowSave(this)" onkeydown="stRowKey(event)" aria-label="Date"></td>
+      ${prods.map(p=>`<td><input class="t-q" data-pid="${esc(p.id)}" inputmode="decimal" value="${(by[p.id]&&by[p.id].qty!=null)?esc(stQty(by[p.id].qty)):''}" oninput="stRowDirty(this)" onchange="stRowSave(this)" onkeydown="stRowKey(event)" aria-label="${esc(p.name)}"></td>`).join('')}
+      <td><input class="t-tot" inputmode="decimal" value="${d.total==null?'':esc(d.total)}" oninput="stRowDirty(this)" onchange="stRowSave(this)" onkeydown="stRowKey(event)" aria-label="Total on the note"></td>
+      <td class="t-st">${stRowStatus(n)}</td>
+    </tr>`;
+  }).join('');
+  return `<div class="st-type-box" id="st-grid"><div class="st-type-wrap"><table class="st-type">
+    <thead><tr><th></th><th>Note no.</th><th>Date</th>${prods.map(p=>`<th class="n">${esc(p.name)}<small>${stMoney(p.price)}</small></th>`).join('')}<th class="n">Total on note<small>optional</small></th><th></th></tr></thead>
+    <tbody>${rows}</tbody></table></div>
+    <button class="st-btn ghost st-addrow" onclick="stAddRow()"><i class="fas fa-plus"></i> Add a note by hand</button></div>`;
+}
+function stRowStatus(n){
+  const st=stNoteState(n), d=n.data||{};
+  if(st==='pending') return '<span class="st-chip">Not read</span>';
+  if(st==='reading') return '<span class="st-chip rd"><span class="st-spin sm"></span></span>';
+  if(st==='error') return `<button class="st-chip bad" onclick="stOpen('${n.id}')">Type it in</button>`;
+  if(st==='issue') return `<button class="st-chip warn" onclick="stRowOk('${n.id}')" title="${esc((n.warnings||[]).map(w=>w.text).join(' · '))}"><i class="fas fa-check"></i> Right</button>`;
+  return `<span class="st-chip ok"><i class="fas fa-check"></i>${d.by==='person'?' Typed':''}</span>`;
+}
+const _stRowT={};
+function stRowDirty(inp){
+  const tr=inp.closest('tr'); if(!tr) return;
+  tr.classList.add('dirty');
+  clearTimeout(_stRowT[tr.dataset.id]);
+  _stRowT[tr.dataset.id]=setTimeout(()=>stRowSave(inp), 900);
+}
+async function stRowSave(inp){
+  const tr=inp.closest('tr'); if(!tr || !tr.classList.contains('dirty')) return;
+  const id=tr.dataset.id, s=stState(), n=s.notes.find(x=>x.id===id); if(!n) return;
+  clearTimeout(_stRowT[id]);
+  const dateIn=tr.querySelector('.t-date'), date=dateIn.value.trim();
+  window._stEd={month:s.month};
+  if(date && !stEdParseDate(date)){ dateIn.classList.add('bad'); return; }
+  dateIn.classList.remove('bad');
+  // the amounts written on the paper and any off-list items are kept as they were
+  const {by,others}=stByProduct(n.data||{});
+  const lines=[...tr.querySelectorAll('.t-q')].map(q=>({product:q.dataset.pid, qty:stNum(q.value),
+      amount:(by[q.dataset.pid]||{}).amount??null, item:(by[q.dataset.pid]||{}).item||''}))
+    .filter(l=>l.qty!=null).concat(others);
+  const data={number:tr.querySelector('.t-num').value, date, lines, total:stNum(tr.querySelector('.t-tot').value)};
+  tr.classList.remove('dirty'); tr.classList.add('saving');
+  const r=await mcqStmtSave(id,{checked:true, data});
+  tr.classList.remove('saving');
+  if(!r || r.ok===false){ tr.classList.add('dirty'); toast((r&&r.error)||'Could not save that row'); return; }
+  const k=s.notes.findIndex(x=>x.id===id); if(k>=0) s.notes[k]=r.note;
+  tr.className=stNoteState(r.note); const c=tr.querySelector('.t-st'); if(c) c.innerHTML=stRowStatus(r.note);
+  stRefreshTotals();
+}
+async function stRowOk(id){
+  const s=stState(), n=s.notes.find(x=>x.id===id); if(!n||!n.data) return;
+  const r=await mcqStmtSave(id,{checked:true, data:Object.assign({},n.data,{date:stIsoToDmy(n.data.date)||n.data.raw_date||''})});
+  if(!r || r.ok===false){ toast((r&&r.error)||'Could not save'); return; }
+  const k=s.notes.findIndex(x=>x.id===id); if(k>=0) s.notes[k]=r.note;
+  const tr=document.querySelector('tr[data-id="'+id+'"]');
+  if(tr){ tr.className=stNoteState(r.note); const c=tr.querySelector('.t-st'); if(c) c.innerHTML=stRowStatus(r.note); }
+  stRefreshTotals();
+}
+/* Enter goes down the column, like a spreadsheet */
+function stRowKey(e){
+  if(e.key!=='Enter') return;
+  e.preventDefault();
+  const td=e.target.closest('td'), tr=e.target.closest('tr'); if(!td||!tr) return;
+  const col=[...tr.children].indexOf(td);
+  let nx=tr.nextElementSibling;
+  if(e.target.onchange) e.target.onchange();
+  if(nx){ const i=nx.children[col]&&nx.children[col].querySelector('input'); if(i){ i.focus(); if(i.select) i.select(); } }
+}
+async function stAddRow(){
+  const s=stState();
+  const r=await mcqStmtManual(s.customer, s.month, {}, false);
+  if(!r || r.ok===false){ toast((r&&r.error)||'Could not add a row'); return; }
+  s.notes.push(r.note);
+  const box=document.getElementById('st-grid'); if(box){ box.outerHTML=stTypeHTML(); stHydrate(); }
+  const tr=document.querySelector('tr[data-id="'+r.note.id+'"]'); const i=tr&&tr.querySelector('.t-num'); if(i) i.focus();
+}
+/* after a row is saved: totals, checks and statement follow, the table is left alone so
+   nobody loses their place while typing */
+let _stTotT=null;
+function stRefreshTotals(){
+  clearTimeout(_stTotT);
+  _stTotT=setTimeout(async()=>{
+    if(!(await stReload(true))) return;
+    const swap=(id,html)=>{ const el=document.getElementById(id); if(!el) return;
+      const t=document.createElement('div'); t.innerHTML=html.trim(); const nu=t.firstElementChild;
+      if(nu) el.replaceWith(nu); else el.remove(); };
+    swap('st-hero', stHeroHTML());
+    const iss=document.getElementById('st-issues'), issH=stIssuesHTML();
+    if(iss) swap('st-issues', issH||'<span id="st-issues"></span>');
+    swap('st-statement', stStatementHTML()||'<span id="st-statement"></span>');
+  }, 400);
+}
+function stSetView(v){ const s=stState(); s.view=v; try{ localStorage.setItem('mcq_st_view',v); }catch(e){} renderStatements(); }
+window.stRowDirty=stRowDirty; window.stRowSave=stRowSave; window.stRowOk=stRowOk; window.stRowKey=stRowKey;
+window.stAddRow=stAddRow; window.stSetView=stSetView;
+
+/* ---------------------------------------------- read again, with the stronger AI */
+function stRereadable(){
+  const s=stState(), m=(s.cfg&&s.cfg.notesModel)||'';
+  return s.notes.filter(n=>n.hasPhoto && n.status==='read' && n.data && n.data.by==='ai' && !n.data.checked && m && n.data.model!==m);
+}
+async function stRereadAll(){
+  const s=stState(), list=stRereadable();
+  if(!list.length || s.up || s.rd) return;
+  if(!confirm(`Read ${list.length} note${list.length===1?'':'s'} again with the stronger AI?\nNotes a person has typed in or checked are left as they are.`)) return;
+  s.rd={done:0,total:list.length,fail:0}; renderStatements();
+  let i=0;
+  const worker=async()=>{ while(i<list.length){ const n=list[i++];
+    const r=await mcqStmtRead(n.id,true);
+    if(r && r.note){ const k=s.notes.findIndex(x=>x.id===r.note.id); if(k>=0) s.notes[k]=r.note; }
+    if(!r || r.ok===false) s.rd.fail++;
+    s.rd.done++; stPaintBusy(); } };
+  await Promise.all([worker(),worker(),worker()]);
+  s.rd=null; await stReload(true); renderStatements();
+  toast('✓ Read again'+(stOpenCount()?` — ${stOpenCount()} to check`:''));
+}
+window.stRereadAll=stRereadAll;
 
 /* --------------------------------------------------------------- settings */
 function stSettings(){

@@ -112,6 +112,7 @@
   window.mcqStmtNotes=function(customer,month){ return _authFetch('/api/stmt/notes?customer='+encodeURIComponent(customer||'')+'&month='+encodeURIComponent(month||'')); };
   window.mcqStmtRead=function(id,again){ return _authFetch('/api/stmt/notes/'+encodeURIComponent(id)+'/read',{method:'POST',body:JSON.stringify({again:!!again})}); };
   window.mcqStmtSave=function(id,payload){ return _authFetch('/api/stmt/notes/'+encodeURIComponent(id),{method:'POST',body:JSON.stringify(payload||{})}); };
+  window.mcqStmtManual=function(customer,month,data,checked){ return _authFetch('/api/stmt/notes/manual',{method:'POST',body:JSON.stringify({customer:customer,month:month,data:data||{},checked:checked!==false})}); };
   window.mcqStmtDelete=function(id){ return _authFetch('/api/stmt/notes/'+encodeURIComponent(id)+'/delete',{method:'POST',body:'{}'}); };
   // a photo goes up as a real file part (a form field caps at 500 KB)
   window.mcqStmtUpload=function(customer,month,blob){

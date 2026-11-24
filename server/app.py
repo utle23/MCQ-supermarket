@@ -72,6 +72,7 @@ def health():
     return jsonify(ok=True, time=db.now(), db_bytes=size, stores=len(db.STORES), cloud=cloud,
                    sso=bool(db.SSO_SECRET), people_api=bool(db.MASTER_API_KEY),
                    ai=(ai.MODEL if ai.configured() else None),
+                   ai_notes=(ai.STRONG_MODEL if ai.configured() else None),
                    rev=(os.environ.get('RENDER_GIT_COMMIT') or '')[:8] or None)
 
 # ---------- 9:30 PM daily digest, triggerable by an external cron (cron-job.org) ----------
@@ -2270,7 +2271,8 @@ def stmt_config_get():
     if not custs: abort(403)
     return jsonify(ok=True, supplier=cfg.get('supplier') or '', abn=cfg.get('abn') or '',
                    customers=custs, products=cfg.get('products') or [],
-                   canConfig=(au.get('role') == 'super'), ai=bool(ai.configured()), today=db.today_str())
+                   canConfig=(au.get('role') == 'super'), ai=bool(ai.configured()), today=db.today_str(),
+                   notesModel=ai.STRONG_MODEL)
 
 
 @api.route('/api/stmt/config', methods=['POST'])
@@ -2387,6 +2389,8 @@ def stmt_note_read(note_id):
     au = require_auth()
     n, cfg = _stmt_note_for(au, note_id)
     again = bool((request.get_json(force=True, silent=True) or {}).get('again'))
+    if not (n.get('_cloud_id') or n.get('_filename')):
+        return jsonify(ok=False, error='typed in by hand \u2014 there is no photo to read'), 400
     if not db.dnote_claim(note_id, who(au), again=again):
         return jsonify(ok=True, busy=True, note=_stmt_note_out(db.dnote_get(note_id), cfg))
     try:
@@ -2394,7 +2398,9 @@ def stmt_note_read(note_id):
     except Exception:
         db.dnote_save(note_id, 'error', {'error': 'photo could not be loaded'}, who(au))
         return jsonify(ok=False, error='photo could not be loaded', note=_stmt_note_out(db.dnote_get(note_id), cfg))
-    content, err = ai.vision(img, 'image/jpeg', statements.ai_prompt(cfg, n['month']), effort='medium')
+    # handwriting is money: the strong model, thinking hard
+    content, err = ai.vision(img, 'image/jpeg', statements.ai_prompt(cfg, n['month']),
+                             effort='high', model=ai.STRONG_MODEL)
     if err is not None:
         db.dnote_save(note_id, 'error', {'error': err}, who(au))
         return jsonify(ok=False, error=err, note=_stmt_note_out(db.dnote_get(note_id), cfg))
@@ -2403,9 +2409,41 @@ def stmt_note_read(note_id):
         db.dnote_save(note_id, 'error', {'error': 'the AI answer could not be understood'}, who(au))
         return jsonify(ok=False, error='the AI answer could not be understood', note=_stmt_note_out(db.dnote_get(note_id), cfg))
     data = statements.normalise(parsed, cfg, n['month'])
-    data['by'] = 'ai'; data['model'] = ai.MODEL
+    data['by'] = 'ai'; data['model'] = ai.STRONG_MODEL
     db.dnote_save(note_id, 'read', data, who(au))
     return jsonify(ok=True, note=_stmt_note_out(db.dnote_get(note_id), cfg))
+
+
+def _stmt_clean(cfg, src, month, old=None, checked=True):
+    """What a person typed, as a note record — checked against the price list like
+    anything Claude read. Returns (data, error)."""
+    old = old or {}
+    src = src if isinstance(src, dict) else {}
+    prod_ids = {p['id'] for p in cfg.get('products') or []}
+    lines = []
+    for ln in (src.get('lines') or [])[:30]:
+        if not isinstance(ln, dict): continue
+        qty = statements.to_number(ln.get('qty')); amount = statements.to_number(ln.get('amount'))
+        pid = ln.get('product') if ln.get('product') in prod_ids else None
+        item = str(ln.get('item') or '').strip()[:60]
+        if qty is None and amount is None and not item and not pid: continue
+        if qty is not None and not (0 <= qty <= 10000): return None, 'quantity out of range'
+        if pid and qty is None and amount is None: continue
+        lines.append({'qty': qty, 'item': item, 'product': pid, 'amount': amount})
+    raw_date = str(src.get('date') or '').strip()[:20]
+    digits = re.sub(r'\D', '', str(src.get('number') or ''))[:10]
+    data = {'number': str(int(digits)) if digits else '', 'date': statements.parse_date(raw_date, month),
+            'raw_date': raw_date, 'to': str(src.get('to') or old.get('to') or '').strip()[:60],
+            'from': str(src.get('from') or old.get('from') or '').strip()[:60],
+            'lines': lines, 'total': statements.to_number(src.get('total')), 'readable': True,
+            'checked': bool(checked), 'by': 'person',
+            'readBy': old.get('by') if old.get('by') != 'person' else old.get('readBy', ''),
+            'model': old.get('model') or ''}
+    if old.get('manual'):
+        data['manual'] = True             # still a note with no photo behind it
+    if raw_date and not data['date']:
+        return None, 'date not understood \u2014 use DD/MM/YY'
+    return data, None
 
 
 @api.route('/api/stmt/notes/<note_id>', methods=['POST'])
@@ -2415,33 +2453,31 @@ def stmt_note_edit(note_id):
     au = require_auth()
     n, cfg = _stmt_note_for(au, note_id)
     d = request.get_json(force=True, silent=True) or {}
-    src = d.get('data') if isinstance(d.get('data'), dict) else {}
-    prod_ids = {p['id'] for p in cfg.get('products') or []}
-    lines = []
-    for ln in (src.get('lines') or [])[:30]:
-        if not isinstance(ln, dict): continue
-        qty = statements.to_number(ln.get('qty')); amount = statements.to_number(ln.get('amount'))
-        pid = ln.get('product') if ln.get('product') in prod_ids else None
-        item = str(ln.get('item') or '').strip()[:60]
-        if qty is None and amount is None and not item and not pid: continue
-        if qty is not None and not (0 <= qty <= 10000): return jsonify(ok=False, error='quantity out of range'), 400
-        lines.append({'qty': qty, 'item': item, 'product': pid, 'amount': amount})
-    raw_date = str(src.get('date') or '').strip()[:20]
-    digits = re.sub(r'\D', '', str(src.get('number') or ''))[:10]
-    old = n.get('data') or {}
-    data = {'number': str(int(digits)) if digits else '', 'date': statements.parse_date(raw_date, n['month']),
-            'raw_date': raw_date, 'to': str(src.get('to') or old.get('to') or '').strip()[:60],
-            'from': str(src.get('from') or old.get('from') or '').strip()[:60],
-            'lines': lines, 'total': statements.to_number(src.get('total')), 'readable': True,
-            'checked': bool(d.get('checked', True)), 'by': 'person',
-            'readBy': old.get('by') or '', 'model': old.get('model') or ''}
-    if raw_date and not data['date']:
-        return jsonify(ok=False, error='date not understood — use DD/MM/YY'), 400
+    data, err = _stmt_clean(cfg, d.get('data'), n['month'], n.get('data'), d.get('checked', True))
+    if err: return jsonify(ok=False, error=err), 400
     month = None
     if d.get('move') and data['date'] and data['date'][:7] != n['month']:
         month = data['date'][:7]          # dated in another month: file it under that month
     db.dnote_save(note_id, 'read', data, who(au), month=month)
     return jsonify(ok=True, moved=month, note=_stmt_note_out(db.dnote_get(note_id), cfg))
+
+
+@api.route('/api/stmt/notes/manual', methods=['POST'])
+def stmt_note_manual():
+    """A note typed in by hand, with no photo — for when the AI got it wrong, the
+    photo is lost, or it is quicker to type."""
+    au = require_auth()
+    cfg = _stmt_config()
+    d = request.get_json(force=True, silent=True) or {}
+    cust = _stmt_customer(au, cfg, d.get('customer'))
+    month = _stmt_month(d.get('month'))
+    data, err = _stmt_clean(cfg, d.get('data') or {}, month, None, d.get('checked', True))
+    if err: return jsonify(ok=False, error=err), 400
+    data['manual'] = True
+    note_id = 'dn-' + secrets.token_hex(8)
+    db.dnote_add(note_id, cust['id'], month, '', '', '', who(au))
+    db.dnote_save(note_id, 'read', data, who(au))
+    return jsonify(ok=True, note=_stmt_note_out(db.dnote_get(note_id), cfg))
 
 
 @api.route('/api/stmt/notes/<note_id>/delete', methods=['POST'])

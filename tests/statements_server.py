@@ -49,6 +49,14 @@ try:
     check('chicken is $6.50', S.price_of('chicken', CFG['products']) == 6.5)
     p = S.ai_prompt(CFG, '2026-10')
     check('prompt names the month and the prices', 'October 2026' in p and '$5.50' in p and 'never correct' in p)
+    check('prompt asks for care and for doubt', 'digit by digit' in p and '"sure"' in p and 'date_sure' in p)
+    un = S.normalise({'number': '12', 'number_sure': True, 'date': '3/10/26', 'date_sure': False,
+                      'lines': [{'qty': 6, 'item': 'Quay', 'amount': 39, 'sure': True},
+                                {'qty': 4, 'item': 'Thit', 'amount': 22, 'sure': False}], 'total': 61}, CFG, '2026-10')
+    check('doubt is kept', un['unsure'] == ['the date', 'line 2 (Thit)'], un['unsure'])
+    uw = S.note_warnings(un, CFG, '2026-10')
+    check('and shown as a check', [w['code'] for w in uw] == ['unsure'] and 'line 2' in uw[0]['text'], uw)
+    check('not once a person typed it', S.note_warnings(dict(un, by='person'), CFG, '2026-10') == [])
 
     print('\n2. every line is re-priced; disagreements become warnings')
     good = S.normalise({'number': '0053', 'date': '30/10/26', 'to': 'M&MW Beechboro', 'from': 'MCQ',
@@ -113,8 +121,11 @@ try:
     class _M:
         def __init__(s): s.reply = _R(blocks=[_B('thinking'), _B('text', '{"ok":1}')])
         def create(s, **kw): sent.clear(); sent.update(kw); return s.reply
+    class _Beta:
+        def __init__(s, m): s.messages = m
     class _C:
-        def __init__(s): s.messages = _M()
+        def __init__(s): s.messages = _M(); s.beta = _Beta(s.messages); s.opts = None
+        def with_options(s, **kw): s.opts = kw; return s
     fake = _C(); ai._client = fake; os.environ['ANTHROPIC_API_KEY'] = 'test-not-a-key'
     txt, err = ai.vision(small, 'image/jpeg', 'read it', effort='medium')
     check('text block returned, thinking skipped', txt == '{"ok":1}' and err is None, (txt, err))
@@ -125,6 +136,15 @@ try:
     check('image block then prompt', blk[0]['type'] == 'image' and blk[0]['source']['media_type'] == 'image/jpeg' and blk[1]['text'] == 'read it')
     ai.chat([{'role': 'system', 'content': 'be terse'}, {'role': 'user', 'content': 'hi'}])
     check('system turn becomes the system prompt', sent.get('system') == 'be terse' and sent['messages'] == [{'role': 'user', 'content': 'hi'}])
+    big = io.BytesIO(); Image.new('RGB', (3600, 2700), (200, 200, 200)).save(big, 'JPEG')
+    txt, err = ai.vision(big.getvalue(), 'image/jpeg', 'read it', effort='high', model=ai.STRONG_MODEL)
+    check('delivery notes go to Opus 5.5', sent.get('model') == 'claude-opus-5-5', sent.get('model'))
+    check('with the refusal fallback opted in', sent.get('betas') == ['server-side-fallback-2026-07-01'] and sent.get('fallbacks') == 'default')
+    check('room to think, and a longer wait', sent.get('max_tokens') >= 16000 and fake.opts == {'timeout': 100.0})
+    sent_img = Image.open(io.BytesIO(__import__('base64').b64decode(sent['messages'][0]['content'][0]['source']['data'])))
+    check('Opus gets the photo at 2576px', max(sent_img.size) == 2576, sent_img.size)
+    ai.vision(small, 'image/jpeg', 'x')
+    check('everything else stays on Haiku, no beta', sent.get('model') == 'claude-haiku-5-5' and 'betas' not in sent)
     fake.messages.reply = _R(stop='refusal')
     txt, err = ai.vision(small, 'image/jpeg', 'x')
     check('a refusal is an error, not an empty read', txt is None and 'declined' in err, err)
@@ -141,7 +161,8 @@ try:
     j = cl.get('/api/stmt/config', headers=H(sup)).get_json()
     check('super sees Beechboro', [c['id'] for c in j['customers']] == ['beechboro'] and j['canConfig'])
     check('health reports the AI model, never the key',
-          cl.get('/api/health').get_json().get('ai') == 'claude-haiku-5-5')
+          cl.get('/api/health').get_json().get('ai') == 'claude-haiku-5-5'
+          and cl.get('/api/health').get_json().get('ai_notes') == 'claude-opus-5-5')
     for t, n in ((mgr, 'a manager (no store granted yet)'), (lead, 'a dept lead'), (ba, 'Chu Ba')):
         check('%s is kept out' % n, cl.get('/api/stmt/config', headers=H(t)).status_code == 403)
     r = cl.post('/api/stmt/config', headers=H(mgr), json={'products': []})
@@ -164,15 +185,17 @@ try:
     check('Malaga cannot upload', up(mgr2, jpeg(color=(1, 2, 3))).status_code == 403)
 
     calls = []
-    def fake_vision(img, mime, prompt, effort='low', max_tokens=8000):
-        calls.append((prompt, effort))
+    def fake_vision(img, mime, prompt, effort='low', max_tokens=8000, model=None):
+        calls.append((prompt, effort, model))
         return json.dumps({'number': '0080', 'date': '30/10/26', 'to': 'M&MW', 'from': 'MCQ',
                            'lines': [{'qty': 6, 'item': 'Quay', 'amount': 39}, {'qty': 15, 'item': 'Thit', 'amount': 82.5}],
                            'total': 121.5, 'readable': True}), None
     real_vision = ai.vision; ai.vision = fake_vision
     r = cl.post('/api/stmt/notes/%s/read' % n1['id'], headers=H(sup), json={}).get_json()
     check('read by Claude', r['ok'] and r['note']['status'] == 'read' and r['note']['data']['number'] == '80', r)
-    check('handwriting read with medium effort, month in the prompt', calls and calls[-1][1] == 'medium' and 'October 2026' in calls[-1][0])
+    check('handwriting read by Opus thinking hard, month in the prompt',
+          calls and calls[-1][1] == 'high' and calls[-1][2] == 'claude-opus-5-5' and 'October 2026' in calls[-1][0], calls[-1][1:])
+    check('the note records which model read it', r['note']['data']['model'] == 'claude-opus-5-5')
     r = cl.post('/api/stmt/notes/%s/read' % n1['id'], headers=H(sup), json={}).get_json()
     check('an already-read note is not paid for again', r.get('busy') and len(calls) == 1, (r, len(calls)))
     r = cl.post('/api/stmt/notes/%s/read' % n1['id'], headers=H(sup), json={'again': True}).get_json()
@@ -216,6 +239,27 @@ try:
     check('price changed, nonsense ignored', pr == {'pork': 6.5, 'trad': 6.0, 'chicken': 6.5}, pr)
     j = cl.get('/api/stmt/notes?customer=beechboro&month=2026-10', headers=H(sup)).get_json()
     check('statement re-priced', j['statement']['grand_total'] == 6 * 6.5 + 15 * 6 + 4 * 6.5, j['statement']['grand_total'])
+
+    print('\n7. typed in by hand')
+    r = cl.post('/api/stmt/notes/manual', headers=H(mgr), json={'customer': 'beechboro', 'month': '2026-10', 'data': {
+        'number': '95', 'date': '15/10/26', 'lines': [{'product': 'pork', 'qty': '10'}, {'product': 'trad', 'qty': None},
+                                                      {'product': 'chicken', 'qty': 3}]}}).get_json()
+    mn = r['note']
+    check('saved with no photo', r['ok'] and not mn['hasPhoto'] and mn['status'] == 'read' and mn['data']['manual'], r)
+    check('empty quantities dropped', [l['product'] for l in mn['data']['lines']] == ['pork', 'chicken'], mn['data']['lines'])
+    check('no AI warnings on it', mn['warnings'] == [], mn['warnings'])
+    rr = cl.post('/api/stmt/notes/%s/read' % mn['id'], headers=H(sup), json={})
+    check('nothing to read on a typed note', rr.status_code == 400)
+    check('no photo to serve', cl.get('/api/stmt/photo/' + mn['id'], headers=H(sup)).status_code == 404)
+    blank = cl.post('/api/stmt/notes/manual', headers=H(sup), json={'customer': 'beechboro', 'month': '2026-10', 'checked': False}).get_json()['note']
+    check('a blank row asks to be filled', sorted(w['code'] for w in blank['warnings']) == ['no_date', 'no_lines', 'no_number'], blank['warnings'])
+    check('Malaga cannot type one in', cl.post('/api/stmt/notes/manual', headers=H(mgr2), json={'customer': 'beechboro', 'month': '2026-10'}).status_code == 403)
+    check('a bad date is refused', cl.post('/api/stmt/notes/manual', headers=H(sup), json={'customer': 'beechboro', 'month': '2026-10', 'data': {'date': '40/10/26'}}).status_code == 400)
+    st = cl.get('/api/stmt/notes?customer=beechboro&month=2026-10', headers=H(sup)).get_json()['statement']
+    check('typed note is on the statement', st['days'][14]['qty'] == {'pork': 10, 'trad': 0, 'chicken': 3}, st['days'][14]['qty'])
+    r = cl.post('/api/stmt/notes/' + blank['id'], headers=H(sup), json={'data': {'number': '96', 'date': '16/10/26', 'lines': [{'product': 'trad', 'qty': 7}]}}).get_json()
+    check('the blank row filled in later', r['ok'] and r['note']['warnings'] == [] and r['note']['data'].get('manual') is True)
+    cl.post('/api/stmt/notes/%s/delete' % mn['id'], headers=H(sup)); cl.post('/api/stmt/notes/%s/delete' % blank['id'], headers=H(sup))
 
     r = cl.post('/api/stmt/notes/%s/delete' % n1['id'], headers=H(sup)).get_json()
     check('deleted', r['ok'] and not os.path.exists(os.path.join(TMP, 'uploads', 'invoices', 'beechboro', n1['id'] + '.jpg')))

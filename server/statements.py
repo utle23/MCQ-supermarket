@@ -54,18 +54,25 @@ def ai_prompt(config, month=None):
         except Exception:
             when = ''
     return (
-        "This photo is a handwritten DELIVERY NOTE from a carbon-copy book. Read it and return "
-        "ONLY compact JSON, no prose, no code fence, in exactly this shape:\n"
-        '{"number":"<the printed note number, top right>",'
-        '"date":"<the DATE exactly as written, e.g. 30/10/26>",'
+        "This photo is a handwritten DELIVERY NOTE from a carbon-copy book (often a faint carbon "
+        "copy). Read it slowly and carefully, digit by digit, and return ONLY compact JSON, no prose, "
+        "no code fence, in exactly this shape:\n"
+        '{"number":"<the printed note number, top right>","number_sure":true,'
+        '"date":"<the DATE exactly as written, e.g. 30/10/26>","date_sure":true,'
         '"to":"<the TO line>","from":"<the RECEIVED FROM line>",'
-        '"lines":[{"qty":<the number in the narrow left column>,"item":"<the item name as written>",'
-        '"amount":<the dollar amount written on that line>}],'
+        '"lines":[{"qty":<the number in the narrow QTY column on the left>,'
+        '"item":"<the item name as written>","amount":<the dollar amount written at the right of that line>,'
+        '"sure":true}],'
         '"total":<the total written under the lines>,"readable":true}\n'
         "The items sold are: " + items + ". Item names are often Vietnamese and abbreviated "
-        "('Quay', 'Thit', 'Thịt', 'Ga'). A comma inside a number is a decimal point (97,5 means 97.5). "
-        "Copy every number exactly as written, even if the arithmetic on the paper looks wrong — "
-        "never correct it. Ignore signatures and tick marks. Use null for anything you cannot read."
+        "('Quay', 'Thit', 'Th\u1ecbt', 'Ga'). One line on the paper is one entry in lines, in order, top "
+        "to bottom; skip blank rows. A comma inside a number is a decimal point (97,5 means 97.5). "
+        "Handwritten digits are easy to confuse (1/7, 4/9, 3/8, 5/6, 0/6): the amount on a line is "
+        "usually qty x the price above, so use it to settle an unclear quantity, and the total to "
+        "settle an unclear amount. But copy what is written: if the paper's own arithmetic is wrong, "
+        "keep the numbers as written and never correct them. Set sure / date_sure / number_sure to "
+        "false whenever you are not certain of that value. Ignore signatures and tick marks. "
+        "Use null for anything you cannot read."
         + when +
         ' If the photo is not a delivery note, return {"readable":false}.'
     )
@@ -172,7 +179,7 @@ def normalise(ai, config, month):
     if ai.get('readable') is False:
         return {'number': '', 'date': None, 'to': '', 'from': '', 'lines': [], 'total': None,
                 'raw_date': '', 'readable': False}
-    lines = []
+    lines, unsure = [], []
     for ln in (ai.get('lines') or [])[:30]:
         if not isinstance(ln, dict):
             continue
@@ -183,13 +190,20 @@ def normalise(ai, config, month):
             continue
         lines.append({'qty': qty, 'item': item, 'product': match_product(item, products),
                       'amount': amount})
+        if ln.get('sure') is False:
+            unsure.append('line %d (%s)' % (len(lines), item or 'item'))
     raw_date = str(ai.get('date') or '').strip()[:20]
     digits = re.sub(r'\D', '', str(ai.get('number') or ''))[:10]
+    if ai.get('date_sure') is False:
+        unsure.insert(0, 'the date')
+    if ai.get('number_sure') is False:
+        unsure.insert(0, 'the note number')
     return {'number': str(int(digits)) if digits else '',
             'date': parse_date(raw_date, month), 'raw_date': raw_date,
             'to': str(ai.get('to') or '').strip()[:60],
             'from': str(ai.get('from') or '').strip()[:60],
-            'lines': lines, 'total': to_number(ai.get('total')), 'readable': True}
+            'lines': lines, 'total': to_number(ai.get('total')), 'readable': True,
+            'unsure': unsure[:12]}
 
 
 def note_warnings(note, config, month):
@@ -198,18 +212,21 @@ def note_warnings(note, config, month):
     if not note.get('readable', True):
         return [{'code': 'unreadable', 'text': 'AI could not read this note — enter it by hand.'}]
     products = config.get('products') or []
+    if note.get('unsure') and not note.get('by') == 'person':
+        out.append({'code': 'unsure', 'text': 'Claude was not sure of %s \u2014 compare with the photo'
+                    % ', '.join(note['unsure'])})
     if not note.get('date'):
-        out.append({'code': 'no_date', 'text': 'Date not read (%s)' % (note.get('raw_date') or 'blank')})
+        out.append({'code': 'no_date', 'text': ('No date (read as \u201c%s\u201d)' % note['raw_date']) if note.get('raw_date') else 'No date'})
     else:
         first, last = month_bounds(month)
         if not (first <= note['date'] <= last):
             out.append({'code': 'date_outside',
                         'text': 'Dated %s — outside %s' % (note['date'], month)})
     if not note.get('number'):
-        out.append({'code': 'no_number', 'text': 'Note number not read'})
+        out.append({'code': 'no_number', 'text': 'No note number'})
     lines = note.get('lines') or []
     if not lines:
-        out.append({'code': 'no_lines', 'text': 'No items read'})
+        out.append({'code': 'no_lines', 'text': 'No items'})
     sum_written = 0.0
     for i, ln in enumerate(lines):
         label = ln.get('item') or ('line %d' % (i + 1))

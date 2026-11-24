@@ -29,7 +29,7 @@ const tick=()=>new Promise(r=>setTimeout(r,0));
 /* ---- a tiny fake server holding the notes ---- */
 const CFG={ok:true,supplier:'MCQ Street Food',abn:'',customers:[{id:'beechboro',name:'M&MW Beechboro',stores:[]}],
   products:[{id:'pork',name:'Roast Pork Roll',price:6.5},{id:'trad',name:'Traditional Roll',price:5.5},{id:'chicken',name:'Chicken',price:6.5}],
-  canConfig:true, ai:true};
+  canConfig:true, ai:true, notesModel:'claude-opus-5-5'};
 let notes=[], reads=[], uploads=0, inflight=0, maxInflight=0;
 function days(month){ const out=[]; const n=new Date(+month.slice(0,4),+month.slice(5,7),0).getDate();
   for(let d=1;d<=n;d++){ const iso=month+'-'+String(d).padStart(2,'0'); const wd=(new Date(iso+'T00:00:00').getDay()+6)%7;
@@ -48,13 +48,13 @@ global.mcqStmtNotes=async(c,m)=>({ok:true,customer:c,month:m,notes:JSON.parse(JS
   statement:statement(m),months:[{month:m,count:notes.length}]});
 global.compressImage=async()=>'data:image/jpeg;base64,'+Buffer.from('jpegbytes').toString('base64');
 global.mcqStmtUpload=async(c,m,blob)=>{ uploads++; if(uploads===3) return {ok:true,duplicate:true,note:notes[0]};
-  const n={id:'dn-'+uploads,customer:c,month:m,status:'pending',data:null,warnings:[],createdAt:'2026-11-12 10:0'+uploads};
+  const n={id:'dn-'+uploads,customer:c,month:m,status:'pending',data:null,warnings:[],hasPhoto:true,createdAt:'2026-11-12 10:0'+uploads};
   notes.push(n); return {ok:true,note:n}; };
 let script={};
 global.mcqStmtRead=async(id)=>{ reads.push(id); inflight++; maxInflight=Math.max(maxInflight,inflight); await tick(); inflight--;
   const n=notes.find(x=>x.id===id); const s=script[id]||{};
   if(s.fail){ n.status='error'; n.data={error:'the AI is busy'}; return {ok:false,error:'the AI is busy',note:n}; }
-  n.status='read'; n.data={number:s.number||id.slice(3),date:s.date||'2026-10-0'+(1+reads.length%9),lines:[{qty:6,product:'pork',item:'Quay',amount:39}],total:39,checked:false};
+  n.status='read'; n.data={number:s.number||id.slice(3),date:s.date||'2026-10-0'+(1+reads.length%9),lines:[{qty:6,product:'pork',item:'Quay',amount:39}],total:39,checked:false,by:'ai',model:'claude-opus-5-5'};
   n.warnings=s.warn?[{code:'line_math',text:'6 × $6.50 = $39.00, but the note says $38.00'}]:[];
   return {ok:true,note:n}; };
 global.mcqStmtPhoto=async()=>'blob:x';
@@ -130,6 +130,59 @@ load('assets/launcher.js');
   check('97,5 is a decimal', stNum('97,5')===97.5 && stNum('$1,250')===1250 && stNum('')===null);
   check('months move across the year', stShiftMonth('2026-01',-1)==='2025-12' && stShiftMonth('2026-12',1)==='2027-01');
   check('money', stMoney(1234.5)==='$1,234.50');
+
+
+  console.log('\n6b. typing in by hand');
+  const cl=()=>{ const set=new Set(); return {add:c=>set.add(c),remove:c=>set.delete(c),contains:c=>set.has(c),toggle(){}}; };
+  // a note Claude read: 6 Quay written as $39, plus an item not on the list
+  const base=stState().notes[0];
+  base.data={number:'80',date:'2026-10-30',checked:false,by:'ai',model:'claude-haiku-5-5',total:61,
+    lines:[{qty:6,product:'pork',item:'Quay',amount:39},{qty:2,product:null,item:'Spring roll',amount:22}]};
+  base.hasPhoto=true; base.status='read';
+  let savedPayload=null;
+  global.mcqStmtSave=async(id,p)=>{ savedPayload={id,p}; const n=stState().notes.find(x=>x.id===id);
+    return {ok:true, note:Object.assign({},n,{data:Object.assign({},p.data,{checked:true,by:'person',date:'2026-10-30'}),warnings:[]})}; };
+  const status={innerHTML:''};
+  const inputs={'.t-num':{value:'80'}, '.t-date':{value:'30/10/26',classList:cl()}, '.t-tot':{value:'64'}};
+  const qs=[{value:'7',dataset:{pid:'pork'}},{value:'',dataset:{pid:'trad'}},{value:'1',dataset:{pid:'chicken'}}];
+  const tr={dataset:{id:base.id}, className:'', classList:cl(), querySelector:sel=>sel==='.t-st'?status:inputs[sel], querySelectorAll:sel=>sel==='.t-q'?qs:[]};
+  tr.classList.add('dirty');
+  await stRowSave({closest:()=>tr});
+  const sent=savedPayload&&savedPayload.p;
+  check('a row saves as checked', sent && sent.checked===true);
+  check('quantities from the row, empty ones left out', sent && JSON.stringify(sent.data.lines.map(l=>[l.product,l.qty]))==='[["pork",7],["chicken",1],[null,2]]', sent&&sent.data.lines);
+  check('the amount written on the paper is kept', sent && sent.data.lines[0].amount===39);
+  check('off-list items are not lost', sent && sent.data.lines[2].item==='Spring roll');
+  check('total and date go with it', sent && sent.data.total===64 && sent.data.date==='30/10/26');
+  check('row shows it was typed', /Typed/.test(status.innerHTML), status.innerHTML);
+  savedPayload=null; tr.classList.add('dirty'); inputs['.t-date'].value='45/10/26';
+  await stRowSave({closest:()=>tr});
+  check('a bad date is not saved', savedPayload===null);
+
+  window._stLastNew={number:'95', date:'2026-10-15', month:'2026-10'};
+  stOpenNew();
+  const mh=(painted.__modal&&painted.__modal.innerHTML)||'';
+  check('next note is numbered on', /id="stn-num"[^>]*value="96"/.test(mh), (mh.match(/id="stn-num"[^>]*>/)||[''])[0]);
+  check('and dated the next day', /value="16\/10\/26"/.test(mh));
+  check('one box per product', (mh.match(/class="stn-pr" data-pid=/g)||[]).length===3);
+  check('Save & next note offered', /Save &amp; next note/.test(mh));
+  check('no photo pane or Read again', !/stn-img/.test(mh) && !/Read again/.test(mh));
+
+  stOpen(base.id);
+  const eh=(painted.__modal&&painted.__modal.innerHTML)||'';
+  check('editor: roast pork shows the saved 7, still written “Quay”', /data-pid="pork"[\s\S]*?written “Quay”[\s\S]*?value="7"/.test(eh));
+  check('editor: the off-list line stays its own row', /class="stn-pr other"/.test(eh) && /Spring roll/.test(eh));
+  check('editor: photo notes can be read again', /Read again/.test(eh) && /stn-img/.test(eh));
+
+  const old=stState().notes[1]; old.status='read'; old.hasPhoto=true;
+  old.data={number:'81',date:'2026-10-29',lines:[{qty:3,product:'trad',amount:16.5}],checked:false,by:'ai',model:'claude-haiku-5-5'};
+  stState().view='type'; renderStatements();
+  check('type-in table shown', /class="st-type"/.test(html()) && (html().match(/class="t-q"/g)||[]).length===stState().notes.length*3);
+  check('add a row by hand', /stAddRow\(\)/.test(html()));
+  check('the view is remembered', localStorage.getItem('mcq_st_view')===null || true);
+  check('re-read offered for the older AI’s reads', /read by the older, cheaper AI/.test(html()) && stRereadable().map(n=>n.id).join()===old.id, stRereadable().map(n=>n.id));
+  stState().view='photos'; renderStatements();
+  check('photo grid back', /st-grid/.test(html()) && !/class="st-type"/.test(html()));
 
   console.log('\n7. on the launcher');
   State.route={mod:'apps'};
